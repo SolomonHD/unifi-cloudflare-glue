@@ -39,3 +39,15 @@ __pycache__/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Dagger auto-generated SDK
+/sdk/
+
+# Python virtual environments
+.venv/
+/.env
+
+# Python build artifacts
+dist/
+build/
+*.egg-info/
