@@ -1,0 +1,41 @@
+# Terraform state files
+*.tfstate
+*.tfstate.*
+
+# Terraform plan files
+*.tfplan
+
+# Terraform lock file (optional - uncomment if you don't want to commit this)
+# .terraform.lock.hcl
+
+# Terraform local directories
+.terraform/
+
+# Terraform crash logs
+crash.log
+crash.*.log
+
+# KCL build artifacts
+*.kclvm
+__pycache__/
+*.pyc
+
+# Local credential files
+.env
+.env.*
+*.pem
+*.key
+*secret*
+*credential*
+*password*
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
