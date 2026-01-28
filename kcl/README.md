@@ -14,18 +14,30 @@ The KCL module provides:
 
 ```
 kcl/
-├── kcl.mod           # KCL module manifest
-├── README.md         # This file
-├── schemas/          # Schema definitions
-│   ├── base.k        # Base schemas (Entity, Endpoint, Service, MACAddress)
-│   ├── unifi.k       # UniFi-specific schema extensions
-│   └── cloudflare.k  # Cloudflare-specific schema extensions
-└── generators/       # Configuration generators
-    ├── unifi.k       # UniFi JSON generator
-    └── cloudflare.k  # Cloudflare JSON generator
+├── kcl.mod              # KCL module manifest
+├── README.md            # This file
+├── main.k               # Main entrypoint with unified config and validation
+├── test_validation.k    # Validation test cases
+├── schemas/             # Schema definitions
+│   ├── base.k           # Base schemas (Entity, Endpoint, Service, MACAddress)
+│   ├── unifi.k          # UniFi-specific schema extensions
+│   └── cloudflare.k     # Cloudflare-specific schema extensions
+└── generators/          # Configuration generators
+    ├── unifi.k          # UniFi JSON generator
+    └── cloudflare.k     # Cloudflare JSON generator
 ```
 
 ## Usage
+
+### Quick Start with Unified Configuration
+
+The recommended way to use this module is through the unified configuration entrypoint:
+
+```bash
+kcl run main.k
+```
+
+This validates your configuration and generates both UniFi and Cloudflare JSON outputs in a single operation.
 
 ### Validate Configuration
 
@@ -45,6 +57,12 @@ kcl run generators/unifi.k > unifi.json
 kcl run generators/cloudflare.k > cloudflare.json
 ```
 
+### Run Validation Tests
+
+```bash
+kcl run test_validation.k
+```
+
 ## Schemas
 
 ### Base Schemas (`schemas/base.k`)
@@ -58,19 +76,216 @@ Defines core domain models:
 ### UniFi Schemas (`schemas/unifi.k`)
 
 Extends base schemas for UniFi DNS management:
-- `UniFiClient`: UniFi client device with MAC and IP
-- `UniFiDNSRecord`: DNS record for local resolution
+- `UniFiEndpoint`: Network interface with MAC address and UniFi-specific settings
+- `UniFiEntity`: Device with hostname, domain, endpoints, and services
+- `UniFiController`: Connection details for UniFi Controller
+- `UniFiConfig`: Root configuration container
+- `Service`: Application service with distribution settings
 
 ### Cloudflare Schemas (`schemas/cloudflare.k`)
 
 Extends base schemas for Cloudflare Tunnel:
-- `CloudflareTunnel`: Tunnel configuration
-- `CloudflareIngress`: Ingress rule for tunnel routing
-- `CloudflareConfig`: Complete Cloudflare configuration
+- `CloudflareTunnel`: Tunnel configuration linked to a physical device by MAC address
+- `TunnelService`: Ingress rule mapping public hostname to internal service URL
+- `CloudflareConfig`: Complete Cloudflare configuration with zone and account settings
+- `is_internal_domain()`: Validates that URLs use internal domains (DNS loop prevention)
+- `hostname_in_zone()`: Validates that hostnames belong to the configured zone
 
 ## Generators
 
 Generators transform KCL configurations into provider-specific JSON formats that can be consumed by Terraform modules.
+
+### UniFi Generator (`generators/unifi.k`)
+
+The UniFi generator transforms `UniFiConfig` schemas into JSON format for the Terraform UniFi DNS module.
+
+#### Usage
+
+```bash
+kcl run generators/unifi.k > unifi_output.json
+```
+
+#### Functions
+
+- `generate_unifi_config(config)`: Main entry point - transforms a `UniFiConfig` into JSON-compatible dictionary
+- `transform_entity(entity)`: Converts a `UniFiEntity` to a device record
+- `transform_endpoint(endpoint)`: Converts a `UniFiEndpoint` to a NIC record
+- `filter_unifi_services(services)`: Filters services for UniFi DNS (excludes `cloudflare_only`)
+- `normalize_mac(mac)`: Normalizes MAC addresses to lowercase colon format
+
+#### Output Format
+
+```json
+{
+  "devices": [{
+    "friendly_hostname": "media-server",
+    "domain": "internal.lan",
+    "service_cnames": ["storage.internal.lan", "jellyfin.internal.lan"],
+    "nics": [{
+      "mac_address": "aa:bb:cc:dd:ee:ff",
+      "nic_name": "eth0",
+      "service_cnames": ["nas.internal.lan"]
+    }]
+  }],
+  "default_domain": "internal.lan"
+}
+```
+
+#### Service Distribution
+
+Services are filtered based on their `distribution` field:
+- `unifi_only`: Included in UniFi DNS
+- `both`: Included in UniFi DNS
+- `cloudflare_only`: Excluded from UniFi DNS
+
+### Cloudflare Generator (`generators/cloudflare.k`)
+
+The Cloudflare generator transforms `CloudflareConfig` schemas into JSON format for the Terraform Cloudflare Tunnel module.
+
+#### Usage
+
+```bash
+kcl run generators/cloudflare.k > cloudflare_output.json
+```
+
+#### Functions
+
+- `generate_cloudflare_config(config)`: Main entry point - transforms a `CloudflareConfig` into JSON-compatible dictionary
+- `generate_cloudflare_from_entities(entities, zone_name, account_id, ...)`: Alternative entry point using base `Entity` objects
+- `transform_service(service, device_hostname, domain, zone_name, default_no_tls_verify)`: Converts a `Service` to a TunnelService record
+- `filter_cloudflare_services(services)`: Filters services for Cloudflare (excludes `unifi_only`)
+- `build_local_service_url(protocol, hostname, port)`: Constructs internal service URL
+- `resolve_public_hostname(service, zone_name)`: Resolves public hostname for a service
+- `validate_no_dns_loop(url, zone)`: Validates that local_service_url doesn't contain public zone (DNS loop prevention)
+- `normalize_mac(mac)`: Normalizes MAC addresses to lowercase colon format
+
+#### Output Format
+
+```json
+{
+  "zone_name": "example.com",
+  "account_id": "1234567890abcdef1234567890abcdef",
+  "tunnels": {
+    "aa:bb:cc:dd:ee:ff": {
+      "tunnel_name": "media-server",
+      "services": [{
+        "public_hostname": "jellyfin.example.com",
+        "local_service_url": "http://jellyfin.internal.lan:8096",
+        "no_tls_verify": false
+      }]
+    }
+  }
+}
+```
+
+#### Service Distribution
+
+Services are filtered based on their `distribution` field:
+- `cloudflare_only`: Included in Cloudflare Tunnel
+- `both`: Included in Cloudflare Tunnel
+- `unifi_only`: Excluded from Cloudflare Tunnel
+
+#### DNS Loop Prevention
+
+The generator enforces that `local_service_url` uses internal domains only to prevent DNS resolution loops. Valid internal domain suffixes include:
+- `.internal.lan`
+- `.local`
+- `.home`
+- `.home.arpa`
+- `.localdomain`
+
+Attempts to use the public zone name in `local_service_url` will fail validation.
+
+## Unified Configuration (`main.k`)
+
+The unified configuration provides a single source of truth for your entire infrastructure by combining UniFi and Cloudflare configurations with cross-provider validation.
+
+### UnifiedConfig Schema
+
+```kcl
+import .main
+
+config = main.UnifiedConfig {
+    unifi = unifi.UniFiConfig {
+        devices = [...]
+        default_domain = "internal.lan"
+        unifi_controller = unifi.UniFiController {
+            host = "unifi.internal.lan"
+        }
+    }
+    cloudflare = cloudflare.CloudflareConfig {
+        zone_name = "example.com"
+        account_id = "1234567890abcdef1234567890abcdef"
+        tunnels = {...}
+    }
+    mappings = [
+        main.DeviceToTunnelMapping {
+            device_hostname = "media-server"
+            tunnel_name = "media-server"
+            mac_address = "aa:bb:cc:dd:ee:01"
+        }
+    ]
+}
+
+result = main.generate(config)
+```
+
+### GenerateResult Output
+
+The `generate()` function returns a `GenerateResult` containing:
+
+```yaml
+result:
+  unifi_json:       # UniFi-compatible JSON configuration
+  cloudflare_json:  # Cloudflare-compatible JSON configuration
+  valid: true       # Whether validation passed
+  errors: []        # List of validation errors if any
+```
+
+### DeviceToTunnelMapping
+
+Explicitly link UniFi devices to Cloudflare tunnels:
+
+```kcl
+main.DeviceToTunnelMapping {
+    device_hostname = "media-server"    # Matches UniFiEntity.friendly_hostname
+    tunnel_name = "media-server"         # Matches CloudflareTunnel.tunnel_name
+    mac_address = "aa:bb:cc:dd:ee:01"    # Links both configurations
+}
+```
+
+## Cross-Provider Validation
+
+The `main.k` module implements comprehensive cross-provider validation that runs before any JSON generation (fail-fast behavior).
+
+### Validation Rules
+
+| Validation | Description | Error Code |
+|------------|-------------|------------|
+| MAC Consistency | All Cloudflare tunnel MACs must exist in UniFi devices | `MAC_CONSISTENCY_ERROR` |
+| Hostname Uniqueness | No two devices can share the same `friendly_hostname` | `DUPLICATE_HOSTNAME_ERROR` |
+| Public Hostname Uniqueness | No two tunnel services can share the same `public_hostname` | `DUPLICATE_PUBLIC_HOSTNAME_ERROR` |
+| Internal Domain | All `local_service_url` values must use internal domains | `EXTERNAL_DOMAIN_ERROR` |
+
+### Validation Functions
+
+- `validate_mac_consistency(cfg)`: Checks all Cloudflare MACs exist in UniFi
+- `validate_hostname_uniqueness(cfg)`: Checks for duplicate device hostnames
+- `validate_public_hostname_uniqueness(cfg)`: Checks for duplicate public hostnames
+- `validate_internal_domains(cfg)`: Ensures local_service_url uses internal domains
+- `validate_all(cfg)`: Runs all validations and returns error list
+
+### Error Message Format
+
+Validation errors include context and actionable suggestions:
+
+```yaml
+error: MAC_CONSISTENCY_ERROR
+message: Cloudflare tunnels reference MAC addresses not found in UniFi devices
+missing_macs: '[aa:bb:cc:dd:ee:99]'
+available_unifi_macs: '[aa:bb:cc:dd:ee:01, aa:bb:cc:dd:ee:02]'
+suggestion: Add UniFi devices with these MAC addresses or update tunnel configurations
+```
 
 ## Examples
 
