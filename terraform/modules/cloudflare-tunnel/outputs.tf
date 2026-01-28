@@ -1,2 +1,56 @@
 # Output values for Cloudflare Tunnel module
 # These expose useful information after apply
+
+output "tunnel_ids" {
+  description = "Map of MAC address to Cloudflare Tunnel ID"
+  value = {
+    for mac, tunnel in cloudflare_tunnel.this : mac => tunnel.id
+  }
+}
+
+output "tunnel_tokens" {
+  description = "Map of MAC address to Cloudflare Tunnel token (sensitive) - used for cloudflared authentication"
+  value = {
+    for mac, tunnel in cloudflare_tunnel.this : mac => tunnel.tunnel_token
+  }
+  sensitive = true
+}
+
+output "credentials_json" {
+  description = "Map of MAC address to credentials file content (sensitive) - JSON format for cloudflared"
+  value = {
+    for mac, tunnel in cloudflare_tunnel.this : mac => jsonencode({
+      AccountTag   = var.config.account_id
+      TunnelID     = tunnel.id
+      TunnelName   = tunnel.name
+      TunnelSecret = base64encode(random_password.tunnel_secret[mac].result)
+    })
+  }
+  sensitive = true
+}
+
+output "public_hostnames" {
+  description = "List of all public hostnames created for tunnel services"
+  value = distinct([
+    for record in cloudflare_record.tunnel : record.name
+  ])
+}
+
+output "zone_id" {
+  description = "The Cloudflare zone ID used for DNS records"
+  value       = data.cloudflare_zone.this.id
+}
+
+output "tunnel_names" {
+  description = "Map of MAC address to tunnel name"
+  value = {
+    for mac, tunnel in cloudflare_tunnel.this : mac => tunnel.name
+  }
+}
+
+output "record_ids" {
+  description = "Map of record keys to Cloudflare record IDs"
+  value = {
+    for key, record in cloudflare_record.tunnel : key => record.id
+  }
+}
