@@ -27,6 +27,9 @@ unifi-cloudflare-glue/
 │   └── generators/             # KCL configuration generators
 │       ├── unifi.k             # UniFi JSON generator
 │       └── cloudflare.k        # Cloudflare JSON generator
+├── src/                        # Dagger module source
+│   └── main/
+│       └── main.py             # Dagger functions implementation
 ├── examples/
 │   └── homelab-media-stack/    # Example configuration
 └── openspec/                   # OpenSpec change management
@@ -60,21 +63,154 @@ unifi-cloudflare-glue/
 
 ### Usage
 
+#### Option 1: Using Dagger (Recommended - No local KCL needed)
+
+The Dagger module provides containerized KCL generation:
+
+```bash
+# Generate UniFi configuration
+dagger call generate-unifi-config --source=./kcl export --path=./unifi.json
+
+# Generate Cloudflare configuration
+dagger call generate-cloudflare-config --source=./kcl export --path=./cloudflare.json
+```
+
+#### Option 2: Using Local KCL
+
 1. Define your services in KCL (see examples)
 2. Generate JSON configurations:
-   ```bash
-   cd kcl
-   kcl run generators/unifi.k > unifi.json
-   kcl run generators/cloudflare.k > cloudflare.json
-   ```
+    ```bash
+    cd kcl
+    kcl run generators/unifi.k > unifi.json
+    kcl run generators/cloudflare.k > cloudflare.json
+    ```
+
 3. Apply Terraform configurations:
-   ```bash
-   cd terraform/modules/unifi-dns
-   terraform init
-   terraform apply -var-file="../../unifi.json"
-   ```
+    ```bash
+    cd terraform/modules/unifi-dns
+    terraform init
+    terraform apply -var-file="../../unifi.json"
+    ```
 
 ## Modules
+
+### Dagger Functions
+
+The Dagger module provides containerized, reproducible pipelines for managing hybrid DNS infrastructure without requiring local KCL or Terraform installation:
+
+#### Configuration Generation
+
+- **`generate-unifi-config`** - Generate UniFi JSON configuration from KCL schemas
+  ```bash
+  dagger call generate-unifi-config --source=./kcl export --path=./unifi.json
+  ```
+
+- **`generate-cloudflare-config`** - Generate Cloudflare JSON configuration from KCL schemas
+  ```bash
+  dagger call generate-cloudflare-config --source=./kcl export --path=./cloudflare.json
+  ```
+
+#### Deployment (No Local Terraform Required)
+
+- **`deploy-unifi`** - Deploy UniFi DNS configuration using Terraform
+  
+  Authentication options (pick one):
+  1. API Key (recommended): `--unifi-api-key`
+  2. Username/Password: Both `--unifi-username` and `--unifi-password`
+  
+  ```bash
+  # Using API key (recommended)
+  dagger call deploy-unifi \
+      --source=. \
+      --unifi-url=https://unifi.local:8443 \
+      --unifi-api-key=env:UNIFI_API_KEY
+  
+  # Using username/password
+  dagger call deploy-unifi \
+      --source=. \
+      --unifi-url=https://unifi.local:8443 \
+      --unifi-username=env:UNIFI_USER \
+      --unifi-password=env:UNIFI_PASS
+  ```
+
+- **`deploy-cloudflare`** - Deploy Cloudflare Tunnel configuration using Terraform
+  ```bash
+  dagger call deploy-cloudflare \
+      --source=. \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=xxx \
+      --zone-name=example.com
+  ```
+
+- **`deploy`** - Full deployment orchestration (UniFi first, then Cloudflare)
+  
+  Deploys in the correct order: UniFi DNS first (creates local DNS), then Cloudflare Tunnels (point to now-resolvable hostnames).
+  
+  ```bash
+  dagger call deploy \
+      --kcl-source=./kcl \
+      --unifi-url=https://unifi.local:8443 \
+      --unifi-api-key=env:UNIFI_API_KEY \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=xxx \
+      --zone-name=example.com
+  ```
+
+- **`destroy`** - Destroy all resources (Cloudflare first, then UniFi)
+  
+  Destroys in reverse order to avoid DNS loops: Cloudflare resources first, then UniFi.
+  
+  ```bash
+  dagger call destroy \
+      --kcl-source=./kcl \
+      --unifi-url=https://unifi.local:8443 \
+      --unifi-api-key=env:UNIFI_API_KEY \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=xxx \
+      --zone-name=example.com
+  ```
+
+#### Testing
+
+- **`test-integration`** - Run integration tests with ephemeral resources
+  ```bash
+  # Basic test
+  dagger call test-integration \
+      --source=. \
+      --cloudflare-zone=test.example.com \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=xxx \
+      --unifi-url=https://unifi.local:8443 \
+      --api-url=https://unifi.local:8443 \
+      --unifi-api-key=env:UNIFI_API_KEY
+
+  # With cache buster to force re-execution
+  dagger call test-integration \
+      --source=. \
+      --cloudflare-zone=test.example.com \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=xxx \
+      --unifi-url=https://unifi.local:8443 \
+      --api-url=https://unifi.local:8443 \
+      --unifi-api-key=env:UNIFI_API_KEY \
+      --cache-buster=$(date +%s)
+
+  # With wait for manual verification
+  dagger call test-integration \
+      --source=. \
+      --cloudflare-zone=test.example.com \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=xxx \
+      --unifi-url=https://unifi.local:8443 \
+      --api-url=https://unifi.local:8443 \
+      --unifi-api-key=env:UNIFI_API_KEY \
+      --wait-before-cleanup=30
+  ```
+
+- **`hello`** - Verify the module is working
+  ```bash
+  dagger call hello
+  ```
 
 ### Terraform Modules
 
@@ -88,6 +224,114 @@ unifi-cloudflare-glue/
 ## Examples
 
 See [`examples/homelab-media-stack/`](./examples/homelab-media-stack/) for a complete example with media services.
+
+## Security Best Practices
+
+### Credential Handling
+
+All sensitive credentials are handled using Dagger's `Secret` type, which ensures:
+- Secrets are never logged to console output
+- Secrets are not stored in command history
+- Secrets are passed securely to containers via environment variables
+
+#### Environment Variable Pattern
+
+Always pass secrets via environment variables using the `env:` prefix:
+
+```bash
+# ✅ Correct - uses environment variable
+dagger call deploy-unifi \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --unifi-url=https://unifi.local:8443
+
+# ❌ Incorrect - never pass secrets directly on command line
+dagger call deploy-unifi \
+    --unifi-api-key="actual-secret-value" \
+    --unifi-url=https://unifi.local:8443
+```
+
+#### Required Environment Variables
+
+| Variable | Description | Used By |
+|----------|-------------|---------|
+| `UNIFI_API_KEY` | UniFi API key (recommended) | `deploy-unifi`, `deploy`, `destroy` |
+| `UNIFI_USER` | UniFi username (alternative) | `deploy-unifi`, `deploy`, `destroy` |
+| `UNIFI_PASS` | UniFi password (alternative) | `deploy-unifi`, `deploy`, `destroy` |
+| `CF_TOKEN` | Cloudflare API token | `deploy-cloudflare`, `deploy`, `destroy` |
+
+### Authentication Methods
+
+#### UniFi Authentication (Choose One)
+
+1. **API Key (Recommended)** - More secure, single token
+   ```bash
+   export UNIFI_API_KEY="your-api-key"
+   dagger call deploy-unifi --unifi-api-key=env:UNIFI_API_KEY ...
+   ```
+
+2. **Username/Password** - Traditional authentication
+   ```bash
+   export UNIFI_USER="admin"
+   export UNIFI_PASS="password"
+   dagger call deploy-unifi \
+       --unifi-username=env:UNIFI_USER \
+       --unifi-password=env:UNIFI_PASS ...
+   ```
+
+**Note**: You cannot use both methods simultaneously. The module will reject ambiguous authentication configurations.
+
+### Terraform State Security
+
+#### Local State (Default)
+
+By default, Terraform stores state locally in the container:
+- State is ephemeral and lost when the container exits
+- Suitable for testing and development
+- **Warning**: State files may contain sensitive values
+
+#### Remote State (Recommended for Production)
+
+For production use, configure remote state backend in your Terraform modules:
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket         = "my-terraform-state"
+    key            = "unifi-cloudflare/terraform.tfstate"
+    region         = "us-east-1"
+    encrypt        = true
+    dynamodb_table = "terraform-locks"
+  }
+}
+```
+
+### State File Cleanup
+
+When using local state, remember to clean up state files if needed:
+
+```bash
+# After destroy, clean up any remaining state files
+rm -f terraform.tfstate terraform.tfstate.backup
+```
+
+### CI/CD Security
+
+When using in CI/CD pipelines:
+
+1. **Store secrets in CI environment variables** (not in code)
+2. **Use short-lived tokens** when possible
+3. **Rotate credentials regularly**
+4. **Enable audit logging** on UniFi and Cloudflare
+5. **Restrict API token permissions** to minimum required:
+   - Cloudflare token: Zone:Read, DNS:Edit, Cloudflare Tunnel:Edit
+   - UniFi API key: Administrator role (or custom with network management)
+
+### Network Security
+
+- Use HTTPS URLs for UniFi controller (`https://unifi.local:8443`)
+- Verify TLS certificates in production
+- Consider VPN or private networking for UniFi access
+- Firewall rules should restrict UniFi controller access
 
 ## License
 
