@@ -118,6 +118,9 @@ The Dagger module provides containerized, reproducible pipelines for managing hy
   1. API Key (recommended): `--unifi-api-key`
   2. Username/Password: Both `--unifi-username` and `--unifi-password`
   
+  Container version options (optional):
+  - `--terraform-version` - Terraform version to use (default: "latest")
+  
   ```bash
   # Using API key (recommended)
   dagger call deploy-unifi \
@@ -131,20 +134,43 @@ The Dagger module provides containerized, reproducible pipelines for managing hy
       --unifi-url=https://unifi.local:8443 \
       --unifi-username=env:UNIFI_USER \
       --unifi-password=env:UNIFI_PASS
+  
+  # With pinned Terraform version
+  dagger call deploy-unifi \
+      --source=. \
+      --unifi-url=https://unifi.local:8443 \
+      --unifi-api-key=env:UNIFI_API_KEY \
+      --terraform-version=1.10.0
   ```
 
 - **`deploy-cloudflare`** - Deploy Cloudflare Tunnel configuration using Terraform
+  
+  Container version options (optional):
+  - `--terraform-version` - Terraform version to use (default: "latest")
+  
   ```bash
   dagger call deploy-cloudflare \
       --source=. \
       --cloudflare-token=env:CF_TOKEN \
       --cloudflare-account-id=xxx \
       --zone-name=example.com
+  
+  # With pinned Terraform version
+  dagger call deploy-cloudflare \
+      --source=. \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=xxx \
+      --zone-name=example.com \
+      --terraform-version=1.10.0
   ```
 
 - **`deploy`** - Full deployment orchestration (UniFi first, then Cloudflare)
   
   Deploys in the correct order: UniFi DNS first (creates local DNS), then Cloudflare Tunnels (point to now-resolvable hostnames).
+  
+  Container version options (optional):
+  - `--terraform-version` - Terraform version to use (default: "latest")
+  - `--kcl-version` - KCL version to use (default: "latest")
   
   ```bash
   dagger call deploy \
@@ -154,11 +180,26 @@ The Dagger module provides containerized, reproducible pipelines for managing hy
       --cloudflare-token=env:CF_TOKEN \
       --cloudflare-account-id=xxx \
       --zone-name=example.com
+  
+  # With pinned versions
+  dagger call deploy \
+      --kcl-source=./kcl \
+      --unifi-url=https://unifi.local:8443 \
+      --unifi-api-key=env:UNIFI_API_KEY \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=xxx \
+      --zone-name=example.com \
+      --terraform-version=1.10.0 \
+      --kcl-version=0.11.0
   ```
 
 - **`destroy`** - Destroy all resources (Cloudflare first, then UniFi)
   
   Destroys in reverse order to avoid DNS loops: Cloudflare resources first, then UniFi.
+  
+  Container version options (optional):
+  - `--terraform-version` - Terraform version to use (default: "latest")
+  - `--kcl-version` - KCL version to use (default: "latest")
   
   ```bash
   dagger call destroy \
@@ -168,11 +209,27 @@ The Dagger module provides containerized, reproducible pipelines for managing hy
       --cloudflare-token=env:CF_TOKEN \
       --cloudflare-account-id=xxx \
       --zone-name=example.com
+  
+  # With pinned versions
+  dagger call destroy \
+      --kcl-source=./kcl \
+      --unifi-url=https://unifi.local:8443 \
+      --unifi-api-key=env:UNIFI_API_KEY \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=xxx \
+      --zone-name=example.com \
+      --terraform-version=1.10.0 \
+      --kcl-version=0.11.0
   ```
 
 #### Testing
 
 - **`test-integration`** - Run integration tests with ephemeral resources
+  
+  Container version options (optional):
+  - `--terraform-version` - Terraform version to use (default: "latest")
+  - `--kcl-version` - KCL version to use (default: "latest")
+  
   ```bash
   # Basic test
   dagger call test-integration \
@@ -205,6 +262,18 @@ The Dagger module provides containerized, reproducible pipelines for managing hy
       --api-url=https://unifi.local:8443 \
       --unifi-api-key=env:UNIFI_API_KEY \
       --wait-before-cleanup=30
+
+  # With pinned versions
+  dagger call test-integration \
+      --source=. \
+      --cloudflare-zone=test.example.com \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=xxx \
+      --unifi-url=https://unifi.local:8443 \
+      --api-url=https://unifi.local:8443 \
+      --unifi-api-key=env:UNIFI_API_KEY \
+      --terraform-version=1.10.0 \
+      --kcl-version=0.11.0
   ```
 
 - **`hello`** - Verify the module is working
