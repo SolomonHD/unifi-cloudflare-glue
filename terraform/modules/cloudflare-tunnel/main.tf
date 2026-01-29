@@ -19,12 +19,12 @@ data "cloudflare_zone" "this" {
 }
 
 # Create a Cloudflare Tunnel for each MAC address
-resource "cloudflare_tunnel" "this" {
+resource "cloudflare_zero_trust_tunnel_cloudflared" "this" {
   for_each = local.effective_config.tunnels
 
-  account_id = local.effective_config.account_id
-  name       = each.value.tunnel_name
-  secret     = base64encode(random_password.tunnel_secret[each.key].result)
+  account_id    = local.effective_config.account_id
+  name          = each.value.tunnel_name
+  tunnel_secret = base64encode(random_password.tunnel_secret[each.key].result)
 }
 
 # Generate random secrets for each tunnel
@@ -40,7 +40,7 @@ resource "cloudflare_tunnel_config" "this" {
   for_each = local.effective_config.tunnels
 
   account_id = local.effective_config.account_id
-  tunnel_id  = cloudflare_tunnel.this[each.key].id
+  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.this[each.key].id
 
   config {
     # Ingress rules for each service
@@ -90,6 +90,6 @@ resource "cloudflare_record" "tunnel" {
   zone_id = data.cloudflare_zone.this.id
   name    = each.value.hostname
   type    = "CNAME"
-  value   = "${cloudflare_tunnel.this[each.value.mac].id}.cfargotunnel.com"
+  value   = "${cloudflare_zero_trust_tunnel_cloudflared.this[each.value.mac].id}.cfargotunnel.com"
   proxied = true
 }

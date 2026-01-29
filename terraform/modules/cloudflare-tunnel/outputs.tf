@@ -4,14 +4,14 @@
 output "tunnel_ids" {
   description = "Map of MAC address to Cloudflare Tunnel ID"
   value = {
-    for mac, tunnel in cloudflare_tunnel.this : mac => tunnel.id
+    for mac, tunnel in cloudflare_zero_trust_tunnel_cloudflared.this : mac => tunnel.id
   }
 }
 
 output "tunnel_tokens" {
   description = "Map of MAC address to Cloudflare Tunnel token (sensitive) - used for cloudflared authentication"
   value = {
-    for mac, tunnel in cloudflare_tunnel.this : mac => tunnel.tunnel_token
+    for mac, tunnel in cloudflare_zero_trust_tunnel_cloudflared.this : mac => tunnel.tunnel_token
   }
   sensitive = true
 }
@@ -19,7 +19,7 @@ output "tunnel_tokens" {
 output "credentials_json" {
   description = "Map of MAC address to credentials file content (sensitive) - JSON format for cloudflared"
   value = {
-    for mac, tunnel in cloudflare_tunnel.this : mac => jsonencode({
+    for mac, tunnel in cloudflare_zero_trust_tunnel_cloudflared.this : mac => jsonencode({
       AccountTag   = var.config.account_id
       TunnelID     = tunnel.id
       TunnelName   = tunnel.name
@@ -44,7 +44,7 @@ output "zone_id" {
 output "tunnel_names" {
   description = "Map of MAC address to tunnel name"
   value = {
-    for mac, tunnel in cloudflare_tunnel.this : mac => tunnel.name
+    for mac, tunnel in cloudflare_zero_trust_tunnel_cloudflared.this : mac => tunnel.name
   }
 }
 
