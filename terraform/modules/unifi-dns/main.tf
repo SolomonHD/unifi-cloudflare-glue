@@ -8,11 +8,11 @@
 
 # Configure the UniFi provider with credentials from variables
 provider "unifi" {
-  api_url  = var.api_url != "" ? var.api_url : var.unifi_url
-  api_key  = var.unifi_api_key != "" ? var.unifi_api_key : null
-  username = var.unifi_username != "" ? var.unifi_username : null
-  password = var.unifi_password != "" ? var.unifi_password : null
-  insecure = var.unifi_insecure
+  api_url        = var.api_url != "" ? var.api_url : var.unifi_url
+  api_key        = var.unifi_api_key != "" ? var.unifi_api_key : null
+  username       = var.unifi_username != "" ? var.unifi_username : null
+  password       = var.unifi_password != "" ? var.unifi_password : null
+  allow_insecure = var.unifi_insecure
 }
 
 # ==============================================================================
