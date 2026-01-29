@@ -1020,33 +1020,174 @@ class UnifiCloudflareGlue:
             report_lines.append("")
             report_lines.append("PHASE 3: Creating UniFi resources...")
 
-            # This would normally run Terraform for UniFi module
-            report_lines.append(f"  ✓ Created UniFi DNS record: {test_id}.local")
+            # Note: UniFi may fail because the test MAC (aa:bb:cc:dd:ee:ff) won't exist
+            # in real UniFi controllers. This is expected behavior for integration testing.
 
-            validation_results["unifi_dns"] = "created"
+            # Create directory with UniFi config for Terraform
+            unifi_dir = dagger.dag.directory().with_new_file("unifi.json", unifi_json)
+
+            # Create Terraform container following deploy_unifi() pattern
+            unifi_ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
+
+            # Mount UniFi config at /workspace
+            unifi_ctr = unifi_ctr.with_directory("/workspace", unifi_dir)
+
+            # Mount the UniFi DNS Terraform module
+            try:
+                tf_module = source.directory("terraform/modules/unifi-dns")
+                unifi_ctr = unifi_ctr.with_directory("/module", tf_module)
+            except Exception:
+                # If module not in source, try project root
+                try:
+                    tf_module = dagger.dag.directory().directory("terraform/modules/unifi-dns")
+                    unifi_ctr = unifi_ctr.with_directory("/module", tf_module)
+                except Exception:
+                    raise RuntimeError("UniFi DNS Terraform module not found at terraform/modules/unifi-dns")
+
+            # Set environment variables
+            unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
+            unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_api_url", api_url if api_url else unifi_url)
+            unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_config_file", "/workspace/unifi.json")
+
+            # Pass authentication credentials as secrets
+            if unifi_api_key:
+                unifi_ctr = unifi_ctr.with_secret_variable("TF_VAR_unifi_api_key", unifi_api_key)
+            elif unifi_username and unifi_password:
+                unifi_ctr = unifi_ctr.with_secret_variable("TF_VAR_unifi_username", unifi_username)
+                unifi_ctr = unifi_ctr.with_secret_variable("TF_VAR_unifi_password", unifi_password)
+
+            # Set working directory to module
+            unifi_ctr = unifi_ctr.with_workdir("/module")
+
+            # Execute terraform init
+            try:
+                init_result = await unifi_ctr.with_exec(["terraform", "init"]).stdout()
+                report_lines.append("  ✓ Terraform init completed")
+            except dagger.ExecError as e:
+                error_msg = f"Terraform init failed: {str(e)}"
+                report_lines.append(f"  ✗ {error_msg}")
+                validation_results["unifi_error"] = error_msg
+                raise RuntimeError(error_msg) from e
+
+            # Execute terraform apply
+            try:
+                apply_result = await unifi_ctr.with_exec(["terraform", "apply", "-auto-approve"]).stdout()
+                report_lines.append(f"  ✓ Created UniFi DNS record: {test_id}.local")
+                validation_results["unifi_dns"] = "created"
+            except dagger.ExecError as e:
+                error_msg = f"Terraform apply failed: {str(e)}"
+                report_lines.append(f"  ✗ {error_msg}")
+                validation_results["unifi_error"] = error_msg
+                raise RuntimeError(error_msg) from e
 
             # Phase 4: Validation
             report_lines.append("")
             report_lines.append("PHASE 4: Validating resources...")
 
-            # Validate Cloudflare resources
-            cf_validation = True
-            report_lines.append(f"  ✓ Cloudflare tunnel validated: {tunnel_name}")
-            report_lines.append(f"  ✓ Cloudflare DNS validated: {test_hostname}")
-            validation_results["cloudflare_validation"] = "passed"
+            # Create validation container with curl and jq for API calls
+            validate_ctr = dagger.dag.container().from_("alpine/curl:latest")
+            validate_ctr = validate_ctr.with_exec(["apk", "add", "--no-cache", "jq"])
 
-            # Validate UniFi resources
-            unifi_validation = True
-            report_lines.append(f"  ✓ UniFi DNS validated: {test_id}.local")
-            validation_results["unifi_validation"] = "passed"
+            # Cloudflare API Validation
+            # Required permissions: Zone:Read, DNS Records:Read, Cloudflare Tunnel:Read
+            try:
+                # Validate Cloudflare tunnel via API
+                tunnel_list_result = await validate_ctr.with_exec([
+                    "sh", "-c",
+                    f'curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/{cloudflare_account_id}/cfd_tunnel?name={tunnel_name}" \
+                     -H "Authorization: Bearer {cf_token_plain}" \
+                     -H "Content-Type: application/json"'
+                ]).stdout()
 
+                # Parse result to check if tunnel exists
+                tunnel_count = await validate_ctr.with_exec([
+                    "sh", "-c",
+                    f'echo \'{tunnel_list_result}\' | jq \'.result | length\''
+                ]).stdout()
+
+                if tunnel_count.strip() == "1":
+                    report_lines.append(f"  ✓ Cloudflare tunnel validated: {tunnel_name}")
+                    validation_results["cloudflare_tunnel"] = "validated"
+                else:
+                    report_lines.append(f"  ✗ Cloudflare tunnel not found: {tunnel_name}")
+                    validation_results["cloudflare_tunnel"] = "not_found"
+            except Exception as e:
+                report_lines.append(f"  ✗ Cloudflare tunnel validation failed: {str(e)}")
+                validation_results["cloudflare_tunnel"] = f"error: {str(e)}"
+
+            # Validate Cloudflare DNS record via API
+            try:
+                # First get zone ID from zone name
+                zone_list_result = await validate_ctr.with_exec([
+                    "sh", "-c",
+                    f'curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name={cloudflare_zone}" \
+                     -H "Authorization: Bearer {cf_token_plain}" \
+                     -H "Content-Type: application/json"'
+                ]).stdout()
+
+                # Extract zone ID
+                zone_id = await validate_ctr.with_exec([
+                    "sh", "-c",
+                    f'echo \'{zone_list_result}\' | jq -r \'.result[0].id\''
+                ]).stdout()
+
+                if zone_id and zone_id.strip() != "null":
+                    # Query DNS records for the hostname
+                    dns_record_result = await validate_ctr.with_exec([
+                        "sh", "-c",
+                        f'curl -s -X GET "https://api.cloudflare.com/client/v4/zones/{zone_id.strip()}/dns_records?name={test_hostname}" \
+                         -H "Authorization: Bearer {cf_token_plain}" \
+                         -H "Content-Type: application/json"'
+                    ]).stdout()
+
+                    # Check if record exists
+                    dns_count = await validate_ctr.with_exec([
+                        "sh", "-c",
+                        f'echo \'{dns_record_result}\' | jq \'.result | length\''
+                    ]).stdout()
+
+                    if dns_count.strip() == "1":
+                        report_lines.append(f"  ✓ Cloudflare DNS validated: {test_hostname}")
+                        validation_results["cloudflare_dns"] = "validated"
+                    else:
+                        report_lines.append(f"  ✗ Cloudflare DNS not found: {test_hostname}")
+                        validation_results["cloudflare_dns"] = "not_found"
+                else:
+                    report_lines.append(f"  ✗ Could not find zone: {cloudflare_zone}")
+                    validation_results["cloudflare_dns"] = "zone_not_found"
+            except Exception as e:
+                report_lines.append(f"  ✗ Cloudflare DNS validation failed: {str(e)}")
+                validation_results["cloudflare_dns"] = f"error: {str(e)}"
+
+            # UniFi Validation (uses Terraform success as proxy due to API complexity)
+            try:
+                # UniFi API validation is complex due to authentication requirements
+                # For integration testing, we validate based on Terraform apply success
+                if validation_results.get("unifi_dns") == "created":
+                    report_lines.append(f"  ✓ UniFi DNS validated (Terraform apply succeeded)")
+                    validation_results["unifi_validation"] = "validated"
+                else:
+                    report_lines.append(f"  ○ UniFi DNS validation skipped (creation may have failed)")
+                    validation_results["unifi_validation"] = "skipped"
+            except Exception as e:
+                report_lines.append(f"  ○ UniFi validation skipped: {str(e)}")
+                validation_results["unifi_validation"] = f"skipped: {str(e)}"
+
+            # Optional connectivity check (future enhancement)
             if validate_connectivity:
                 report_lines.append("  ○ HTTP connectivity check skipped (would test actual connectivity)")
                 validation_results["connectivity"] = "skipped"
 
+            # Validation summary based on actual API responses
+            cf_success = validation_results.get("cloudflare_tunnel") == "validated" and \
+                         validation_results.get("cloudflare_dns") == "validated"
+
             report_lines.append("")
             report_lines.append("-" * 60)
-            report_lines.append("VALIDATION SUMMARY: ✓ ALL CHECKS PASSED")
+            if cf_success:
+                report_lines.append("VALIDATION SUMMARY: ✓ CLOUDFLARE RESOURCES VALIDATED")
+            else:
+                report_lines.append("VALIDATION SUMMARY: ✗ SOME RESOURCES NOT FOUND")
             report_lines.append("-" * 60)
 
             # Phase 4.5: Wait before cleanup (if enabled)
@@ -1068,34 +1209,119 @@ class UnifiCloudflareGlue:
                 report_lines.append("")
                 report_lines.append("PHASE 5: Cleanup (guaranteed execution)...")
 
+                # Cleanup Cloudflare resources first (reverse order of creation)
+                report_lines.append("  Cleaning up Cloudflare resources...")
                 try:
-                    # Cleanup Cloudflare resources first
-                    report_lines.append("  Cleaning up Cloudflare resources...")
-                    report_lines.append(f"    ✓ Destroyed tunnel: {tunnel_name}")
-                    report_lines.append(f"    ✓ Deleted DNS record: {test_hostname}")
-                    cleanup_status["cloudflare"] = "success"
+                    # Create Cloudflare cleanup container
+                    cf_cleanup_ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
+
+                    # Mount Cloudflare config at /workspace
+                    cf_cleanup_ctr = cf_cleanup_ctr.with_directory("/workspace", cloudflare_dir)
+
+                    # Mount the Cloudflare Tunnel Terraform module
+                    try:
+                        tf_module = source.directory("terraform/modules/cloudflare-tunnel")
+                        cf_cleanup_ctr = cf_cleanup_ctr.with_directory("/module", tf_module)
+                    except Exception:
+                        # If module not in source, try project root
+                        try:
+                            tf_module = dagger.dag.directory().directory("terraform/modules/cloudflare-tunnel")
+                            cf_cleanup_ctr = cf_cleanup_ctr.with_directory("/module", tf_module)
+                        except Exception:
+                            raise RuntimeError("Cloudflare Tunnel Terraform module not found at terraform/modules/cloudflare-tunnel")
+
+                    # Set environment variables
+                    cf_cleanup_ctr = cf_cleanup_ctr.with_env_variable("TF_VAR_cloudflare_account_id", cloudflare_account_id)
+                    cf_cleanup_ctr = cf_cleanup_ctr.with_env_variable("TF_VAR_zone_name", cloudflare_zone)
+                    cf_cleanup_ctr = cf_cleanup_ctr.with_env_variable("TF_VAR_config_file", "/workspace/cloudflare.json")
+
+                    # Pass Cloudflare token as secret
+                    cf_cleanup_ctr = cf_cleanup_ctr.with_secret_variable("TF_VAR_cloudflare_token", cloudflare_token)
+
+                    # Set working directory to module
+                    cf_cleanup_ctr = cf_cleanup_ctr.with_workdir("/module")
+
+                    # Execute terraform init
+                    try:
+                        await cf_cleanup_ctr.with_exec(["terraform", "init"]).stdout()
+                    except dagger.ExecError as e:
+                        raise RuntimeError(f"Terraform init failed: {str(e)}")
+
+                    # Execute terraform destroy
+                    try:
+                        destroy_result = await cf_cleanup_ctr.with_exec([
+                            "terraform", "destroy", "-auto-approve"
+                        ]).stdout()
+                        report_lines.append(f"    ✓ Destroyed tunnel: {tunnel_name}")
+                        report_lines.append(f"    ✓ Deleted DNS record: {test_hostname}")
+                        cleanup_status["cloudflare"] = "success"
+                    except dagger.ExecError as e:
+                        raise RuntimeError(f"Terraform destroy failed: {str(e)}")
                 except Exception as e:
                     cleanup_status["cloudflare"] = f"failed: {str(e)}"
                     report_lines.append(f"    ✗ Failed to cleanup Cloudflare: {str(e)}")
 
+                # Cleanup UniFi resources second
+                report_lines.append("  Cleaning up UniFi resources...")
                 try:
-                    # Cleanup UniFi resources second
-                    report_lines.append("  Cleaning up UniFi resources...")
-                    report_lines.append(f"    ✓ Deleted UniFi DNS record: {test_id}.local")
-                    cleanup_status["unifi"] = "success"
+                    # Create UniFi cleanup container
+                    unifi_cleanup_ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
+
+                    # Mount UniFi config at /workspace
+                    unifi_cleanup_ctr = unifi_cleanup_ctr.with_directory("/workspace", unifi_dir)
+
+                    # Mount the UniFi DNS Terraform module
+                    try:
+                        tf_module = source.directory("terraform/modules/unifi-dns")
+                        unifi_cleanup_ctr = unifi_cleanup_ctr.with_directory("/module", tf_module)
+                    except Exception:
+                        # If module not in source, try project root
+                        try:
+                            tf_module = dagger.dag.directory().directory("terraform/modules/unifi-dns")
+                            unifi_cleanup_ctr = unifi_cleanup_ctr.with_directory("/module", tf_module)
+                        except Exception:
+                            raise RuntimeError("UniFi DNS Terraform module not found at terraform/modules/unifi-dns")
+
+                    # Set environment variables
+                    unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
+                    unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable("TF_VAR_api_url", api_url if api_url else unifi_url)
+                    unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable("TF_VAR_config_file", "/workspace/unifi.json")
+
+                    # Pass authentication credentials as secrets
+                    if unifi_api_key:
+                        unifi_cleanup_ctr = unifi_cleanup_ctr.with_secret_variable("TF_VAR_unifi_api_key", unifi_api_key)
+                    elif unifi_username and unifi_password:
+                        unifi_cleanup_ctr = unifi_cleanup_ctr.with_secret_variable("TF_VAR_unifi_username", unifi_username)
+                        unifi_cleanup_ctr = unifi_cleanup_ctr.with_secret_variable("TF_VAR_unifi_password", unifi_password)
+
+                    # Set working directory to module
+                    unifi_cleanup_ctr = unifi_cleanup_ctr.with_workdir("/module")
+
+                    # Execute terraform init
+                    try:
+                        await unifi_cleanup_ctr.with_exec(["terraform", "init"]).stdout()
+                    except dagger.ExecError as e:
+                        raise RuntimeError(f"Terraform init failed: {str(e)}")
+
+                    # Execute terraform destroy
+                    try:
+                        destroy_result = await unifi_cleanup_ctr.with_exec([
+                            "terraform", "destroy", "-auto-approve"
+                        ]).stdout()
+                        report_lines.append(f"    ✓ Deleted UniFi DNS record: {test_id}.local")
+                        cleanup_status["unifi"] = "success"
+                    except dagger.ExecError as e:
+                        raise RuntimeError(f"Terraform destroy failed: {str(e)}")
                 except Exception as e:
                     cleanup_status["unifi"] = f"failed: {str(e)}"
                     report_lines.append(f"    ✗ Failed to cleanup UniFi: {str(e)}")
 
-                try:
-                    # Cleanup local state files
-                    report_lines.append("  Cleaning up local state files...")
-                    report_lines.append("    ✓ Removed Terraform state files")
-                    cleanup_status["state_files"] = "success"
-                except Exception as e:
-                    cleanup_status["state_files"] = f"failed: {str(e)}"
-                    report_lines.append(f"    ✗ Failed to cleanup state files: {str(e)}")
+                # Cleanup local state files (state is container-local, so just document)
+                report_lines.append("  Cleaning up local state files...")
+                report_lines.append("    ✓ Terraform state is container-local (automatically cleaned up)")
+                cleanup_status["state_files"] = "success"
 
+                # Cleanup summary with warnings
                 report_lines.append("")
                 report_lines.append("-" * 60)
                 report_lines.append("CLEANUP SUMMARY")
@@ -1103,6 +1329,16 @@ class UnifiCloudflareGlue:
                 report_lines.append(f"  Cloudflare: {cleanup_status['cloudflare']}")
                 report_lines.append(f"  UniFi: {cleanup_status['unifi']}")
                 report_lines.append(f"  State Files: {cleanup_status['state_files']}")
+
+                # Display warning if any cleanup step failed
+                if not all(status == "success" for status in cleanup_status.values()):
+                    report_lines.append("")
+                    report_lines.append("⚠ WARNING: Some cleanup steps failed!")
+                    report_lines.append("  Manual cleanup may be required:")
+                    if cleanup_status["cloudflare"] != "success":
+                        report_lines.append(f"    - Check Cloudflare dashboard for remaining resources: {tunnel_name}, {test_hostname}")
+                    if cleanup_status["unifi"] != "success":
+                        report_lines.append(f"    - Check UniFi controller for remaining DNS record: {test_id}.local")
             else:
                 report_lines.append("")
                 report_lines.append("PHASE 5: Cleanup SKIPPED (cleanup=false)")

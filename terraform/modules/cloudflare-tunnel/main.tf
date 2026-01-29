@@ -1,23 +1,35 @@
 # Cloudflare Tunnel Module
 # This module manages Cloudflare Tunnels and edge DNS records
 
+# ==============================================================================
+# Locals
+# ==============================================================================
+
+locals {
+  # Load config from file if config_file is provided, otherwise use config
+  effective_config = var.config_file != "" ? jsondecode(file(var.config_file)) : var.config
+
+  # Validate that at least one of config or config_file is provided
+  _validate_config = local.effective_config != null ? true : tobool("ERROR: Either config or config_file must be provided")
+}
+
 # Query existing Cloudflare Zone by name
 data "cloudflare_zone" "this" {
-  name = var.config.zone_name
+  name = local.effective_config.zone_name
 }
 
 # Create a Cloudflare Tunnel for each MAC address
 resource "cloudflare_tunnel" "this" {
-  for_each = var.config.tunnels
+  for_each = local.effective_config.tunnels
 
-  account_id = var.config.account_id
+  account_id = local.effective_config.account_id
   name       = each.value.tunnel_name
   secret     = base64encode(random_password.tunnel_secret[each.key].result)
 }
 
 # Generate random secrets for each tunnel
 resource "random_password" "tunnel_secret" {
-  for_each = var.config.tunnels
+  for_each = local.effective_config.tunnels
 
   length  = 32
   special = false
@@ -25,9 +37,9 @@ resource "random_password" "tunnel_secret" {
 
 # Configure tunnel ingress rules
 resource "cloudflare_tunnel_config" "this" {
-  for_each = var.config.tunnels
+  for_each = local.effective_config.tunnels
 
-  account_id = var.config.account_id
+  account_id = local.effective_config.account_id
   tunnel_id  = cloudflare_tunnel.this[each.key].id
 
   config {
@@ -59,9 +71,9 @@ resource "cloudflare_record" "tunnel" {
   # Create a unique key for each MAC + service combination
   for_each = {
     for pair in setproduct(
-      keys(var.config.tunnels),
+      keys(local.effective_config.tunnels),
       flatten([
-        for mac, tunnel in var.config.tunnels : [
+        for mac, tunnel in local.effective_config.tunnels : [
           for idx, svc in tunnel.services : {
             mac      = mac
             index    = idx
