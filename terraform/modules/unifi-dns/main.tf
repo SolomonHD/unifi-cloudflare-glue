@@ -12,6 +12,7 @@ provider "unifi" {
   api_key  = var.unifi_api_key != "" ? var.unifi_api_key : null
   username = var.unifi_username != "" ? var.unifi_username : null
   password = var.unifi_password != "" ? var.unifi_password : null
+  insecure = var.unifi_insecure
 }
 
 # ==============================================================================

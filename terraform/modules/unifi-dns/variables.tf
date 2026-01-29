@@ -54,3 +54,9 @@ variable "unifi_password" {
   sensitive   = true
   default     = ""
 }
+
+variable "unifi_insecure" {
+  description = "Skip TLS certificate verification for UniFi controller (useful for self-signed certificates)"
+  type        = bool
+  default     = false
+}

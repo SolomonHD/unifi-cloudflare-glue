@@ -118,6 +118,7 @@ class UnifiCloudflareGlue:
         unifi_api_key: Annotated[Optional[Secret], Doc("UniFi API key (mutually exclusive with username/password)")] = None,
         unifi_username: Annotated[Optional[Secret], Doc("UniFi username (use with password)")] = None,
         unifi_password: Annotated[Optional[Secret], Doc("UniFi password (use with username)")] = None,
+        unifi_insecure: Annotated[bool, Doc("Skip TLS verification for UniFi controller (useful for self-signed certificates)")] = False,
         terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
     ) -> str:
         """
@@ -137,6 +138,7 @@ class UnifiCloudflareGlue:
             unifi_api_key: UniFi API key for authentication
             unifi_username: UniFi username for authentication
             unifi_password: UniFi password for authentication
+            unifi_insecure: Skip TLS verification for self-signed certificates
             terraform_version: Terraform version to use (default: "latest")
 
         Returns:
@@ -147,6 +149,13 @@ class UnifiCloudflareGlue:
                 --source=. \\
                 --unifi-url=https://unifi.local:8443 \\
                 --unifi-api-key=env:UNIFI_API_KEY
+
+            # With insecure TLS (for self-signed certificates)
+            dagger call deploy-unifi \\
+                --source=. \\
+                --unifi-url=https://192.168.10.1 \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --unifi-insecure
         """
         # Validate authentication - either API key OR username/password, not both
         using_api_key = unifi_api_key is not None
@@ -192,6 +201,7 @@ class UnifiCloudflareGlue:
         ctr = ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
         ctr = ctr.with_env_variable("TF_VAR_api_url", actual_api_url)
         ctr = ctr.with_env_variable("TF_VAR_config_file", "/workspace/unifi.json")
+        ctr = ctr.with_env_variable("TF_VAR_unifi_insecure", str(unifi_insecure).lower())
 
         # Add authentication secrets via environment variables
         if using_api_key and unifi_api_key:
@@ -310,6 +320,7 @@ class UnifiCloudflareGlue:
         unifi_api_key: Annotated[Optional[Secret], Doc("UniFi API key")] = None,
         unifi_username: Annotated[Optional[Secret], Doc("UniFi username")] = None,
         unifi_password: Annotated[Optional[Secret], Doc("UniFi password")] = None,
+        unifi_insecure: Annotated[bool, Doc("Skip TLS verification for UniFi controller")] = False,
         terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
         kcl_version: Annotated[str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")] = "latest",
     ) -> str:
@@ -333,6 +344,7 @@ class UnifiCloudflareGlue:
             unifi_api_key: UniFi API key (optional)
             unifi_username: UniFi username (optional)
             unifi_password: UniFi password (optional)
+            unifi_insecure: Skip TLS verification for self-signed certificates
             terraform_version: Terraform version to use (default: "latest")
             kcl_version: KCL version to use (default: "latest")
 
@@ -347,6 +359,16 @@ class UnifiCloudflareGlue:
                 --cloudflare-account-id=xxx \\
                 --zone-name=example.com \\
                 --unifi-api-key=env:UNIFI_API_KEY
+
+            # With insecure TLS for self-signed certificates
+            dagger call deploy \\
+                --kcl-source=./kcl \\
+                --unifi-url=https://192.168.10.1 \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --unifi-insecure
         """
         results = []
 
@@ -382,6 +404,7 @@ class UnifiCloudflareGlue:
             unifi_api_key=unifi_api_key,
             unifi_username=unifi_username,
             unifi_password=unifi_password,
+            unifi_insecure=unifi_insecure,
             terraform_version=terraform_version,
         )
 
@@ -441,6 +464,7 @@ class UnifiCloudflareGlue:
         unifi_api_key: Annotated[Optional[Secret], Doc("UniFi API key")] = None,
         unifi_username: Annotated[Optional[Secret], Doc("UniFi username")] = None,
         unifi_password: Annotated[Optional[Secret], Doc("UniFi password")] = None,
+        unifi_insecure: Annotated[bool, Doc("Skip TLS verification for UniFi controller")] = False,
         terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
         kcl_version: Annotated[str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")] = "latest",
     ) -> str:
@@ -463,6 +487,7 @@ class UnifiCloudflareGlue:
             unifi_api_key: UniFi API key (optional)
             unifi_username: UniFi username (optional)
             unifi_password: UniFi password (optional)
+            unifi_insecure: Skip TLS verification for self-signed certificates
             terraform_version: Terraform version to use (default: "latest")
             kcl_version: KCL version to use (default: "latest")
 
@@ -477,6 +502,16 @@ class UnifiCloudflareGlue:
                 --cloudflare-account-id=xxx \\
                 --zone-name=example.com \\
                 --unifi-api-key=env:UNIFI_API_KEY
+
+            # With insecure TLS for self-signed certificates
+            dagger call destroy \\
+                --kcl-source=./kcl \\
+                --unifi-url=https://192.168.10.1 \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --unifi-insecure
         """
         results = []
 
@@ -579,6 +614,7 @@ class UnifiCloudflareGlue:
         ctr = ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
         ctr = ctr.with_env_variable("TF_VAR_api_url", actual_api_url)
         ctr = ctr.with_env_variable("TF_VAR_config_file", "/workspace/unifi.json")
+        ctr = ctr.with_env_variable("TF_VAR_unifi_insecure", str(unifi_insecure).lower())
 
         if unifi_api_key:
             ctr = ctr.with_secret_variable("TF_VAR_unifi_api_key", unifi_api_key)
@@ -799,6 +835,7 @@ class UnifiCloudflareGlue:
         unifi_api_key: Annotated[Optional[Secret], Doc("UniFi API key (mutually exclusive with username/password)")] = None,
         unifi_username: Annotated[Optional[Secret], Doc("UniFi username (use with password)")] = None,
         unifi_password: Annotated[Optional[Secret], Doc("UniFi password (use with username)")] = None,
+        unifi_insecure: Annotated[bool, Doc("Skip TLS verification for UniFi controller (useful for self-signed certificates)")] = False,
         cleanup: Annotated[bool, Doc("Whether to cleanup resources after test (default: true)")] = True,
         validate_connectivity: Annotated[bool, Doc("Whether to test actual HTTP connectivity")] = False,
         test_timeout: Annotated[str, Doc("Timeout for test operations (e.g., 5m)")] = "5m",
@@ -827,6 +864,7 @@ class UnifiCloudflareGlue:
             unifi_api_key: UniFi API key (mutually exclusive with username/password)
             unifi_username: UniFi username (use with password)
             unifi_password: UniFi password (use with username)
+            unifi_insecure: Skip TLS verification for self-signed certificates
             cleanup: Whether to cleanup resources after test (default: true)
             validate_connectivity: Whether to test actual HTTP connectivity
             test_timeout: Timeout for test operations (e.g., 5m)
@@ -850,6 +888,17 @@ class UnifiCloudflareGlue:
                 --unifi-api-key=env:UNIFI_API_KEY \\
                 --unifi-url=https://unifi.local:8443 \\
                 --api-url=https://unifi.local:8443
+
+            # With insecure TLS for self-signed certificates
+            dagger call test-integration \\
+                --source=. \\
+                --cloudflare-zone=test.example.com \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --unifi-url=https://192.168.10.1 \\
+                --api-url=https://192.168.10.1 \\
+                --unifi-insecure
 
             # With cache buster to force re-execution
             dagger call test-integration \\
@@ -1051,6 +1100,7 @@ class UnifiCloudflareGlue:
             unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
             unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_api_url", api_url if api_url else unifi_url)
             unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_config_file", "/workspace/unifi.json")
+            unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_unifi_insecure", str(unifi_insecure).lower())
 
             # Pass authentication credentials as secrets
             if unifi_api_key:
@@ -1290,6 +1340,7 @@ class UnifiCloudflareGlue:
                     unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
                     unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable("TF_VAR_api_url", api_url if api_url else unifi_url)
                     unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable("TF_VAR_config_file", "/workspace/unifi.json")
+                    unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable("TF_VAR_unifi_insecure", str(unifi_insecure).lower())
 
                     # Pass authentication credentials as secrets
                     if unifi_api_key:

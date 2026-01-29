@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **UniFi TLS Insecure Mode Support:**
+  - Added `unifi_insecure` parameter to all UniFi-related functions
+  - Allows skipping TLS certificate verification for UniFi controllers with self-signed certificates
+  - Updated functions: `deploy-unifi`, `deploy`, `destroy`, `test-integration`
+  - Terraform module updated with `unifi_insecure` variable
+  - Fixes error: `tls: failed to verify certificate: x509: certificate is valid for 127.0.0.1, not 192.168.10.1`
+  - Usage: Add `--unifi-insecure` flag when calling functions
+
 ### Changed
 
 - **Cloudflare Provider v5 Migration - DNS Record Resource:**
