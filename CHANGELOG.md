@@ -8,10 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Cloudflare Provider v5 Migration - DNS Record Resource:**
+  - Migrated `cloudflare_record` resource to `cloudflare_dns_record`
+  - Updated attribute: `value` → `content` (for CNAME records)
+  - Added required `ttl = 1` attribute (automatic TTL)
+  - Updated all output references from `cloudflare_record.tunnel` to `cloudflare_dns_record.tunnel`
+  - Files modified: `terraform/modules/cloudflare-tunnel/main.tf`, `outputs.tf`, `README.md`
+  - **State migration required:** Use `terraform state mv cloudflare_record.tunnel cloudflare_dns_record.tunnel` when applying to existing infrastructure
+
 - **Cloudflare Provider v5 Migration - Tunnel Resource:**
   - Migrated `cloudflare_tunnel` resource to `cloudflare_zero_trust_tunnel_cloudflared`
   - Updated attribute: `secret` → `tunnel_secret` (base64-encoded tunnel secret)
-  - Updated all references in `cloudflare_tunnel_config` and `cloudflare_record` resources
+  - Updated all references in `cloudflare_tunnel_config` and `cloudflare_dns_record` resources
   - Updated all output values to reference new resource type
   - Files modified: `terraform/modules/cloudflare-tunnel/main.tf`, `outputs.tf`
   - **State migration required:** Use `terraform state mv` commands when applying to existing infrastructure

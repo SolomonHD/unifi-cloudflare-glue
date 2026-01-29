@@ -32,7 +32,7 @@ output "credentials_json" {
 output "public_hostnames" {
   description = "List of all public hostnames created for tunnel services"
   value = distinct([
-    for record in cloudflare_record.tunnel : record.name
+    for record in cloudflare_dns_record.tunnel : record.name
   ])
 }
 
@@ -51,6 +51,6 @@ output "tunnel_names" {
 output "record_ids" {
   description = "Map of record keys to Cloudflare record IDs"
   value = {
-    for key, record in cloudflare_record.tunnel : key => record.id
+    for key, record in cloudflare_dns_record.tunnel : key => record.id
   }
 }
