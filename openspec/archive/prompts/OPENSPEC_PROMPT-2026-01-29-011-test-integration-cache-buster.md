@@ -73,3 +73,4 @@ When `wait_before_cleanup` is greater than 0:
 
 - Target function: `test_integration` at line 737 in `src/main/main.py`
 - Dagger caching documentation: Cache is keyed by function inputs and container state
+- Pattern for cache invalidation: Use `with_env_variable("CACHE_BUSTER", cache_buster)` when value is non-empty

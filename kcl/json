@@ -1,0 +1,100 @@
+sample_config:
+  devices:
+  - friendly_hostname: media-server
+    domain: internal.lan
+    endpoints:
+    - mac_address: AA:BB:CC:DD:EE:01
+      nic_name: eth0
+      service_cnames:
+      - nas.internal.lan
+      query_unifi: true
+    services:
+    - name: jellyfin
+      port: 8096
+      protocol: http
+      distribution: both
+      internal_hostname: jellyfin.internal.lan
+      public_hostname: jellyfin.example.com
+    - name: plex
+      port: 32400
+      protocol: https
+      distribution: unifi_only
+      internal_hostname: plex.internal.lan
+    - name: admin-panel
+      port: 8080
+      protocol: https
+      distribution: cloudflare_only
+      public_hostname: admin.example.com
+    unifi_site: default
+    service_cnames:
+    - storage.internal.lan
+  - friendly_hostname: backup-server
+    domain: internal.lan
+    endpoints:
+    - mac_address: aa-bb-cc-dd-ee-02
+      nic_name: eth0
+      service_cnames:
+      - backup-eth0.internal.lan
+      query_unifi: true
+    - mac_address: AABBCCDDEE03
+      nic_name: eth1
+      service_cnames:
+      - backup-eth1.internal.lan
+      query_unifi: true
+    services:
+    - name: restic
+      port: 8000
+      protocol: http
+      distribution: unifi_only
+      internal_hostname: backups.internal.lan
+    unifi_site: default
+    service_cnames: []
+  - friendly_hostname: iot-hub
+    domain: internal.lan
+    endpoints:
+    - mac_address: Ab:Cd:Ef:01:23:45
+      service_cnames: []
+      query_unifi: true
+    services: []
+    unifi_site: default
+    service_cnames: []
+  default_domain: internal.lan
+  unifi_controller:
+    host: unifi.internal.lan
+    port: 443
+    username_ref: UNIFI_USERNAME
+    password_ref: UNIFI_PASSWORD
+    site: default
+result:
+  devices:
+  - friendly_hostname: media-server
+    domain: internal.lan
+    service_cnames:
+    - storage.internal.lan
+    - jellyfin.internal.lan
+    - plex.internal.lan
+    nics:
+    - mac_address: aa:bb:cc:dd:ee:01
+      nic_name: eth0
+      service_cnames:
+      - nas.internal.lan
+  - friendly_hostname: backup-server
+    domain: internal.lan
+    service_cnames:
+    - backups.internal.lan
+    nics:
+    - mac_address: aa:bb:cc:dd:ee:02
+      nic_name: eth0
+      service_cnames:
+      - backup-eth0.internal.lan
+    - mac_address: aa:bb:cc:dd:ee:03
+      nic_name: eth1
+      service_cnames:
+      - backup-eth1.internal.lan
+  - friendly_hostname: iot-hub
+    domain: internal.lan
+    service_cnames: []
+    nics:
+    - mac_address: ab:cd:ef:01:23:45
+      service_cnames: []
+  default_domain: internal.lan

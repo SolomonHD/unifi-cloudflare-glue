@@ -1,0 +1,57 @@
+{
+  "devices": [
+    {
+      "friendly_hostname": "media-server",
+      "domain": "internal.lan",
+      "service_cnames": [
+        "storage.internal.lan",
+        "jellyfin.internal.lan",
+        "plex.internal.lan"
+      ],
+      "nics": [
+        {
+          "mac_address": "aa:bb:cc:dd:ee:01",
+          "nic_name": "eth0",
+          "service_cnames": [
+            "nas.internal.lan"
+          ]
+        }
+      ]
+    },
+    {
+      "friendly_hostname": "backup-server",
+      "domain": "internal.lan",
+      "service_cnames": [
+        "backups.internal.lan"
+      ],
+      "nics": [
+        {
+          "mac_address": "aa:bb:cc:dd:ee:02",
+          "nic_name": "eth0",
+          "service_cnames": [
+            "backup-eth0.internal.lan"
+          ]
+        },
+        {
+          "mac_address": "aa:bb:cc:dd:ee:03",
+          "nic_name": "eth1",
+          "service_cnames": [
+            "backup-eth1.internal.lan"
+          ]
+        }
+      ]
+    },
+    {
+      "friendly_hostname": "iot-hub",
+      "domain": "internal.lan",
+      "service_cnames": [],
+      "nics": [
+        {
+          "mac_address": "ab:cd:ef:01:23:45",
+          "service_cnames": []
+        }
+      ]
+    }
+  ],
+  "default_domain": "internal.lan"
+}

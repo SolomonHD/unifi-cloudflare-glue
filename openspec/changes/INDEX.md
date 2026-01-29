@@ -16,6 +16,7 @@ This index maps the sequence of changes needed to implement the `unifi-cloudflar
 | 008 | [terraform-unifi-dns-module](./008-terraform-unifi-dns-module.md) | Terraform UniFi DNS module | 001 |
 | 009 | [terraform-cloudflare-tunnel-module](./009-terraform-cloudflare-tunnel-module.md) | Terraform Cloudflare Tunnel module | 001 |
 | 010 | [example-homelab-media-stack](./010-example-homelab-media-stack.md) | Working example with media services | 007, 008, 009 |
+| 011 | [test-integration-cache-buster](./011-test-integration-cache-buster.md) | Add cache_buster and wait_before_cleanup parameters to test_integration | 010 |
 
 ## Implementation Phases
 
