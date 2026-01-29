@@ -53,7 +53,7 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "this" {
           service  = svc.local_service_url
           origin_request = svc.no_tls_verify ? {
             no_tls_verify = true
-          } : null
+          } : {}
         }
       ],
       # Catch-all rule
