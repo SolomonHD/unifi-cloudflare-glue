@@ -276,8 +276,9 @@ class UnifiCloudflareGlue:
         ctr = ctr.with_env_variable("TF_VAR_zone_name", zone_name)
         ctr = ctr.with_env_variable("TF_VAR_config_file", "/workspace/cloudflare.json")
 
-        # Add Cloudflare token as secret
+        # Add Cloudflare token as secret (both as TF variable and env var for provider auth)
         ctr = ctr.with_secret_variable("TF_VAR_cloudflare_token", cloudflare_token)
+        ctr = ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
 
         # Set working directory
         ctr = ctr.with_workdir("/module" if "/module" in str(ctr) else "/workspace")
@@ -527,6 +528,7 @@ class UnifiCloudflareGlue:
         ctr = ctr.with_env_variable("TF_VAR_zone_name", zone_name)
         ctr = ctr.with_env_variable("TF_VAR_config_file", "/workspace/cloudflare.json")
         ctr = ctr.with_secret_variable("TF_VAR_cloudflare_token", cloudflare_token)
+        ctr = ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
         ctr = ctr.with_workdir("/module" if "/module" in str(ctr) else "/workspace")
 
         try:
@@ -987,8 +989,9 @@ class UnifiCloudflareGlue:
             cf_ctr = cf_ctr.with_env_variable("TF_VAR_zone_name", cloudflare_zone)
             cf_ctr = cf_ctr.with_env_variable("TF_VAR_config_file", "/workspace/cloudflare.json")
 
-            # Pass Cloudflare token as secret
+            # Pass Cloudflare token as secret (both as TF variable and env var for provider auth)
             cf_ctr = cf_ctr.with_secret_variable("TF_VAR_cloudflare_token", cloudflare_token)
+            cf_ctr = cf_ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
 
             # Set working directory to module
             cf_ctr = cf_ctr.with_workdir("/module")
@@ -1235,8 +1238,9 @@ class UnifiCloudflareGlue:
                     cf_cleanup_ctr = cf_cleanup_ctr.with_env_variable("TF_VAR_zone_name", cloudflare_zone)
                     cf_cleanup_ctr = cf_cleanup_ctr.with_env_variable("TF_VAR_config_file", "/workspace/cloudflare.json")
 
-                    # Pass Cloudflare token as secret
+                    # Pass Cloudflare token as secret (both as TF variable and env var for provider auth)
                     cf_cleanup_ctr = cf_cleanup_ctr.with_secret_variable("TF_VAR_cloudflare_token", cloudflare_token)
+                    cf_cleanup_ctr = cf_cleanup_ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
 
                     # Set working directory to module
                     cf_cleanup_ctr = cf_cleanup_ctr.with_workdir("/module")
