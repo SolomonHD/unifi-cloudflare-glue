@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Dagger Engine Upgrade:**
+  - Updated `engineVersion` in `dagger.json` from `v0.19.7` to `v0.19.8`
+  - Incorporates latest bug fixes and performance improvements
+  - Maintains full backward compatibility with existing functions
+
 ### Added
 
 - **Container version control parameters:**

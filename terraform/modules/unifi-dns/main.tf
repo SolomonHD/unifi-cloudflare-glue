@@ -3,13 +3,19 @@
 # The provider supports native DNS record resources (unifi_dns_record)
 
 # ==============================================================================
-# Local Values
+# Locals
 # ==============================================================================
 
 locals {
+  # Load config from file if config_file is provided, otherwise use config
+  effective_config = var.config_file != "" ? jsondecode(file(var.config_file)) : var.config
+
+  # Validate that at least one of config or config_file is provided
+  _validate_config = local.effective_config != null ? true : tobool("ERROR: Either config or config_file must be provided")
+
   # Create a flat list of all MAC addresses to look up with their device context
   mac_lookups = flatten([
-    for device in var.config.devices : [
+    for device in local.effective_config.devices : [
       for idx, nic in device.nics : {
         key = "${device.friendly_hostname}-${idx}"
         # Normalize MAC to lowercase colon format
@@ -19,7 +25,7 @@ locals {
           : replace(lower(nic.mac_address), "-", ":")
         )
         device_name = device.friendly_hostname
-        domain      = coalesce(device.domain, var.config.default_domain)
+        domain      = coalesce(device.domain, local.effective_config.default_domain)
         nic_name    = nic.nic_name
         nic_index   = idx
       }
@@ -57,7 +63,7 @@ locals {
 
   # Build device to MAC mapping (use first NIC's MAC for DNS if device has multiple)
   device_primary_mac = {
-    for device in var.config.devices : device.friendly_hostname => lower(
+    for device in local.effective_config.devices : device.friendly_hostname => lower(
       length(regexall("^[0-9a-fA-F]{12}$", device.nics[0].mac_address)) > 0
       ? join(":", regexall("[0-9a-fA-F]{2}", device.nics[0].mac_address))
       : replace(lower(device.nics[0].mac_address), "-", ":")
@@ -66,7 +72,7 @@ locals {
 
   # Determine which devices have at least one found MAC
   devices_with_found_macs = {
-    for device in var.config.devices : device.friendly_hostname => device
+    for device in local.effective_config.devices : device.friendly_hostname => device
     if length(setintersection(
       [for nic in device.nics : lower(
         length(regexall("^[0-9a-fA-F]{12}$", nic.mac_address)) > 0
@@ -81,7 +87,7 @@ locals {
   dns_records = {
     for name, device in local.devices_with_found_macs : name => {
       hostname = device.friendly_hostname
-      domain   = coalesce(device.domain, var.config.default_domain)
+      domain   = coalesce(device.domain, local.effective_config.default_domain)
       ip       = local.found_macs[local.device_primary_mac[device.friendly_hostname]].ip
     }
   }
@@ -96,7 +102,7 @@ locals {
 data "unifi_user" "device" {
   for_each = local.mac_lookup_map
 
-  site = var.config.site
+  site = local.effective_config.site
   mac  = each.value.mac_normalized
 }
 
@@ -109,7 +115,7 @@ data "unifi_user" "device" {
 resource "unifi_dns_record" "dns_record" {
   for_each = local.dns_records
 
-  site    = var.config.site
+  site    = local.effective_config.site
   name    = each.value.hostname
   record  = each.value.ip
   type    = "A"
@@ -122,14 +128,14 @@ resource "unifi_dns_record" "dns_record" {
 locals {
   # Flatten all service_cnames from devices and NICs
   cname_records = flatten([
-    for device in var.config.devices : concat(
+    for device in local.effective_config.devices : concat(
       # Device-level CNAMEs
       [
         for cname in coalesce(device.service_cnames, []) : {
           key      = "${device.friendly_hostname}-${cname}"
-          name     = trimsuffix(cname, ".${coalesce(device.domain, var.config.default_domain)}")
+          name     = trimsuffix(cname, ".${coalesce(device.domain, local.effective_config.default_domain)}")
           hostname = device.friendly_hostname
-          domain   = coalesce(device.domain, var.config.default_domain)
+          domain   = coalesce(device.domain, local.effective_config.default_domain)
         }
         if contains(keys(local.devices_with_found_macs), device.friendly_hostname)
       ],
@@ -138,9 +144,9 @@ locals {
         for nic in device.nics : [
           for cname in coalesce(nic.service_cnames, []) : {
             key      = "${device.friendly_hostname}-${nic.nic_name}-${cname}"
-            name     = trimsuffix(cname, ".${coalesce(device.domain, var.config.default_domain)}")
+            name     = trimsuffix(cname, ".${coalesce(device.domain, local.effective_config.default_domain)}")
             hostname = device.friendly_hostname
-            domain   = coalesce(device.domain, var.config.default_domain)
+            domain   = coalesce(device.domain, local.effective_config.default_domain)
           }
           if contains(keys(local.devices_with_found_macs), device.friendly_hostname)
         ]
@@ -154,7 +160,7 @@ locals {
 resource "unifi_dns_record" "cname_record" {
   for_each = local.cname_records_map
 
-  site    = var.config.site
+  site    = local.effective_config.site
   name    = each.value.name
   record  = "${each.value.hostname}.${each.value.domain}"
   type    = "CNAME"

@@ -79,7 +79,7 @@ output "summary" {
 output "service_cnames_created" {
   description = "Service CNAMEs from configuration that were created as DNS records"
   value = flatten([
-    for device in var.config.devices : concat(
+    for device in local.effective_config.devices : concat(
       coalesce(device.service_cnames, []),
       flatten([for nic in device.nics : coalesce(nic.service_cnames, [])])
     )
