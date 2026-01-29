@@ -118,6 +118,7 @@ class UnifiCloudflareGlue:
         unifi_api_key: Annotated[Optional[Secret], Doc("UniFi API key (mutually exclusive with username/password)")] = None,
         unifi_username: Annotated[Optional[Secret], Doc("UniFi username (use with password)")] = None,
         unifi_password: Annotated[Optional[Secret], Doc("UniFi password (use with username)")] = None,
+        terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
     ) -> str:
         """
         Deploy UniFi DNS configuration using Terraform.
@@ -136,6 +137,7 @@ class UnifiCloudflareGlue:
             unifi_api_key: UniFi API key for authentication
             unifi_username: UniFi username for authentication
             unifi_password: UniFi password for authentication
+            terraform_version: Terraform version to use (default: "latest")
 
         Returns:
             Status message indicating success or failure of deployment
@@ -171,7 +173,7 @@ class UnifiCloudflareGlue:
         project_dir = dagger.dag.directory()
 
         # Create Terraform container
-        ctr = dagger.dag.container().from_("hashicorp/terraform:latest")
+        ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
 
         # Mount source directory with unifi.json
         ctr = ctr.with_directory("/workspace", source)
@@ -224,6 +226,7 @@ class UnifiCloudflareGlue:
         cloudflare_token: Annotated[Secret, Doc("Cloudflare API Token")],
         cloudflare_account_id: Annotated[str, Doc("Cloudflare Account ID")],
         zone_name: Annotated[str, Doc("DNS zone name (e.g., example.com)")],
+        terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
     ) -> str:
         """
         Deploy Cloudflare Tunnel configuration using Terraform.
@@ -236,6 +239,7 @@ class UnifiCloudflareGlue:
             cloudflare_token: Cloudflare API Token (Secret)
             cloudflare_account_id: Cloudflare Account ID
             zone_name: DNS zone name
+            terraform_version: Terraform version to use (default: "latest")
 
         Returns:
             Status message indicating success or failure of deployment
@@ -255,7 +259,7 @@ class UnifiCloudflareGlue:
             return "✗ Failed: cloudflare.json not found in source directory. Run generate-cloudflare-config first."
 
         # Create Terraform container
-        ctr = dagger.dag.container().from_("hashicorp/terraform:latest")
+        ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
 
         # Mount source directory with cloudflare.json
         ctr = ctr.with_directory("/workspace", source)
@@ -305,6 +309,8 @@ class UnifiCloudflareGlue:
         unifi_api_key: Annotated[Optional[Secret], Doc("UniFi API key")] = None,
         unifi_username: Annotated[Optional[Secret], Doc("UniFi username")] = None,
         unifi_password: Annotated[Optional[Secret], Doc("UniFi password")] = None,
+        terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
+        kcl_version: Annotated[str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")] = "latest",
     ) -> str:
         """
         Orchestrate full deployment: UniFi DNS first, then Cloudflare Tunnels.
@@ -326,6 +332,8 @@ class UnifiCloudflareGlue:
             unifi_api_key: UniFi API key (optional)
             unifi_username: UniFi username (optional)
             unifi_password: UniFi password (optional)
+            terraform_version: Terraform version to use (default: "latest")
+            kcl_version: KCL version to use (default: "latest")
 
         Returns:
             Combined status message for both deployments
@@ -347,14 +355,14 @@ class UnifiCloudflareGlue:
         results.append("=" * 60)
 
         try:
-            unifi_file = await self.generate_unifi_config(kcl_source)
+            unifi_file = await self.generate_unifi_config(kcl_source, kcl_version)
             unifi_dir = dagger.dag.directory().with_file("unifi.json", unifi_file)
             results.append("✓ UniFi configuration generated")
         except Exception as e:
             return f"✗ Failed: Could not generate UniFi config\n{str(e)}"
 
         try:
-            cloudflare_file = await self.generate_cloudflare_config(kcl_source)
+            cloudflare_file = await self.generate_cloudflare_config(kcl_source, kcl_version)
             cloudflare_dir = dagger.dag.directory().with_file("cloudflare.json", cloudflare_file)
             results.append("✓ Cloudflare configuration generated")
         except Exception as e:
@@ -373,6 +381,7 @@ class UnifiCloudflareGlue:
             unifi_api_key=unifi_api_key,
             unifi_username=unifi_username,
             unifi_password=unifi_password,
+            terraform_version=terraform_version,
         )
 
         if "✗ Failed" in unifi_result:
@@ -397,6 +406,7 @@ class UnifiCloudflareGlue:
             cloudflare_token=cloudflare_token,
             cloudflare_account_id=cloudflare_account_id,
             zone_name=zone_name,
+            terraform_version=terraform_version,
         )
 
         results.append(cloudflare_result)
@@ -430,6 +440,8 @@ class UnifiCloudflareGlue:
         unifi_api_key: Annotated[Optional[Secret], Doc("UniFi API key")] = None,
         unifi_username: Annotated[Optional[Secret], Doc("UniFi username")] = None,
         unifi_password: Annotated[Optional[Secret], Doc("UniFi password")] = None,
+        terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
+        kcl_version: Annotated[str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")] = "latest",
     ) -> str:
         """
         Destroy all resources in reverse order: Cloudflare first, then UniFi.
@@ -450,6 +462,8 @@ class UnifiCloudflareGlue:
             unifi_api_key: UniFi API key (optional)
             unifi_username: UniFi username (optional)
             unifi_password: UniFi password (optional)
+            terraform_version: Terraform version to use (default: "latest")
+            kcl_version: KCL version to use (default: "latest")
 
         Returns:
             Combined status message for destruction
@@ -471,14 +485,14 @@ class UnifiCloudflareGlue:
         results.append("=" * 60)
 
         try:
-            unifi_file = await self.generate_unifi_config(kcl_source)
+            unifi_file = await self.generate_unifi_config(kcl_source, kcl_version)
             unifi_dir = dagger.dag.directory().with_file("unifi.json", unifi_file)
             results.append("✓ UniFi configuration generated")
         except Exception as e:
             return f"✗ Failed: Could not generate UniFi config\n{str(e)}"
 
         try:
-            cloudflare_file = await self.generate_cloudflare_config(kcl_source)
+            cloudflare_file = await self.generate_cloudflare_config(kcl_source, kcl_version)
             cloudflare_dir = dagger.dag.directory().with_file("cloudflare.json", cloudflare_file)
             results.append("✓ Cloudflare configuration generated")
         except Exception as e:
@@ -500,7 +514,7 @@ class UnifiCloudflareGlue:
             return "✗ Failed: cloudflare.json not found"
 
         # Create Terraform container for Cloudflare
-        ctr = dagger.dag.container().from_("hashicorp/terraform:latest")
+        ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
         ctr = ctr.with_directory("/workspace", cloudflare_dir)
 
         try:
@@ -551,7 +565,7 @@ class UnifiCloudflareGlue:
             return "✗ Failed: unifi.json not found"
 
         # Create Terraform container for UniFi
-        ctr = dagger.dag.container().from_("hashicorp/terraform:latest")
+        ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
         ctr = ctr.with_directory("/workspace", unifi_dir)
 
         try:
@@ -752,6 +766,8 @@ print(yaml.dump({{
         test_timeout: Annotated[str, Doc("Timeout for test operations (e.g., 5m)")] = "5m",
         cache_buster: Annotated[str, Doc("Cache buster value to force re-execution (e.g., timestamp, random string)")] = "",
         wait_before_cleanup: Annotated[int, Doc("Seconds to wait between validation and cleanup for manual verification")] = 0,
+        terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
+        kcl_version: Annotated[str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")] = "latest",
     ) -> str:
         """
         Run integration test creating ephemeral DNS resources with real APIs.
@@ -780,6 +796,8 @@ print(yaml.dump({{
                 (timestamp, random string) to invalidate Dagger's cache and force fresh execution.
             wait_before_cleanup: Seconds to wait between validation and cleanup.
                 Allows manual verification of created resources before they are destroyed.
+            terraform_version: Terraform version to use (default: "latest")
+            kcl_version: KCL version to use (default: "latest")
 
         Returns:
             Detailed test report with created resources, validation results, and cleanup status.
@@ -816,6 +834,18 @@ print(yaml.dump({{
                 --unifi-url=https://unifi.local:8443 \\
                 --api-url=https://unifi.local:8443 \\
                 --wait-before-cleanup=30
+
+            # With pinned versions
+            dagger call test-integration \\
+                --source=. \\
+                --cloudflare-zone=test.example.com \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --unifi-url=https://unifi.local:8443 \\
+                --api-url=https://unifi.local:8443 \\
+                --terraform-version=1.10.0 \\
+                --kcl-version=0.11.0
         """
         # Validate UniFi authentication
         using_api_key = unifi_api_key is not None
@@ -871,8 +901,8 @@ print(yaml.dump({{
             # Create a container with the source code
             base_container = (
                 dagger.dag.container()
-                .from_("alpine:latest")
-                .with_exec(["apk", "add", "--no-cache", "curl", "jq", "terraform"])
+                .from_(f"hashicorp/terraform:{terraform_version}")
+                .with_exec(["sh", "-c", "apk add --no-cache curl jq || apt-get update && apt-get install -y curl jq"])
             )
 
             # Add cache buster as environment variable if provided (forces cache invalidation)

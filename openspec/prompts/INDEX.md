@@ -1,46 +1,37 @@
-# Dagger Module Integration - OpenSpec Prompt Index
+# OpenSpec Prompt Index: Real Integration Test Implementation
 
-This directory contains OpenSpec prompts for adding Dagger CLI functions to the `unifi-cloudflare-glue` repository. These prompts enable containerized, reproducible pipelines for KCL generation, Terraform deployment, and integration testing.
-
-## Prerequisites
-
-- Dagger must be initialized at the **repository base** (for git-related functions to work)
-- All sensitive inputs (API keys, tokens) must use Dagger's `Secret` type
-- Python SDK will be used for the Dagger module
+This directory contains OpenSpec prompts to transform the `test_integration` function from a simulated/mock test into a real integration test that actually creates, validates, and cleans up Cloudflare and UniFi resources.
 
 ## Prompt Sequence
 
-| Order | Prompt | Purpose | Dependencies |
-|-------|--------|---------|--------------|
-| 01 | [dagger-module-scaffolding](./01-dagger-module-scaffolding.md) | Initialize Dagger module at repo base, create basic structure | None |
-| 02 | [kcl-generation-functions](./02-kcl-generation-functions.md) | Functions to generate UniFi and Cloudflare JSON configs from KCL | 01 |
-| 03 | [terraform-deployment-functions](./03-terraform-deployment-functions.md) | Functions to deploy via Terraform (UniFi, Cloudflare, full pipeline) | 02 |
-| 04 | [integration-test-function](./04-integration-test-function.md) | Integration test with ephemeral resources and auto-cleanup | 03 |
+| Order | Prompt | Description |
+|-------|--------|-------------|
+| 01 | [01-fix-test-config-generation.md](./01-fix-test-config-generation.md) | Fix test config generation to output proper Terraform-compatible JSON |
+| 02 | [02-implement-cloudflare-creation.md](./02-implement-cloudflare-creation.md) | Implement real Cloudflare tunnel and DNS creation via Terraform |
+| 03 | [03-implement-unifi-creation.md](./03-implement-unifi-creation.md) | Implement real UniFi DNS record creation via Terraform |
+| 04 | [04-implement-real-validation.md](./04-implement-real-validation.md) | Implement real validation via Cloudflare and UniFi API calls |
+| 05 | [05-implement-real-cleanup.md](./05-implement-real-cleanup.md) | Implement real cleanup via terraform destroy |
 
-## Usage
+## Execution Order
 
-1. Process prompts in order using the OpenSpec workflow
-2. Each prompt builds on the previous one
-3. Run `dagger functions` after each change to verify
+Prompts must be executed in order (01 → 05) as each builds upon the previous:
 
-## Module Naming
+1. **Prompt 01** creates the foundation - proper JSON config format
+2. **Prompt 02** adds Cloudflare resource creation
+3. **Prompt 03** adds UniFi resource creation
+4. **Prompt 04** adds real validation (depends on 02 and 03)
+5. **Prompt 05** adds proper cleanup (depends on 02 and 03)
 
-- **Repository**: `unifi-cloudflare-glue`
-- **Module name**: `unifi-cloudflare-glue` (in `dagger.json`)
-- **Class name**: `UnifiCloudflareGlue` (Dagger generates from module name)
+## Target File
 
-## Expected Directory Structure After Completion
+All changes are to `src/main/main.py` in the `test_integration` function (lines 752-1044).
 
-```
-unifi-cloudflare-glue/
-├── dagger.json                 # Dagger module manifest (at repo base)
-├── pyproject.toml              # Python project config
-├── src/
-│   └── unifi_cloudflare_glue/  # Python module
-│       ├── __init__.py
-│       └── main.py             # Dagger functions
-├── sdk/                        # Auto-generated Dagger SDK
-├── terraform/                  # Existing Terraform modules
-├── kcl/                        # Existing KCL schemas
-└── .gitignore                  # Updated for Dagger
-```
+## Expected Outcome
+
+After all prompts are implemented, `test_integration` will:
+- ✅ Generate proper JSON configs for both Terraform modules
+- ✅ Actually create Cloudflare tunnels and DNS records
+- ✅ Actually create UniFi DNS records
+- ✅ Validate resources exist via API queries
+- ✅ Actually destroy all resources during cleanup
+- ✅ Provide accurate test results based on real resource state
