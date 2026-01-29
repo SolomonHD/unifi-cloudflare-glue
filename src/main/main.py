@@ -707,47 +707,83 @@ class UnifiCloudflareGlue:
         """Generate a random test identifier."""
         return "test-" + "".join(random.choices(string.ascii_lowercase + string.digits, k=5))
 
-    def _generate_test_kcl_config(self, test_id: str, cloudflare_zone: str) -> str:
-        """Generate a KCL configuration for testing with random hostnames."""
+    def _generate_test_configs(
+        self,
+        test_id: str,
+        cloudflare_zone: str,
+        cloudflare_account_id: str
+    ) -> dict:
+        """
+        Generate test configuration JSON for Cloudflare and UniFi Terraform modules.
+
+        This method generates JSON configuration files that match the variable structures
+        expected by the Terraform modules for Cloudflare Tunnel and UniFi DNS.
+
+        Args:
+            test_id: Unique test identifier (e.g., "test-abc12")
+            cloudflare_zone: DNS zone name (e.g., "example.com")
+            cloudflare_account_id: Cloudflare account ID
+
+        Returns:
+            dict with "cloudflare" and "unifi" keys containing JSON configuration strings:
+            {
+                "cloudflare": '{"zone_name": "...", "account_id": "...", "tunnels": {...}}',
+                "unifi": '{"devices": [...], "default_domain": "...", "site": "..."}'
+            }
+
+        Example:
+            >>> configs = self._generate_test_configs("test-abc12", "example.com", "12345")
+            >>> cloudflare_json = json.loads(configs["cloudflare"])
+            >>> unifi_json = json.loads(configs["unifi"])
+        """
+        # Test MAC address (consistent across both configs)
+        test_mac = "aa:bb:cc:dd:ee:ff"
+
+        # Generate identifiers
         test_hostname = f"{test_id}.{cloudflare_zone}"
-        internal_hostname = f"{test_id}.local"
+        tunnel_name = f"tunnel-{test_id}"
 
-        return f"""# Test configuration for {test_id}
-# Auto-generated for integration testing
+        # Build Cloudflare config matching terraform/modules/cloudflare-tunnel/variables.tf
+        cloudflare_config = {
+            "zone_name": cloudflare_zone,
+            "account_id": cloudflare_account_id,
+            "tunnels": {
+                test_mac: {
+                    "tunnel_name": tunnel_name,
+                    "mac_address": test_mac,
+                    "services": [
+                        {
+                            "public_hostname": test_hostname,
+                            "local_service_url": "http://192.168.1.100:8080",
+                            "no_tls_verify": False
+                        }
+                    ]
+                }
+            }
+        }
 
-import yaml
+        # Build UniFi config matching terraform/modules/unifi-dns/variables.tf
+        unifi_config = {
+            "devices": [
+                {
+                    "friendly_hostname": test_id,
+                    "domain": "local",
+                    "nics": [
+                        {
+                            "mac_address": test_mac,
+                            "nic_name": "eth0"
+                        }
+                    ]
+                }
+            ],
+            "default_domain": "local",
+            "site": "default"
+        }
 
-tunnels = {{
-    "{test_id}": {{
-        "name": "tunnel-{test_id}",
-        "mac": "aa:bb:cc:dd:ee:ff",
-        "services": [
-            {{
-                "name": "test-service",
-                "internal": "http://{internal_hostname}:8080",
-                "external": "{test_hostname}",
-                "policy": "one-time-pin"
-            }}
-        ]
-    }}
-}}
-
-# UniFi DNS records (internal)
-unifi_dns = {{
-    "{internal_hostname}": {{
-        "ip": "192.168.1.100",
-        "description": "Test record for {test_id}"
-    }}
-}}
-
-# Output for verification
-print(yaml.dump({{
-    "test_id": "{test_id}",
-    "tunnel_name": "tunnel-{test_id}",
-    "external_hostname": "{test_hostname}",
-    "internal_hostname": "{internal_hostname}"
-}}))
-"""
+        return {
+            "cloudflare": json.dumps(cloudflare_config, indent=2),
+            "unifi": json.dumps(unifi_config, indent=2)
+        }
 
     @function
     async def test_integration(
@@ -884,16 +920,18 @@ print(yaml.dump({{
 
         report_lines.append("-" * 60)
 
-        # Create test KCL config
-        kcl_config = self._generate_test_kcl_config(test_id, cloudflare_zone)
+        # Create test configurations (Cloudflare and UniFi JSON)
+        test_configs = self._generate_test_configs(test_id, cloudflare_zone, cloudflare_account_id)
+        cloudflare_json = test_configs["cloudflare"]
+        unifi_json = test_configs["unifi"]
 
         # Track cleanup status
         cleanup_status = {"cloudflare": "pending", "unifi": "pending", "state_files": "pending"}
         validation_results = {}
 
         try:
-            # Phase 1: Generate KCL configs
-            report_lines.append("PHASE 1: Generating KCL configurations...")
+            # Phase 1: Generate JSON configs for Terraform modules
+            report_lines.append("PHASE 1: Generating Terraform JSON configurations...")
 
             # Get the secret values for use in containers
             cf_token_plain = await cloudflare_token.plaintext()
@@ -912,23 +950,71 @@ print(yaml.dump({{
             # Add source to container
             src_container = base_container.with_directory("/src", source)
 
-            # Write test KCL config
-            src_container = src_container.with_new_file("/src/test_config.k", kcl_config)
+            # Write test JSON configs for Terraform modules
+            src_container = src_container.with_new_file("/src/cloudflare.json", cloudflare_json)
+            src_container = src_container.with_new_file("/src/unifi.json", unifi_json)
 
-            report_lines.append(f"  ✓ Generated KCL config for test ID: {test_id}")
+            report_lines.append(f"  ✓ Generated JSON configs for test ID: {test_id}")
             report_lines.append(f"  ✓ Test hostname: {test_hostname}")
 
             # Phase 2: Create Cloudflare resources
             report_lines.append("")
             report_lines.append("PHASE 2: Creating Cloudflare resources...")
 
-            # This would normally run Terraform for Cloudflare module
-            # For now, we'll simulate the creation
-            report_lines.append(f"  ✓ Created tunnel: {tunnel_name}")
-            report_lines.append(f"  ✓ Created DNS record: {test_hostname}")
+            # Create directory with Cloudflare config for Terraform
+            cloudflare_dir = dagger.dag.directory().with_new_file("cloudflare.json", cloudflare_json)
 
-            validation_results["cloudflare_tunnel"] = "created"
-            validation_results["cloudflare_dns"] = "created"
+            # Create Terraform container following deploy_cloudflare() pattern
+            cf_ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
+
+            # Mount Cloudflare config at /workspace
+            cf_ctr = cf_ctr.with_directory("/workspace", cloudflare_dir)
+
+            # Mount the Cloudflare Tunnel Terraform module
+            try:
+                tf_module = source.directory("terraform/modules/cloudflare-tunnel")
+                cf_ctr = cf_ctr.with_directory("/module", tf_module)
+            except Exception:
+                # If module not in source, try project root
+                try:
+                    tf_module = dagger.dag.directory().directory("terraform/modules/cloudflare-tunnel")
+                    cf_ctr = cf_ctr.with_directory("/module", tf_module)
+                except Exception:
+                    raise RuntimeError("Cloudflare Tunnel Terraform module not found at terraform/modules/cloudflare-tunnel")
+
+            # Set environment variables
+            cf_ctr = cf_ctr.with_env_variable("TF_VAR_cloudflare_account_id", cloudflare_account_id)
+            cf_ctr = cf_ctr.with_env_variable("TF_VAR_zone_name", cloudflare_zone)
+            cf_ctr = cf_ctr.with_env_variable("TF_VAR_config_file", "/workspace/cloudflare.json")
+
+            # Pass Cloudflare token as secret
+            cf_ctr = cf_ctr.with_secret_variable("TF_VAR_cloudflare_token", cloudflare_token)
+
+            # Set working directory to module
+            cf_ctr = cf_ctr.with_workdir("/module")
+
+            # Execute terraform init
+            try:
+                init_result = await cf_ctr.with_exec(["terraform", "init"]).stdout()
+                report_lines.append("  ✓ Terraform init completed")
+            except dagger.ExecError as e:
+                error_msg = f"Terraform init failed: {str(e)}"
+                report_lines.append(f"  ✗ {error_msg}")
+                validation_results["cloudflare_error"] = error_msg
+                raise RuntimeError(error_msg) from e
+
+            # Execute terraform apply
+            try:
+                apply_result = await cf_ctr.with_exec(["terraform", "apply", "-auto-approve"]).stdout()
+                report_lines.append(f"  ✓ Created tunnel: {tunnel_name}")
+                report_lines.append(f"  ✓ Created DNS record: {test_hostname}")
+                validation_results["cloudflare_tunnel"] = "created"
+                validation_results["cloudflare_dns"] = "created"
+            except dagger.ExecError as e:
+                error_msg = f"Terraform apply failed: {str(e)}"
+                report_lines.append(f"  ✗ {error_msg}")
+                validation_results["cloudflare_error"] = error_msg
+                raise RuntimeError(error_msg) from e
 
             # Phase 3: Create UniFi resources
             report_lines.append("")
