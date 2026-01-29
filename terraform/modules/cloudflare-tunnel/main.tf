@@ -15,7 +15,9 @@ locals {
 
 # Query existing Cloudflare Zone by name
 data "cloudflare_zone" "this" {
-  name = local.effective_config.zone_name
+  filter = {
+    name = local.effective_config.zone_name
+  }
 }
 
 # Create a Cloudflare Tunnel for each MAC address
@@ -36,38 +38,34 @@ resource "random_password" "tunnel_secret" {
 }
 
 # Configure tunnel ingress rules
-resource "cloudflare_tunnel_config" "this" {
+resource "cloudflare_zero_trust_tunnel_cloudflared_config" "this" {
   for_each = local.effective_config.tunnels
 
   account_id = local.effective_config.account_id
   tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.this[each.key].id
 
-  config {
-    # Ingress rules for each service
-    dynamic "ingress_rule" {
-      for_each = each.value.services
-      content {
-        hostname = ingress_rule.value.public_hostname
-        service  = ingress_rule.value.local_service_url
-
-        dynamic "origin_request" {
-          for_each = ingress_rule.value.no_tls_verify ? [true] : []
-          content {
+  config = {
+    ingress = concat(
+      # Service ingress rules
+      [
+        for svc in each.value.services : {
+          hostname = svc.public_hostname
+          service  = svc.local_service_url
+          origin_request = svc.no_tls_verify ? {
             no_tls_verify = true
-          }
+          } : null
         }
-      }
-    }
-
-    # Catch-all rule returning 404
-    ingress_rule {
-      service = "http_status:404"
-    }
+      ],
+      # Catch-all rule
+      [{
+        service = "http_status:404"
+      }]
+    )
   }
 }
 
 # Create DNS CNAME records for each service public_hostname
-resource "cloudflare_record" "tunnel" {
+resource "cloudflare_dns_record" "tunnel" {
   # Create a unique key for each MAC + service combination
   for_each = {
     for pair in setproduct(
@@ -90,6 +88,7 @@ resource "cloudflare_record" "tunnel" {
   zone_id = data.cloudflare_zone.this.id
   name    = each.value.hostname
   type    = "CNAME"
-  value   = "${cloudflare_zero_trust_tunnel_cloudflared.this[each.value.mac].id}.cfargotunnel.com"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.this[each.value.mac].id}.cfargotunnel.com"
   proxied = true
+  ttl     = 1 # 1 = automatic TTL
 }

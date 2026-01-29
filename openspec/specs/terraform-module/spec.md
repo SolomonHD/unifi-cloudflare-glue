@@ -37,19 +37,38 @@ Given a local_service_url containing the zone_name
 When the config variable is validated
 Then it SHALL reject with a validation error to prevent DNS resolution loops
 
-### Requirement: Terraform Cloudflare Tunnel Module - Zone Data Source
+### Requirement: Terraform Cloudflare Tunnel Module - Zone Data Source (v5.x)
 
-The Terraform module SHALL query the existing Cloudflare Zone using a data source.
+The Terraform module SHALL query the existing Cloudflare Zone using the v5.x data source schema with filter block.
 
-#### Scenario: Query Cloudflare Zone by name
+#### Scenario: Query Cloudflare Zone by name using filter block
 Given a zone_name from the configuration
-When the `cloudflare_zone` data source queries Cloudflare
+When the `cloudflare_zone` data source is configured with a filter block
+Then it SHALL use the syntax:
+  ```
+  data "cloudflare_zone" "this" {
+    filter {
+      name = local.effective_config.zone_name
+    }
+  }
+  ```
+And it SHALL NOT use the deprecated direct name attribute
+
+#### Scenario: Zone data source returns zone_id
+Given a successful zone data source query with filter block
+When the data source is evaluated
 Then it SHALL return the zone details including zone_id
+And the zone_id SHALL be accessible via `data.cloudflare_zone.this.id`
 
 #### Scenario: Fail when zone does not exist
 Given a zone_name that does not exist in Cloudflare
 When the data source queries Cloudflare
 Then Terraform SHALL fail with a clear error message indicating the zone was not found
+
+#### Scenario: Backward compatibility for zone_id references
+Given resources that reference the zone data source
+When they use `data.cloudflare_zone.this.id`
+Then they SHALL continue to work without modification
 
 #### Scenario: Extract zone_id for resource creation
 Given a successful zone data source query
@@ -85,23 +104,23 @@ And the value SHALL be base64-encoded
 Given a successfully created tunnel
 When the resource is created
 Then the tunnel ID and tunnel token SHALL be captured for outputs
-
 ### Requirement: Terraform Cloudflare Tunnel Module - Resource Reference Updates
 
 The module SHALL reference `cloudflare_zero_trust_tunnel_cloudflared` in all dependent resources.
 
 #### Scenario: Tunnel config references updated resource type
+
 Given a `cloudflare_tunnel_config` resource
 When referencing the tunnel ID
 Then it SHALL reference `cloudflare_zero_trust_tunnel_cloudflared.this[each.key].id`
 And NOT `cloudflare_tunnel.this[each.key].id`
 
 #### Scenario: DNS records reference updated resource type
-Given a `cloudflare_record` resource
+
+Given a `cloudflare_dns_record` resource
 When referencing the tunnel ID for the CNAME target
 Then it SHALL reference `cloudflare_zero_trust_tunnel_cloudflared.this[each.value.mac].id`
 And NOT `cloudflare_tunnel.this[each.value.mac].id`
-
 ### Requirement: Terraform Cloudflare Tunnel Module - Tunnel Config Resource
 
 The Terraform module SHALL create a `cloudflare_tunnel_config` resource for each tunnel with ingress rules.
@@ -143,20 +162,28 @@ Then only the catch-all 404 rule SHALL be present
 
 ### Requirement: Terraform Cloudflare Tunnel Module - DNS Record Creation
 
-The Terraform module SHALL create CNAME records for each service's public_hostname pointing to the tunnel.
+The Terraform module SHALL create CNAME records for each service's public_hostname pointing to the tunnel using the v5.x `cloudflare_dns_record` resource.
 
 #### Scenario: Create CNAME for each public_hostname
 Given a tunnel with services having public_hostnames
 When Terraform applies
-Then a `cloudflare_record` CNAME SHALL be created for each unique public_hostname
+Then a `cloudflare_dns_record` CNAME SHALL be created for each unique public_hostname
 
-#### Scenario: CNAME target points to tunnel
-Given a tunnel with ID "abcd1234-..."
-When the CNAME record is created
-Then the target SHALL be "abcd1234-....cfargotunnel.com"
+#### Scenario: CNAME uses content attribute instead of value
+Given a `cloudflare_dns_record` resource defining a CNAME record
+When specifying the record value
+Then the attribute SHALL be `content`
+And It SHALL NOT use `value`
+And The content SHALL reference the tunnel ID: `${cloudflare_zero_trust_tunnel_cloudflared.this[each.value.mac].id}.cfargotunnel.com`
+
+#### Scenario: DNS record includes required TTL attribute
+Given a `cloudflare_dns_record` resource
+When configuring the record
+Then the `ttl` attribute SHALL be present
+And The value SHALL be `1` (automatic TTL)
 
 #### Scenario: CNAME records are proxied
-Given a CNAME record being created
+Given a `cloudflare_dns_record` being created
 When the record is configured
 Then the proxied field SHALL be set to true
 

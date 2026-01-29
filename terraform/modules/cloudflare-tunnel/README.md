@@ -16,7 +16,7 @@ This module bridges the KCL-generated configuration with Cloudflare's infrastruc
 | Name | Version |
 |------|---------|
 | terraform | >= 1.5.0 |
-| cloudflare provider | ~> 4.0 |
+| cloudflare provider | ~> 5.0 |
 | random provider | ~> 3.0 |
 
 ## Provider Authentication
@@ -157,10 +157,11 @@ Configures ingress rules for each tunnel:
 - Optional `no_tls_verify` for self-signed certificates
 - Catch-all rule returning HTTP 404
 
-### cloudflare_record
+### cloudflare_dns_record
 Creates CNAME records for each service:
 - Points `public_hostname` to `${tunnel_id}.cfargotunnel.com`
 - Records are proxied through Cloudflare
+- Uses automatic TTL (ttl = 1)
 
 ## Error Handling
 
