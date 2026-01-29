@@ -58,12 +58,12 @@ Then the zone_id SHALL be available for use in tunnel and record resources
 
 ### Requirement: Terraform Cloudflare Tunnel Module - Tunnel Resource Creation
 
-The Terraform module SHALL create a `cloudflare_tunnel` resource for each MAC address in the configuration.
+The Terraform module SHALL create a `cloudflare_zero_trust_tunnel_cloudflared` resource for each MAC address in the configuration.
 
 #### Scenario: Create tunnel for each MAC address
 Given a tunnels map with MAC addresses as keys
 When Terraform applies
-Then a `cloudflare_tunnel` resource SHALL be created for each entry
+Then a `cloudflare_zero_trust_tunnel_cloudflared` resource SHALL be created for each entry
 
 #### Scenario: Tunnel name matches configuration
 Given a tunnel configuration with tunnel_name "home-server"
@@ -75,10 +75,32 @@ Given an account_id in the configuration
 When the tunnel resource is created
 Then it SHALL be created in the specified Cloudflare account
 
+#### Scenario: Tunnel uses tunnel_secret attribute
+Given a tunnel resource configuration
+When the resource is created
+Then the tunnel_secret attribute SHALL be used (not "secret")
+And the value SHALL be base64-encoded
+
 #### Scenario: Capture tunnel ID and token
 Given a successfully created tunnel
 When the resource is created
 Then the tunnel ID and tunnel token SHALL be captured for outputs
+
+### Requirement: Terraform Cloudflare Tunnel Module - Resource Reference Updates
+
+The module SHALL reference `cloudflare_zero_trust_tunnel_cloudflared` in all dependent resources.
+
+#### Scenario: Tunnel config references updated resource type
+Given a `cloudflare_tunnel_config` resource
+When referencing the tunnel ID
+Then it SHALL reference `cloudflare_zero_trust_tunnel_cloudflared.this[each.key].id`
+And NOT `cloudflare_tunnel.this[each.key].id`
+
+#### Scenario: DNS records reference updated resource type
+Given a `cloudflare_record` resource
+When referencing the tunnel ID for the CNAME target
+Then it SHALL reference `cloudflare_zero_trust_tunnel_cloudflared.this[each.value.mac].id`
+And NOT `cloudflare_tunnel.this[each.value.mac].id`
 
 ### Requirement: Terraform Cloudflare Tunnel Module - Tunnel Config Resource
 

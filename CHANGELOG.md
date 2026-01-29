@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Cloudflare Provider v5 Migration - Tunnel Resource:**
+  - Migrated `cloudflare_tunnel` resource to `cloudflare_zero_trust_tunnel_cloudflared`
+  - Updated attribute: `secret` → `tunnel_secret` (base64-encoded tunnel secret)
+  - Updated all references in `cloudflare_tunnel_config` and `cloudflare_record` resources
+  - Updated all output values to reference new resource type
+  - Files modified: `terraform/modules/cloudflare-tunnel/main.tf`, `outputs.tf`
+  - **State migration required:** Use `terraform state mv` commands when applying to existing infrastructure
+
 - **Dagger Engine Upgrade:**
   - Updated `engineVersion` in `dagger.json` from `v0.19.7` to `v0.19.8`
   - Incorporates latest bug fixes and performance improvements
