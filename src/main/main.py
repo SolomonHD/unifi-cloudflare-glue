@@ -11,8 +11,6 @@ from typing import Annotated, Optional
 import random
 import string
 import json
-import shlex
-import time
 
 
 # Custom exception for KCL generation errors
@@ -120,7 +118,6 @@ class UnifiCloudflareGlue:
         unifi_api_key: Annotated[Optional[Secret], Doc("UniFi API key (mutually exclusive with username/password)")] = None,
         unifi_username: Annotated[Optional[Secret], Doc("UniFi username (use with password)")] = None,
         unifi_password: Annotated[Optional[Secret], Doc("UniFi password (use with username)")] = None,
-        unifi_insecure: Annotated[bool, Doc("Skip TLS verification for UniFi controller (useful for self-signed certificates)")] = False,
         terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
     ) -> str:
         """
@@ -140,7 +137,6 @@ class UnifiCloudflareGlue:
             unifi_api_key: UniFi API key for authentication
             unifi_username: UniFi username for authentication
             unifi_password: UniFi password for authentication
-            unifi_insecure: Skip TLS verification for self-signed certificates
             terraform_version: Terraform version to use (default: "latest")
 
         Returns:
@@ -151,13 +147,6 @@ class UnifiCloudflareGlue:
                 --source=. \\
                 --unifi-url=https://unifi.local:8443 \\
                 --unifi-api-key=env:UNIFI_API_KEY
-
-            # With insecure TLS (for self-signed certificates)
-            dagger call deploy-unifi \\
-                --source=. \\
-                --unifi-url=https://192.168.10.1 \\
-                --unifi-api-key=env:UNIFI_API_KEY \\
-                --unifi-insecure
         """
         # Validate authentication - either API key OR username/password, not both
         using_api_key = unifi_api_key is not None
@@ -203,7 +192,6 @@ class UnifiCloudflareGlue:
         ctr = ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
         ctr = ctr.with_env_variable("TF_VAR_api_url", actual_api_url)
         ctr = ctr.with_env_variable("TF_VAR_config_file", "/workspace/unifi.json")
-        ctr = ctr.with_env_variable("TF_VAR_unifi_insecure", str(unifi_insecure).lower())
 
         # Add authentication secrets via environment variables
         if using_api_key and unifi_api_key:
@@ -288,9 +276,8 @@ class UnifiCloudflareGlue:
         ctr = ctr.with_env_variable("TF_VAR_zone_name", zone_name)
         ctr = ctr.with_env_variable("TF_VAR_config_file", "/workspace/cloudflare.json")
 
-        # Add Cloudflare token as secret (both as TF variable and env var for provider auth)
+        # Add Cloudflare token as secret
         ctr = ctr.with_secret_variable("TF_VAR_cloudflare_token", cloudflare_token)
-        ctr = ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
 
         # Set working directory
         ctr = ctr.with_workdir("/module" if "/module" in str(ctr) else "/workspace")
@@ -322,7 +309,6 @@ class UnifiCloudflareGlue:
         unifi_api_key: Annotated[Optional[Secret], Doc("UniFi API key")] = None,
         unifi_username: Annotated[Optional[Secret], Doc("UniFi username")] = None,
         unifi_password: Annotated[Optional[Secret], Doc("UniFi password")] = None,
-        unifi_insecure: Annotated[bool, Doc("Skip TLS verification for UniFi controller")] = False,
         terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
         kcl_version: Annotated[str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")] = "latest",
     ) -> str:
@@ -346,7 +332,6 @@ class UnifiCloudflareGlue:
             unifi_api_key: UniFi API key (optional)
             unifi_username: UniFi username (optional)
             unifi_password: UniFi password (optional)
-            unifi_insecure: Skip TLS verification for self-signed certificates
             terraform_version: Terraform version to use (default: "latest")
             kcl_version: KCL version to use (default: "latest")
 
@@ -361,16 +346,6 @@ class UnifiCloudflareGlue:
                 --cloudflare-account-id=xxx \\
                 --zone-name=example.com \\
                 --unifi-api-key=env:UNIFI_API_KEY
-
-            # With insecure TLS for self-signed certificates
-            dagger call deploy \\
-                --kcl-source=./kcl \\
-                --unifi-url=https://192.168.10.1 \\
-                --cloudflare-token=env:CF_TOKEN \\
-                --cloudflare-account-id=xxx \\
-                --zone-name=example.com \\
-                --unifi-api-key=env:UNIFI_API_KEY \\
-                --unifi-insecure
         """
         results = []
 
@@ -406,7 +381,6 @@ class UnifiCloudflareGlue:
             unifi_api_key=unifi_api_key,
             unifi_username=unifi_username,
             unifi_password=unifi_password,
-            unifi_insecure=unifi_insecure,
             terraform_version=terraform_version,
         )
 
@@ -466,7 +440,6 @@ class UnifiCloudflareGlue:
         unifi_api_key: Annotated[Optional[Secret], Doc("UniFi API key")] = None,
         unifi_username: Annotated[Optional[Secret], Doc("UniFi username")] = None,
         unifi_password: Annotated[Optional[Secret], Doc("UniFi password")] = None,
-        unifi_insecure: Annotated[bool, Doc("Skip TLS verification for UniFi controller")] = False,
         terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
         kcl_version: Annotated[str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")] = "latest",
     ) -> str:
@@ -489,7 +462,6 @@ class UnifiCloudflareGlue:
             unifi_api_key: UniFi API key (optional)
             unifi_username: UniFi username (optional)
             unifi_password: UniFi password (optional)
-            unifi_insecure: Skip TLS verification for self-signed certificates
             terraform_version: Terraform version to use (default: "latest")
             kcl_version: KCL version to use (default: "latest")
 
@@ -504,16 +476,6 @@ class UnifiCloudflareGlue:
                 --cloudflare-account-id=xxx \\
                 --zone-name=example.com \\
                 --unifi-api-key=env:UNIFI_API_KEY
-
-            # With insecure TLS for self-signed certificates
-            dagger call destroy \\
-                --kcl-source=./kcl \\
-                --unifi-url=https://192.168.10.1 \\
-                --cloudflare-token=env:CF_TOKEN \\
-                --cloudflare-account-id=xxx \\
-                --zone-name=example.com \\
-                --unifi-api-key=env:UNIFI_API_KEY \\
-                --unifi-insecure
         """
         results = []
 
@@ -565,7 +527,6 @@ class UnifiCloudflareGlue:
         ctr = ctr.with_env_variable("TF_VAR_zone_name", zone_name)
         ctr = ctr.with_env_variable("TF_VAR_config_file", "/workspace/cloudflare.json")
         ctr = ctr.with_secret_variable("TF_VAR_cloudflare_token", cloudflare_token)
-        ctr = ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
         ctr = ctr.with_workdir("/module" if "/module" in str(ctr) else "/workspace")
 
         try:
@@ -616,7 +577,6 @@ class UnifiCloudflareGlue:
         ctr = ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
         ctr = ctr.with_env_variable("TF_VAR_api_url", actual_api_url)
         ctr = ctr.with_env_variable("TF_VAR_config_file", "/workspace/unifi.json")
-        ctr = ctr.with_env_variable("TF_VAR_unifi_insecure", str(unifi_insecure).lower())
 
         if unifi_api_key:
             ctr = ctr.with_secret_variable("TF_VAR_unifi_api_key", unifi_api_key)
@@ -751,8 +711,7 @@ class UnifiCloudflareGlue:
         self,
         test_id: str,
         cloudflare_zone: str,
-        cloudflare_account_id: str,
-        test_mac: str = "aa:bb:cc:dd:ee:ff"
+        cloudflare_account_id: str
     ) -> dict:
         """
         Generate test configuration JSON for Cloudflare and UniFi Terraform modules.
@@ -764,7 +723,6 @@ class UnifiCloudflareGlue:
             test_id: Unique test identifier (e.g., "test-abc12")
             cloudflare_zone: DNS zone name (e.g., "example.com")
             cloudflare_account_id: Cloudflare account ID
-            test_mac: MAC address to use for the test device (default: "aa:bb:cc:dd:ee:ff")
 
         Returns:
             dict with "cloudflare" and "unifi" keys containing JSON configuration strings:
@@ -778,7 +736,8 @@ class UnifiCloudflareGlue:
             >>> cloudflare_json = json.loads(configs["cloudflare"])
             >>> unifi_json = json.loads(configs["unifi"])
         """
-        # Use provided MAC address (consistent across both configs)
+        # Test MAC address (consistent across both configs)
+        test_mac = "aa:bb:cc:dd:ee:ff"
 
         # Generate identifiers
         test_hostname = f"{test_id}.{cloudflare_zone}"
@@ -809,12 +768,10 @@ class UnifiCloudflareGlue:
                 {
                     "friendly_hostname": test_id,
                     "domain": "local",
-                    "service_cnames": [],
                     "nics": [
                         {
                             "mac_address": test_mac,
-                            "nic_name": "eth0",
-                            "service_cnames": []
+                            "nic_name": "eth0"
                         }
                     ]
                 }
@@ -840,14 +797,11 @@ class UnifiCloudflareGlue:
         unifi_api_key: Annotated[Optional[Secret], Doc("UniFi API key (mutually exclusive with username/password)")] = None,
         unifi_username: Annotated[Optional[Secret], Doc("UniFi username (use with password)")] = None,
         unifi_password: Annotated[Optional[Secret], Doc("UniFi password (use with username)")] = None,
-        unifi_insecure: Annotated[bool, Doc("Skip TLS verification for UniFi controller (useful for self-signed certificates)")] = False,
         cleanup: Annotated[bool, Doc("Whether to cleanup resources after test (default: true)")] = True,
         validate_connectivity: Annotated[bool, Doc("Whether to test actual HTTP connectivity")] = False,
         test_timeout: Annotated[str, Doc("Timeout for test operations (e.g., 5m)")] = "5m",
-        no_cache: Annotated[bool, Doc("Bypass Dagger cache, force fresh execution by auto-generating epoch timestamp")] = False,
-        cache_buster: Annotated[str, Doc("Custom cache key for advanced use (cannot be used with --no-cache)")] = "",
+        cache_buster: Annotated[str, Doc("Cache buster value to force re-execution (e.g., timestamp, random string)")] = "",
         wait_before_cleanup: Annotated[int, Doc("Seconds to wait between validation and cleanup for manual verification")] = 0,
-        test_mac_address: Annotated[str, Doc("MAC address for test device (must exist in UniFi controller, e.g., 'aa:bb:cc:dd:ee:ff')")] = "aa:bb:cc:dd:ee:ff",
         terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
         kcl_version: Annotated[str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")] = "latest",
     ) -> str:
@@ -871,19 +825,13 @@ class UnifiCloudflareGlue:
             unifi_api_key: UniFi API key (mutually exclusive with username/password)
             unifi_username: UniFi username (use with password)
             unifi_password: UniFi password (use with username)
-            unifi_insecure: Skip TLS verification for self-signed certificates
             cleanup: Whether to cleanup resources after test (default: true)
             validate_connectivity: Whether to test actual HTTP connectivity
             test_timeout: Timeout for test operations (e.g., 5m)
-            no_cache: Bypass Dagger cache by auto-generating an epoch timestamp.
-                This is the preferred way to force fresh test execution.
-                Cannot be used together with --cache-buster.
-            cache_buster: Custom cache key for advanced use cases requiring
-                specific cache invalidation values. Cannot be used with --no-cache.
+            cache_buster: Cache buster value to force re-execution. Use a unique value
+                (timestamp, random string) to invalidate Dagger's cache and force fresh execution.
             wait_before_cleanup: Seconds to wait between validation and cleanup.
                 Allows manual verification of created resources before they are destroyed.
-            test_mac_address: MAC address for the test device. This MAC must exist in your
-                UniFi controller. Use a real device MAC from your network (default: "aa:bb:cc:dd:ee:ff")
             terraform_version: Terraform version to use (default: "latest")
             kcl_version: KCL version to use (default: "latest")
 
@@ -901,18 +849,7 @@ class UnifiCloudflareGlue:
                 --unifi-url=https://unifi.local:8443 \\
                 --api-url=https://unifi.local:8443
 
-            # With insecure TLS for self-signed certificates
-            dagger call test-integration \\
-                --source=. \\
-                --cloudflare-zone=test.example.com \\
-                --cloudflare-token=env:CF_TOKEN \\
-                --cloudflare-account-id=xxx \\
-                --unifi-api-key=env:UNIFI_API_KEY \\
-                --unifi-url=https://192.168.10.1 \\
-                --api-url=https://192.168.10.1 \\
-                --unifi-insecure
-
-            # Force fresh execution (bypass Dagger cache)
+            # With cache buster to force re-execution
             dagger call test-integration \\
                 --source=. \\
                 --cloudflare-zone=test.example.com \\
@@ -921,18 +858,7 @@ class UnifiCloudflareGlue:
                 --unifi-api-key=env:UNIFI_API_KEY \\
                 --unifi-url=https://unifi.local:8443 \\
                 --api-url=https://unifi.local:8443 \\
-                --no-cache
-
-            # With custom cache buster (advanced use)
-            dagger call test-integration \\
-                --source=. \\
-                --cloudflare-zone=test.example.com \\
-                --cloudflare-token=env:CF_TOKEN \\
-                --cloudflare-account-id=xxx \\
-                --unifi-api-key=env:UNIFI_API_KEY \\
-                --unifi-url=https://unifi.local:8443 \\
-                --api-url=https://unifi.local:8443 \\
-                --cache-buster=custom-key-123
+                --cache-buster=$(date +%s)
 
             # With wait for manual verification
             dagger call test-integration \\
@@ -944,17 +870,6 @@ class UnifiCloudflareGlue:
                 --unifi-url=https://unifi.local:8443 \\
                 --api-url=https://unifi.local:8443 \\
                 --wait-before-cleanup=30
-
-            # With a real MAC address from your UniFi controller
-            dagger call test-integration \\
-                --source=. \\
-                --cloudflare-zone=test.example.com \\
-                --cloudflare-token=env:CF_TOKEN \\
-                --cloudflare-account-id=xxx \\
-                --unifi-api-key=env:UNIFI_API_KEY \\
-                --unifi-url=https://unifi.local:8443 \\
-                --api-url=https://unifi.local:8443 \\
-                --test-mac-address=de:ad:be:ef:12:34
 
             # With pinned versions
             dagger call test-integration \\
@@ -968,15 +883,6 @@ class UnifiCloudflareGlue:
                 --terraform-version=1.10.0 \\
                 --kcl-version=0.11.0
         """
-        # Validate that --no-cache and --cache-buster are not used together
-        if no_cache and cache_buster:
-            return "✗ Failed: Cannot use both --no-cache and --cache-buster"
-
-        # Determine effective cache buster value
-        effective_cache_buster = cache_buster
-        if no_cache:
-            effective_cache_buster = str(int(time.time()))
-
         # Validate UniFi authentication
         using_api_key = unifi_api_key is not None
         using_password = unifi_username is not None and unifi_password is not None
@@ -1000,14 +906,13 @@ class UnifiCloudflareGlue:
             f"Cloudflare Zone: {cloudflare_zone}",
             f"Test Hostname: {test_hostname}",
             f"Tunnel Name: {tunnel_name}",
-            f"Test MAC Address: {test_mac_address}",
             f"Cleanup Enabled: {cleanup}",
             f"Connectivity Check: {validate_connectivity}",
         ]
 
         # Add cache buster info if provided
-        if effective_cache_buster:
-            report_lines.append(f"Cache Buster: {effective_cache_buster}")
+        if cache_buster:
+            report_lines.append(f"Cache Buster: {cache_buster}")
 
         # Add wait info if enabled
         if wait_before_cleanup > 0:
@@ -1016,13 +921,17 @@ class UnifiCloudflareGlue:
         report_lines.append("-" * 60)
 
         # Create test configurations (Cloudflare and UniFi JSON)
-        test_configs = self._generate_test_configs(test_id, cloudflare_zone, cloudflare_account_id, test_mac_address)
+        test_configs = self._generate_test_configs(test_id, cloudflare_zone, cloudflare_account_id)
         cloudflare_json = test_configs["cloudflare"]
         unifi_json = test_configs["unifi"]
 
         # Track cleanup status
         cleanup_status = {"cloudflare": "pending", "unifi": "pending", "state_files": "pending"}
         validation_results = {}
+
+        # Initialize state variables (will be populated during apply phases)
+        cloudflare_state = ""
+        unifi_state = ""
 
         try:
             # Phase 1: Generate JSON configs for Terraform modules
@@ -1039,8 +948,8 @@ class UnifiCloudflareGlue:
             )
 
             # Add cache buster as environment variable if provided (forces cache invalidation)
-            if effective_cache_buster:
-                base_container = base_container.with_env_variable("CACHE_BUSTER", effective_cache_buster)
+            if cache_buster:
+                base_container = base_container.with_env_variable("CACHE_BUSTER", cache_buster)
 
             # Add source to container
             src_container = base_container.with_directory("/src", source)
@@ -1082,9 +991,8 @@ class UnifiCloudflareGlue:
             cf_ctr = cf_ctr.with_env_variable("TF_VAR_zone_name", cloudflare_zone)
             cf_ctr = cf_ctr.with_env_variable("TF_VAR_config_file", "/workspace/cloudflare.json")
 
-            # Pass Cloudflare token as secret (both as TF variable and env var for provider auth)
+            # Pass Cloudflare token as secret
             cf_ctr = cf_ctr.with_secret_variable("TF_VAR_cloudflare_token", cloudflare_token)
-            cf_ctr = cf_ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
 
             # Set working directory to module
             cf_ctr = cf_ctr.with_workdir("/module")
@@ -1106,6 +1014,14 @@ class UnifiCloudflareGlue:
                 report_lines.append(f"  ✓ Created DNS record: {test_hostname}")
                 validation_results["cloudflare_tunnel"] = "created"
                 validation_results["cloudflare_dns"] = "created"
+
+                # Export Terraform state for cleanup
+                try:
+                    cloudflare_state = await cf_ctr.file("/module/terraform.tfstate").contents()
+                    report_lines.append(f"  ✓ Cloudflare state exported ({len(cloudflare_state)} bytes)")
+                except Exception as state_err:
+                    report_lines.append(f"  ⚠ Cloudflare state export failed: {str(state_err)}")
+                    cloudflare_state = ""
             except dagger.ExecError as e:
                 error_msg = f"Terraform apply failed: {str(e)}"
                 report_lines.append(f"  ✗ {error_msg}")
@@ -1116,8 +1032,8 @@ class UnifiCloudflareGlue:
             report_lines.append("")
             report_lines.append("PHASE 3: Creating UniFi resources...")
 
-            # Note: UniFi will fail if the test MAC address doesn't exist in the
-            # UniFi controller. Use --test-mac-address to specify a real device MAC.
+            # Note: UniFi may fail because the test MAC (aa:bb:cc:dd:ee:ff) won't exist
+            # in real UniFi controllers. This is expected behavior for integration testing.
 
             # Create directory with UniFi config for Terraform
             unifi_dir = dagger.dag.directory().with_new_file("unifi.json", unifi_json)
@@ -1144,7 +1060,6 @@ class UnifiCloudflareGlue:
             unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
             unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_api_url", api_url if api_url else unifi_url)
             unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_config_file", "/workspace/unifi.json")
-            unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_unifi_insecure", str(unifi_insecure).lower())
 
             # Pass authentication credentials as secrets
             if unifi_api_key:
@@ -1171,6 +1086,14 @@ class UnifiCloudflareGlue:
                 apply_result = await unifi_ctr.with_exec(["terraform", "apply", "-auto-approve"]).stdout()
                 report_lines.append(f"  ✓ Created UniFi DNS record: {test_id}.local")
                 validation_results["unifi_dns"] = "created"
+
+                # Export Terraform state for cleanup
+                try:
+                    unifi_state = await unifi_ctr.file("/module/terraform.tfstate").contents()
+                    report_lines.append(f"  ✓ UniFi state exported ({len(unifi_state)} bytes)")
+                except Exception as state_err:
+                    report_lines.append(f"  ⚠ UniFi state export failed: {str(state_err)}")
+                    unifi_state = ""
             except dagger.ExecError as e:
                 error_msg = f"Terraform apply failed: {str(e)}"
                 report_lines.append(f"  ✗ {error_msg}")
@@ -1199,7 +1122,7 @@ class UnifiCloudflareGlue:
                 # Parse result to check if tunnel exists
                 tunnel_count = await validate_ctr.with_exec([
                     "sh", "-c",
-                    f'echo {shlex.quote(tunnel_list_result)} | jq \'.result | length\''
+                    f'echo \'{tunnel_list_result}\' | jq \'.result | length\''
                 ]).stdout()
 
                 if tunnel_count.strip() == "1":
@@ -1225,7 +1148,7 @@ class UnifiCloudflareGlue:
                 # Extract zone ID
                 zone_id = await validate_ctr.with_exec([
                     "sh", "-c",
-                    f'echo {shlex.quote(zone_list_result)} | jq -r \'.result[0].id\''
+                    f'echo \'{zone_list_result}\' | jq -r \'.result[0].id\''
                 ]).stdout()
 
                 if zone_id and zone_id.strip() != "null":
@@ -1240,7 +1163,7 @@ class UnifiCloudflareGlue:
                     # Check if record exists
                     dns_count = await validate_ctr.with_exec([
                         "sh", "-c",
-                        f'echo {shlex.quote(dns_record_result)} | jq \'.result | length\''
+                        f'echo \'{dns_record_result}\' | jq \'.result | length\''
                     ]).stdout()
 
                     if dns_count.strip() == "1":
@@ -1307,12 +1230,8 @@ class UnifiCloudflareGlue:
                 report_lines.append("PHASE 5: Cleanup (guaranteed execution)...")
 
                 # Cleanup Cloudflare resources first (reverse order of creation)
-                # NOTE: Implements retry logic for Cloudflare provider issue #5255
-                # where tunnel deletion fails on first attempt due to "active connections"
                 report_lines.append("  Cleaning up Cloudflare resources...")
-                last_error = None
-                cf_cleanup_success = False
-
+                cf_cleanup_method = "config-based"  # Track cleanup method
                 try:
                     # Create Cloudflare cleanup container
                     cf_cleanup_ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
@@ -1332,70 +1251,50 @@ class UnifiCloudflareGlue:
                         except Exception:
                             raise RuntimeError("Cloudflare Tunnel Terraform module not found at terraform/modules/cloudflare-tunnel")
 
+                    # Import state if available (state-based cleanup)
+                    if cloudflare_state:
+                        try:
+                            cf_cleanup_ctr = cf_cleanup_ctr.with_new_file("/module/terraform.tfstate", cloudflare_state)
+                            cf_cleanup_method = "state-based"
+                            report_lines.append("    ✓ Cloudflare state imported for cleanup")
+                        except Exception as state_err:
+                            report_lines.append(f"    ⚠ State import failed, using config-based cleanup: {str(state_err)}")
+                            cf_cleanup_method = "config-based"
+
                     # Set environment variables
                     cf_cleanup_ctr = cf_cleanup_ctr.with_env_variable("TF_VAR_cloudflare_account_id", cloudflare_account_id)
                     cf_cleanup_ctr = cf_cleanup_ctr.with_env_variable("TF_VAR_zone_name", cloudflare_zone)
                     cf_cleanup_ctr = cf_cleanup_ctr.with_env_variable("TF_VAR_config_file", "/workspace/cloudflare.json")
 
-                    # Pass Cloudflare token as secret (both as TF variable and env var for provider auth)
+                    # Pass Cloudflare token as secret
                     cf_cleanup_ctr = cf_cleanup_ctr.with_secret_variable("TF_VAR_cloudflare_token", cloudflare_token)
-                    cf_cleanup_ctr = cf_cleanup_ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
 
                     # Set working directory to module
                     cf_cleanup_ctr = cf_cleanup_ctr.with_workdir("/module")
 
-                    # Execute terraform init (no retry for init failures - fail fast)
+                    # Execute terraform init
                     try:
                         await cf_cleanup_ctr.with_exec(["terraform", "init"]).stdout()
                     except dagger.ExecError as e:
                         raise RuntimeError(f"Terraform init failed: {str(e)}")
 
-                    # Execute terraform destroy with retry logic
-                    # Retry is needed due to Cloudflare provider issue #5255
-                    for attempt in range(1, 3):  # 2 attempts max
-                        try:
-                            destroy_result = await cf_cleanup_ctr.with_exec([
-                                "terraform", "destroy", "-auto-approve"
-                            ]).stdout()
-
-                            if attempt == 1:
-                                report_lines.append(f"    ✓ Destroyed tunnel: {tunnel_name}")
-                                report_lines.append(f"    ✓ Deleted DNS record: {test_hostname}")
-                                cleanup_status["cloudflare"] = "success"
-                            else:
-                                report_lines.append(f"    ✓ Destroy succeeded on retry")
-                                cleanup_status["cloudflare"] = "success_after_retry"
-                            cf_cleanup_success = True
-                            break  # Success, exit retry loop
-
-                        except dagger.ExecError as e:
-                            last_error = str(e)
-                            if attempt == 1:
-                                report_lines.append("    First destroy attempt failed, retrying in 5 seconds...")
-                                await asyncio.sleep(5)
-                            else:
-                                # Second attempt failed - provide manual cleanup instructions
-                                cleanup_status["cloudflare"] = "failed_needs_manual_cleanup"
-                                report_lines.append("    ✗ Cloudflare cleanup failed after 2 attempts")
-                                report_lines.append("")
-                                report_lines.append("    The following resources may need manual deletion via Cloudflare Dashboard:")
-                                report_lines.append(f"      - Tunnel: {tunnel_name}")
-                                report_lines.append(f"      - DNS Record: {test_hostname}")
-                                report_lines.append("")
-                                report_lines.append("    Manual cleanup steps:")
-                                report_lines.append("      1. Visit https://dash.cloudflare.com/ > Zero Trust > Networks > Tunnels")
-                                report_lines.append(f"      2. Find and delete tunnel: {tunnel_name}")
-                                report_lines.append(f"      3. Visit DNS > Records for zone {cloudflare_zone}")
-                                report_lines.append(f"      4. Delete CNAME record: {test_hostname}")
-                                report_lines.append("")
-                                report_lines.append(f"    Original error: {last_error}")
-
+                    # Execute terraform destroy
+                    try:
+                        destroy_result = await cf_cleanup_ctr.with_exec([
+                            "terraform", "destroy", "-auto-approve"
+                        ]).stdout()
+                        report_lines.append(f"    ✓ Destroyed tunnel: {tunnel_name} ({cf_cleanup_method})")
+                        report_lines.append(f"    ✓ Deleted DNS record: {test_hostname}")
+                        cleanup_status["cloudflare"] = "success"
+                    except dagger.ExecError as e:
+                        raise RuntimeError(f"Terraform destroy failed: {str(e)}")
                 except Exception as e:
                     cleanup_status["cloudflare"] = f"failed: {str(e)}"
                     report_lines.append(f"    ✗ Failed to cleanup Cloudflare: {str(e)}")
 
                 # Cleanup UniFi resources second
                 report_lines.append("  Cleaning up UniFi resources...")
+                unifi_cleanup_method = "config-based"  # Track cleanup method
                 try:
                     # Create UniFi cleanup container
                     unifi_cleanup_ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
@@ -1415,11 +1314,20 @@ class UnifiCloudflareGlue:
                         except Exception:
                             raise RuntimeError("UniFi DNS Terraform module not found at terraform/modules/unifi-dns")
 
+                    # Import state if available (state-based cleanup)
+                    if unifi_state:
+                        try:
+                            unifi_cleanup_ctr = unifi_cleanup_ctr.with_new_file("/module/terraform.tfstate", unifi_state)
+                            unifi_cleanup_method = "state-based"
+                            report_lines.append("    ✓ UniFi state imported for cleanup")
+                        except Exception as state_err:
+                            report_lines.append(f"    ⚠ State import failed, using config-based cleanup: {str(state_err)}")
+                            unifi_cleanup_method = "config-based"
+
                     # Set environment variables
                     unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
                     unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable("TF_VAR_api_url", api_url if api_url else unifi_url)
                     unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable("TF_VAR_config_file", "/workspace/unifi.json")
-                    unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable("TF_VAR_unifi_insecure", str(unifi_insecure).lower())
 
                     # Pass authentication credentials as secrets
                     if unifi_api_key:
@@ -1442,7 +1350,7 @@ class UnifiCloudflareGlue:
                         destroy_result = await unifi_cleanup_ctr.with_exec([
                             "terraform", "destroy", "-auto-approve"
                         ]).stdout()
-                        report_lines.append(f"    ✓ Deleted UniFi DNS record: {test_id}.local")
+                        report_lines.append(f"    ✓ Deleted UniFi DNS record: {test_id}.local ({unifi_cleanup_method})")
                         cleanup_status["unifi"] = "success"
                     except dagger.ExecError as e:
                         raise RuntimeError(f"Terraform destroy failed: {str(e)}")
@@ -1460,8 +1368,8 @@ class UnifiCloudflareGlue:
                 report_lines.append("-" * 60)
                 report_lines.append("CLEANUP SUMMARY")
                 report_lines.append("-" * 60)
-                report_lines.append(f"  Cloudflare: {cleanup_status['cloudflare']}")
-                report_lines.append(f"  UniFi: {cleanup_status['unifi']}")
+                report_lines.append(f"  Cloudflare: {cleanup_status['cloudflare']} ({cf_cleanup_method})")
+                report_lines.append(f"  UniFi: {cleanup_status['unifi']} ({unifi_cleanup_method})")
                 report_lines.append(f"  State Files: {cleanup_status['state_files']}")
 
                 # Display warning if any cleanup step failed
