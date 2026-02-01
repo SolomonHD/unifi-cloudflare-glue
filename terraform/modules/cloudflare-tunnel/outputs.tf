@@ -8,19 +8,11 @@ output "tunnel_ids" {
   }
 }
 
-output "tunnel_tokens" {
-  description = "Map of MAC address to Cloudflare Tunnel token (sensitive) - used for cloudflared authentication"
-  value = {
-    for mac, tunnel in cloudflare_zero_trust_tunnel_cloudflared.this : mac => tunnel.tunnel_token
-  }
-  sensitive = true
-}
-
 output "credentials_json" {
   description = "Map of MAC address to credentials file content (sensitive) - JSON format for cloudflared"
   value = {
     for mac, tunnel in cloudflare_zero_trust_tunnel_cloudflared.this : mac => jsonencode({
-      AccountTag   = var.config.account_id
+      AccountTag   = local.effective_config.account_id
       TunnelID     = tunnel.id
       TunnelName   = tunnel.name
       TunnelSecret = base64encode(random_password.tunnel_secret[mac].result)
