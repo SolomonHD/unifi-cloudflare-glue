@@ -118,6 +118,9 @@ The Dagger module provides containerized, reproducible pipelines for managing hy
   1. API Key (recommended): `--unifi-api-key`
   2. Username/Password: Both `--unifi-username` and `--unifi-password`
   
+  TLS options (optional):
+  - `--unifi-insecure` - Skip TLS certificate verification (useful for self-signed certificates)
+  
   Container version options (optional):
   - `--terraform-version` - Terraform version to use (default: "latest")
   
@@ -134,6 +137,13 @@ The Dagger module provides containerized, reproducible pipelines for managing hy
       --unifi-url=https://unifi.local:8443 \
       --unifi-username=env:UNIFI_USER \
       --unifi-password=env:UNIFI_PASS
+  
+  # With self-signed certificates (skip TLS verification)
+  dagger call deploy-unifi \
+      --source=. \
+      --unifi-url=https://192.168.10.1 \
+      --unifi-api-key=env:UNIFI_API_KEY \
+      --unifi-insecure
   
   # With pinned Terraform version
   dagger call deploy-unifi \
@@ -168,6 +178,9 @@ The Dagger module provides containerized, reproducible pipelines for managing hy
   
   Deploys in the correct order: UniFi DNS first (creates local DNS), then Cloudflare Tunnels (point to now-resolvable hostnames).
   
+  TLS options (optional):
+  - `--unifi-insecure` - Skip TLS certificate verification (useful for self-signed certificates)
+  
   Container version options (optional):
   - `--terraform-version` - Terraform version to use (default: "latest")
   - `--kcl-version` - KCL version to use (default: "latest")
@@ -180,6 +193,16 @@ The Dagger module provides containerized, reproducible pipelines for managing hy
       --cloudflare-token=env:CF_TOKEN \
       --cloudflare-account-id=xxx \
       --zone-name=example.com
+  
+  # With self-signed certificates (skip TLS verification)
+  dagger call deploy \
+      --kcl-source=./kcl \
+      --unifi-url=https://192.168.10.1 \
+      --unifi-api-key=env:UNIFI_API_KEY \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=xxx \
+      --zone-name=example.com \
+      --unifi-insecure
   
   # With pinned versions
   dagger call deploy \
@@ -197,6 +220,9 @@ The Dagger module provides containerized, reproducible pipelines for managing hy
   
   Destroys in reverse order to avoid DNS loops: Cloudflare resources first, then UniFi.
   
+  TLS options (optional):
+  - `--unifi-insecure` - Skip TLS certificate verification (useful for self-signed certificates)
+  
   Container version options (optional):
   - `--terraform-version` - Terraform version to use (default: "latest")
   - `--kcl-version` - KCL version to use (default: "latest")
@@ -209,6 +235,16 @@ The Dagger module provides containerized, reproducible pipelines for managing hy
       --cloudflare-token=env:CF_TOKEN \
       --cloudflare-account-id=xxx \
       --zone-name=example.com
+  
+  # With self-signed certificates (skip TLS verification)
+  dagger call destroy \
+      --kcl-source=./kcl \
+      --unifi-url=https://192.168.10.1 \
+      --unifi-api-key=env:UNIFI_API_KEY \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=xxx \
+      --zone-name=example.com \
+      --unifi-insecure
   
   # With pinned versions
   dagger call destroy \
@@ -226,6 +262,12 @@ The Dagger module provides containerized, reproducible pipelines for managing hy
 
 - **`test-integration`** - Run integration tests with ephemeral resources
   
+  TLS options (optional):
+  - `--unifi-insecure` - Skip TLS certificate verification (useful for self-signed certificates)
+  
+  Test configuration options:
+  - `--test-mac-address` - MAC address of a real device in your UniFi controller (default: "aa:bb:cc:dd:ee:ff")
+  
   Container version options (optional):
   - `--terraform-version` - Terraform version to use (default: "latest")
   - `--kcl-version` - KCL version to use (default: "latest")
@@ -240,6 +282,17 @@ The Dagger module provides containerized, reproducible pipelines for managing hy
       --unifi-url=https://unifi.local:8443 \
       --api-url=https://unifi.local:8443 \
       --unifi-api-key=env:UNIFI_API_KEY
+
+  # With self-signed certificates (skip TLS verification)
+  dagger call test-integration \
+      --source=. \
+      --cloudflare-zone=test.example.com \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=xxx \
+      --unifi-url=https://192.168.10.1 \
+      --api-url=https://192.168.10.1 \
+      --unifi-api-key=env:UNIFI_API_KEY \
+      --unifi-insecure
 
   # With cache buster to force re-execution
   dagger call test-integration \
@@ -262,6 +315,17 @@ The Dagger module provides containerized, reproducible pipelines for managing hy
       --api-url=https://unifi.local:8443 \
       --unifi-api-key=env:UNIFI_API_KEY \
       --wait-before-cleanup=30
+
+  # With a real MAC address (required for UniFi integration)
+  dagger call test-integration \
+      --source=. \
+      --cloudflare-zone=test.example.com \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=xxx \
+      --unifi-url=https://unifi.local:8443 \
+      --api-url=https://unifi.local:8443 \
+      --unifi-api-key=env:UNIFI_API_KEY \
+      --test-mac-address=de:ad:be:ef:12:34
 
   # With pinned versions
   dagger call test-integration \
