@@ -32,6 +32,8 @@ export UNIFI_INSECURE="true"  # If using self-signed certificates
 
 ## Usage
 
+### Local Path (for development within this repo)
+
 ```hcl
 module "unifi_dns" {
   source = "./terraform/modules/unifi-dns"
@@ -47,6 +49,43 @@ module "unifi_dns" {
             mac_address    = "aa:bb:cc:dd:ee:01"
             nic_name       = "eth0"
             service_cnames = ["nas-eth0.internal.lan"]  # Now created as CNAME records
+          }
+        ]
+      },
+      {
+        friendly_hostname = "backup-server"
+        nics = [
+          {
+            mac_address = "aa:bb:cc:dd:ee:03"
+          }
+        ]
+      }
+    ]
+    default_domain = "internal.lan"
+    site           = "default"
+  }
+
+  strict_mode = false
+}
+```
+
+### Git Source (for consuming from external projects)
+
+```hcl
+module "unifi_dns" {
+  source = "github.com/SolomonHD/unifi-cloudflare-glue//terraform/modules/unifi-dns?ref=v0.1.0"
+
+  config = {
+    devices = [
+      {
+        friendly_hostname = "media-server"
+        domain            = "internal.lan"
+        service_cnames    = ["storage.internal.lan"]
+        nics = [
+          {
+            mac_address    = "aa:bb:cc:dd:ee:01"
+            nic_name       = "eth0"
+            service_cnames = ["nas-eth0.internal.lan"]
           }
         ]
       },
