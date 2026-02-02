@@ -358,6 +358,55 @@ The Dagger module provides containerized, reproducible pipelines for managing hy
 
 See [`examples/homelab-media-stack/`](./examples/homelab-media-stack/) for a complete example with media services.
 
+## Versioning
+
+This project uses a **unified versioning strategy** where all components (KCL schemas, Terraform modules, and Dagger module) share the same version number. This ensures compatibility across all components.
+
+### Current Version
+
+**Version: 0.1.0**
+
+### Version Components
+
+| Component | Version Location |
+|-----------|------------------|
+| KCL Module | [`kcl/kcl.mod`](./kcl/kcl.mod:4) |
+| Terraform Modules | Comment in `versions.tf` files |
+| Dagger Module | `pyproject.toml` and `VERSION` file |
+
+### Semantic Versioning
+
+This project follows [Semantic Versioning](https://semver.org/):
+
+- **MAJOR** (X.y.z): Breaking changes in any component
+- **MINOR** (x.Y.z): New features (backward compatible)
+- **PATCH** (x.y.Z): Bug fixes
+
+### Querying the Version
+
+Use the Dagger `version` function to check the current version:
+
+```bash
+dagger call version --source=.
+```
+
+### Version Pinning
+
+You can pin to specific versions of container tools for reproducibility:
+
+```bash
+# Pin Terraform version
+dagger call deploy --source=. --terraform-version=1.10.0 ...
+
+# Pin KCL version
+dagger call deploy --source=. --kcl-version=0.11.0 ...
+
+# Pin both
+dagger call deploy --source=. --terraform-version=1.10.0 --kcl-version=0.11.0 ...
+```
+
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the release process.
+
 ## Security Best Practices
 
 ### Credential Handling

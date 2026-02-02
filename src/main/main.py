@@ -31,6 +31,34 @@ class UnifiCloudflareGlue:
         return f"✓ Hello, {name}! from unifi-cloudflare-glue"
 
     @function
+    async def version(
+        self,
+        source: Annotated[dagger.Directory, Doc("Source directory containing VERSION file")],
+    ) -> str:
+        """
+        Return the current version of unifi-cloudflare-glue.
+
+        Reads the VERSION file from the source directory and returns the
+        version string. All components (KCL, Terraform, Dagger) share
+        the same version number.
+
+        Args:
+            source: Directory containing the VERSION file (use --source=.)
+
+        Returns:
+            Version string (e.g., "0.1.0")
+
+        Example:
+            dagger call version --source=.
+        """
+        try:
+            version_file = source.file("VERSION")
+            version_content = await version_file.contents()
+            return version_content.strip()
+        except Exception as e:
+            return f"✗ Failed: Could not read VERSION file: {str(e)}"
+
+    @function
     async def generate_unifi_config(
         self,
         source: Annotated[dagger.Directory, Doc("Source directory containing KCL configs")],
