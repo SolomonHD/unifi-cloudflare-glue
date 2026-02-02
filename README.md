@@ -48,7 +48,7 @@ unifi-cloudflare-glue/
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/yourusername/unifi-cloudflare-glue.git
+   git clone https://github.com/SolomonHD/unifi-cloudflare-glue.git
    cd unifi-cloudflare-glue
    ```
 
@@ -353,6 +353,75 @@ The Dagger module provides containerized, reproducible pipelines for managing hy
 ### KCL Module
 
 - **[`kcl/`](./kcl/)** - KCL schemas and generators for configuration validation and generation
+
+## Using as Terraform Modules
+
+The Terraform modules in this repository can be consumed directly from external projects using Git-based module sourcing. This allows you to use these modules as infrastructure dependencies without cloning the entire repository.
+
+### Module Source
+
+Terraform supports fetching modules directly from Git repositories using the following syntax:
+
+```hcl
+source = "github.com/OWNER/REPOSITORY//SUBDIR?ref=VERSION"
+```
+
+For this project:
+- **Repository**: `github.com/SolomonHD/unifi-cloudflare-glue`
+- **Module paths**: `//terraform/modules/unifi-dns` or `//terraform/modules/cloudflare-tunnel`
+- **Version**: Use `?ref=v0.1.0` to pin to a specific release (recommended)
+
+### Module: unifi-dns
+
+```hcl
+module "unifi_dns" {
+  source = "github.com/SolomonHD/unifi-cloudflare-glue//terraform/modules/unifi-dns?ref=v0.1.0"
+
+  config = {
+    devices = [
+      {
+        friendly_hostname = "media-server"
+        domain            = "internal.lan"
+        nics = [
+          {
+            mac_address = "aa:bb:cc:dd:ee:01"
+          }
+        ]
+      }
+    ]
+    default_domain = "internal.lan"
+    site           = "default"
+  }
+
+  strict_mode = false
+}
+```
+
+### Module: cloudflare-tunnel
+
+```hcl
+module "cloudflare_tunnel" {
+  source = "github.com/SolomonHD/unifi-cloudflare-glue//terraform/modules/cloudflare-tunnel?ref=v0.1.0"
+
+  config = {
+    zone_name  = "example.com"
+    account_id = "your-cloudflare-account-id"
+    tunnels = {
+      "aa:bb:cc:dd:ee:ff" = {
+        tunnel_name = "home-server"
+        mac_address = "aa:bb:cc:dd:ee:ff"
+        services = [
+          {
+            public_hostname   = "media.example.com"
+            local_service_url = "http://jellyfin.internal.lan:8096"
+            no_tls_verify     = false
+          }
+        ]
+      }
+    }
+  }
+}
+```
 
 ## Examples
 

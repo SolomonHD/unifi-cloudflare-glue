@@ -43,7 +43,7 @@ This module requires authentication with the Cloudflare provider. Configure one 
 
 ## Usage
 
-### Basic Usage with KCL-Generated JSON
+### Local Path (for development within this repo)
 
 ```hcl
 # Read KCL-generated configuration
@@ -55,6 +55,32 @@ module "cloudflare_tunnel" {
   source = "./terraform/modules/cloudflare-tunnel"
 
   config = local.config
+}
+```
+
+### Git Source (for consuming from external projects)
+
+```hcl
+module "cloudflare_tunnel" {
+  source = "github.com/SolomonHD/unifi-cloudflare-glue//terraform/modules/cloudflare-tunnel?ref=v0.1.0"
+
+  config = {
+    zone_name  = "example.com"
+    account_id = "your-cloudflare-account-id"
+    tunnels = {
+      "aa:bb:cc:dd:ee:ff" = {
+        tunnel_name = "home-server"
+        mac_address = "aa:bb:cc:dd:ee:ff"
+        services = [
+          {
+            public_hostname   = "media.example.com"
+            local_service_url = "http://jellyfin.internal.lan:8096"
+            no_tls_verify     = false
+          }
+        ]
+      }
+    }
+  }
 }
 ```
 
