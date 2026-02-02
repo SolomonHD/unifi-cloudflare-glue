@@ -129,7 +129,7 @@ resource "unifi_dns_record" "dns_record" {
   for_each = local.dns_records
 
   site    = local.effective_config.site
-  name    = each.value.hostname
+  name    = "${each.value.hostname}.${each.value.domain}"
   record  = each.value.ip
   type    = "A"
   enabled = true
