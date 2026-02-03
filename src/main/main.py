@@ -559,12 +559,61 @@ class UnifiCloudflareGlue:
             apply_result = await ctr.with_exec([
                 "terraform", "apply", "-auto-approve"
             ]).stdout()
-            
+
             result_msg = "✓ Success: Cloudflare Tunnel deployment completed"
             if backend_type != "local":
                 result_msg += f"\n  Backend: {backend_type}"
             elif using_persistent_state:
                 result_msg += "\n  State: Persistent local (mounted state directory)"
+
+            # Build tunnel token retrieval guidance
+            guidance_lines = [
+                "",
+                "-" * 60,
+                "Next Step: Retrieve Tunnel Credentials",
+                "-" * 60,
+                "",
+                "Your Cloudflare tunnels have been deployed. To configure cloudflared",
+                "on your devices, you need to retrieve the tunnel credentials.",
+                "",
+                "Option 1: Using Terraform (if you have Terraform installed):",
+                "  terraform output -json cloudflare_tunnel_tokens",
+                "",
+                "Option 2: Using Dagger (recommended):",
+            ]
+
+            # Build Dagger command with actual deployment parameters
+            dagger_cmd_parts = [
+                "dagger call get-tunnel-secrets \\",
+                f"    --source=. \\",
+                f"    --cloudflare-token=env:CF_TOKEN \\",
+                f"    --cloudflare-account-id={cloudflare_account_id} \\",
+                f"    --zone-name={zone_name}",
+            ]
+
+            # Add backend-specific flags for remote backends
+            if backend_type != "local":
+                dagger_cmd_parts.append(f" \\")
+                dagger_cmd_parts.append(f"    --backend-type={backend_type} \\")
+                dagger_cmd_parts.append(f"    --backend-config-file=./backend.hcl")
+
+            # Add state-dir flag for persistent local state
+            if using_persistent_state:
+                dagger_cmd_parts.append(f" \\")
+                dagger_cmd_parts.append(f"    --state-dir=./terraform-state")
+
+            guidance_lines.extend(dagger_cmd_parts)
+            guidance_lines.extend([
+                "",
+                "Option 3: Install cloudflared service directly:",
+                "  cloudflared service install <tunnel-token-from-option-1-or-2>",
+                "",
+                "For detailed setup instructions, see:",
+                "  examples/homelab-media-stack/README.md",
+                "-" * 60,
+            ])
+
+            result_msg += "\n".join(guidance_lines)
             result_msg += f"\n\n{apply_result}"
             return result_msg
         except dagger.ExecError as e:
@@ -732,6 +781,57 @@ class UnifiCloudflareGlue:
 
         if "✓ Success" in unifi_result and "✓ Success" in cloudflare_result:
             results.append("✓ Both deployments completed successfully")
+
+            # Add tunnel token retrieval guidance only when both deployments succeed
+            # Cloudflare tunnels exist and are ready for device configuration
+            guidance_lines = [
+                "",
+                "-" * 60,
+                "Next Step: Retrieve Tunnel Credentials",
+                "-" * 60,
+                "",
+                "Your Cloudflare tunnels have been deployed. To configure cloudflared",
+                "on your devices, you need to retrieve the tunnel credentials.",
+                "",
+                "Option 1: Using Terraform (if you have Terraform installed):",
+                "  terraform output -json cloudflare_tunnel_tokens",
+                "",
+                "Option 2: Using Dagger (recommended):",
+            ]
+
+            # Build Dagger command with actual deployment parameters
+            # Note: deploy() uses KCL-generated configs in ./kcl directory
+            dagger_cmd_parts = [
+                "dagger call get-tunnel-secrets \\",
+                f"    --source=./kcl \\",
+                f"    --cloudflare-token=env:CF_TOKEN \\",
+                f"    --cloudflare-account-id={cloudflare_account_id} \\",
+                f"    --zone-name={zone_name}",
+            ]
+
+            # Add backend-specific flags for remote backends
+            if backend_type != "local":
+                dagger_cmd_parts.append(f" \\")
+                dagger_cmd_parts.append(f"    --backend-type={backend_type} \\")
+                dagger_cmd_parts.append(f"    --backend-config-file=./backend.hcl")
+
+            # Add state-dir flag for persistent local state
+            if state_dir is not None:
+                dagger_cmd_parts.append(f" \\")
+                dagger_cmd_parts.append(f"    --state-dir=./terraform-state")
+
+            guidance_lines.extend(dagger_cmd_parts)
+            guidance_lines.extend([
+                "",
+                "Option 3: Install cloudflared service directly:",
+                "  cloudflared service install <tunnel-token-from-option-1-or-2>",
+                "",
+                "For detailed setup instructions, see:",
+                "  examples/homelab-media-stack/README.md",
+                "-" * 60,
+            ])
+
+            results.extend(guidance_lines)
         elif "✓ Success" in unifi_result:
             results.append("○ UniFi: Success")
             results.append("✗ Cloudflare: Failed")
@@ -1997,9 +2097,83 @@ Notes
                 report_lines.append(f"  ⚠ UniFi state export failed: {str(e)}")
                 unifi_state_dir = None
 
-            # Phase 4: Validation
+            # Phase 4: Credential Retrieval via get_tunnel_secrets
             report_lines.append("")
-            report_lines.append("PHASE 4: Validating resources...")
+            report_lines.append("PHASE 4: Retrieving tunnel secrets...")
+
+            try:
+                # Create a directory with the Cloudflare state for credential retrieval
+                cf_state_for_secrets = dagger.dag.directory().with_file("terraform.tfstate", cf_state_file)
+
+                # Call get_tunnel_secrets to verify credential retrieval works
+                secrets_result = await self.get_tunnel_secrets(
+                    source=source,
+                    cloudflare_token=cloudflare_token,
+                    cloudflare_account_id=cloudflare_account_id,
+                    zone_name=cloudflare_zone,
+                    terraform_version=terraform_version,
+                    state_dir=cf_state_for_secrets,
+                    output_format="json",
+                )
+
+                # Verify the result is valid JSON
+                secrets_data = json.loads(secrets_result)
+
+                # Validate required fields exist
+                assert "tunnel_tokens" in secrets_data, "Missing tunnel_tokens in response"
+                assert "credentials_json" in secrets_data, "Missing credentials_json in response"
+                assert "count" in secrets_data, "Missing count in response"
+
+                # Verify tokens are non-empty strings
+                for mac, token in secrets_data["tunnel_tokens"].items():
+                    assert isinstance(token, str), f"Token for {mac} is not a string"
+                    assert len(token) > 0, f"Token for {mac} is empty"
+
+                # Verify credentials contain required fields
+                for mac, creds in secrets_data["credentials_json"].items():
+                    assert "AccountTag" in creds, f"Missing AccountTag for {mac}"
+                    assert "TunnelID" in creds, f"Missing TunnelID for {mac}"
+                    assert "TunnelName" in creds, f"Missing TunnelName for {mac}"
+                    assert "TunnelSecret" in creds, f"Missing TunnelSecret for {mac}"
+
+                report_lines.append(f"  ✓ Retrieved secrets for {secrets_data['count']} tunnel(s)")
+                report_lines.append(f"  ✓ Verified tunnel_tokens format")
+                report_lines.append(f"  ✓ Verified credentials_json contains required fields")
+                validation_results["secrets_retrieval"] = "success"
+
+                # Also test human-readable format
+                secrets_human = await self.get_tunnel_secrets(
+                    source=source,
+                    cloudflare_token=cloudflare_token,
+                    cloudflare_account_id=cloudflare_account_id,
+                    zone_name=cloudflare_zone,
+                    terraform_version=terraform_version,
+                    state_dir=cf_state_for_secrets,
+                    output_format="human",
+                )
+
+                assert "CLOUDFLARE TUNNEL SECRETS" in secrets_human
+                assert "TUNNEL TOKENS" in secrets_human
+                assert "CREDENTIALS JSON" in secrets_human
+                report_lines.append(f"  ✓ Human-readable format verified")
+                validation_results["secrets_human_format"] = "success"
+
+            except json.JSONDecodeError as e:
+                error_msg = f"Secrets retrieval returned invalid JSON: {str(e)}"
+                report_lines.append(f"  ✗ {error_msg}")
+                validation_results["secrets_retrieval"] = f"failed: {error_msg}"
+            except AssertionError as e:
+                error_msg = f"Secrets validation failed: {str(e)}"
+                report_lines.append(f"  ✗ {error_msg}")
+                validation_results["secrets_retrieval"] = f"failed: {error_msg}"
+            except Exception as e:
+                error_msg = f"Secrets retrieval failed: {str(e)}"
+                report_lines.append(f"  ✗ {error_msg}")
+                validation_results["secrets_retrieval"] = f"failed: {error_msg}"
+
+            # Phase 5: Resource Validation
+            report_lines.append("")
+            report_lines.append("PHASE 5: Validating resources...")
 
             # Create validation container with curl and jq for API calls
             validate_ctr = dagger.dag.container().from_("alpine/curl:latest")
@@ -2107,10 +2281,10 @@ Notes
                 report_lines.append("VALIDATION SUMMARY: ✗ SOME RESOURCES NOT FOUND")
             report_lines.append("-" * 60)
 
-            # Phase 4.5: Wait before cleanup (if enabled)
+            # Phase 5.5: Wait before cleanup (if enabled)
             if wait_before_cleanup > 0:
                 report_lines.append("")
-                report_lines.append(f"PHASE 4.5: Waiting {wait_before_cleanup}s before cleanup...")
+                report_lines.append(f"PHASE 5.5: Waiting {wait_before_cleanup}s before cleanup...")
                 report_lines.append("  (Use this time to manually verify created resources)")
                 await asyncio.sleep(wait_before_cleanup)
                 report_lines.append(f"  ✓ Wait completed ({wait_before_cleanup}s)")
@@ -2121,7 +2295,7 @@ Notes
             validation_results["error"] = str(e)
 
         finally:
-            # Phase 5: Guaranteed Cleanup
+            # Phase 6: Guaranteed Cleanup
             if cleanup:
                 report_lines.append("")
                 report_lines.append("PHASE 5: Cleanup (guaranteed execution)...")
@@ -2344,3 +2518,282 @@ Notes
         report_lines.append("=" * 60)
 
         return "\n".join(report_lines)
+
+    @function
+    async def get_tunnel_secrets(
+        self,
+        source: Annotated[dagger.Directory, Doc("Source directory (for accessing terraform modules)")],
+        cloudflare_token: Annotated[Secret, Doc("Cloudflare API Token for authentication")],
+        cloudflare_account_id: Annotated[str, Doc("Cloudflare Account ID")],
+        zone_name: Annotated[str, Doc("DNS zone name (e.g., example.com)")],
+        terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
+        backend_type: Annotated[str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")] = "local",
+        backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
+        state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
+        output_format: Annotated[str, Doc("Output format: 'human' for readable text, 'json' for machine-parseable")] = "human",
+    ) -> str:
+        """
+        Retrieve Cloudflare tunnel secrets from Terraform state.
+
+        This function extracts tunnel tokens and credentials from Terraform state
+        after deployment, enabling configuration of cloudflared on devices.
+
+        State Management (must match deployment configuration):
+        1. Ephemeral (default): State stored in container from previous deploy
+        2. Persistent Local: Use --state-dir=./terraform-state where state was saved
+        3. Remote Backend: Use --backend-type=s3 --backend-config-file=... to access remote state
+
+        Args:
+            source: Source directory containing Terraform modules
+            cloudflare_token: Cloudflare API Token for authentication
+            cloudflare_account_id: Cloudflare Account ID
+            zone_name: DNS zone name
+            terraform_version: Terraform version to use (default: "latest")
+            backend_type: Terraform backend type (local, s3, azurerm, gcs, remote, etc.)
+            backend_config_file: Backend configuration HCL file (required for remote backends)
+            state_dir: Directory for persistent Terraform state (must match deployment)
+            output_format: Output format - 'human' for readable text, 'json' for automation
+
+        Returns:
+            Tunnel secrets in requested format (human-readable or JSON)
+
+        Example:
+            # Retrieve secrets with local ephemeral state (default)
+            dagger call get-tunnel-secrets \\
+                --source=. \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com
+
+            # Retrieve secrets from persistent state directory
+            dagger call get-tunnel-secrets \\
+                --source=. \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --state-dir=./terraform-state
+
+            # Retrieve secrets from remote backend (S3)
+            dagger call get-tunnel-secrets \\
+                --source=. \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --backend-type=s3 \\
+                --backend-config-file=./s3-backend.hcl
+
+            # Get JSON output for automation
+            dagger call get-tunnel-secrets \\
+                --source=. \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --output-format=json
+        """
+        try:
+            # Validate output format
+            if output_format not in ["human", "json"]:
+                return (
+                    "✗ Failed: Invalid output format. Must be 'human' or 'json'\n\n"
+                    "Example:\n"
+                    "  dagger call get-tunnel-secrets \\\n"
+                    "      --source=. \\\n"
+                    "      --cloudflare-token=env:CF_TOKEN \\\n"
+                    "      --cloudflare-account-id=xxx \\\n"
+                    "      --zone-name=example.com \\\n"
+                    "      --output-format=json"
+                )
+
+            # Validate backend configuration (reuse existing helper)
+            is_valid, error_msg = self._validate_backend_config(backend_type, backend_config_file)
+            if not is_valid:
+                return error_msg
+
+            # Validate state storage configuration (reuse existing helper)
+            is_valid, error_msg = self._validate_state_storage_config(backend_type, state_dir)
+            if not is_valid:
+                return error_msg
+
+            # Check if state directory exists when provided
+            if state_dir is not None:
+                try:
+                    # Try to access the directory to verify it exists
+                    _ = await state_dir.entries()
+                except Exception:
+                    return "✗ Failed: State directory not found. Check --state-dir path."
+
+            # Create Terraform container
+            tf_ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
+
+            # Mount source directory at /src
+            tf_ctr = tf_ctr.with_directory("/src", source)
+
+            # Mount the Cloudflare Tunnel Terraform module
+            try:
+                tf_module = source.directory("terraform/modules/cloudflare-tunnel")
+                tf_ctr = tf_ctr.with_directory("/module", tf_module)
+            except Exception:
+                # If module not in source, try project root
+                try:
+                    tf_module = dagger.dag.directory().directory("terraform/modules/cloudflare-tunnel")
+                    tf_ctr = tf_ctr.with_directory("/module", tf_module)
+                except Exception:
+                    return "✗ Failed: Cloudflare Tunnel Terraform module not found at terraform/modules/cloudflare-tunnel"
+
+            # Generate and mount backend.tf if using remote backend
+            if backend_type != "local":
+                try:
+                    backend_hcl = self._generate_backend_block(backend_type)
+                    tf_ctr = tf_ctr.with_new_file("/module/backend.tf", backend_hcl)
+                except Exception as e:
+                    return f"✗ Failed: Could not generate backend configuration\n{str(e)}"
+
+            # Mount backend config file if provided
+            if backend_config_file is not None:
+                try:
+                    tf_ctr = tf_ctr.with_file("/root/.terraform/backend.hcl", backend_config_file)
+                except Exception as e:
+                    return f"✗ Failed: Could not mount backend config file\n{str(e)}"
+
+            # Set up environment variables for Cloudflare provider
+            tf_ctr = tf_ctr.with_env_variable("TF_VAR_cloudflare_account_id", cloudflare_account_id)
+            tf_ctr = tf_ctr.with_env_variable("TF_VAR_zone_name", zone_name)
+            tf_ctr = tf_ctr.with_secret_variable("TF_VAR_cloudflare_token", cloudflare_token)
+            tf_ctr = tf_ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
+
+            # Handle state directory mounting for persistent local state
+            using_persistent_state = state_dir is not None
+            if using_persistent_state:
+                # Mount state directory
+                tf_ctr = tf_ctr.with_directory("/state", state_dir)
+                # Copy module files to state directory
+                tf_ctr = tf_ctr.with_exec(["sh", "-c", "cp -r /module/* /state/ && ls -la /state"])
+                # Set working directory to state directory
+                tf_ctr = tf_ctr.with_workdir("/state")
+            else:
+                # Set working directory to module
+                tf_ctr = tf_ctr.with_workdir("/module")
+
+            # Run terraform init
+            init_cmd = ["terraform", "init"]
+            if backend_config_file is not None:
+                init_cmd.extend(["-backend-config=/root/.terraform/backend.hcl"])
+
+            try:
+                tf_ctr = tf_ctr.with_exec(init_cmd)
+                _ = await tf_ctr.stdout()
+            except dagger.ExecError as e:
+                error_msg = f"✗ Failed: Terraform init failed\n{str(e)}"
+                if backend_type != "local":
+                    error_msg += (
+                        "\n\nEnsure backend-type matches your deployment.\n"
+                        "Backend configuration troubleshooting:\n"
+                        "  - Verify backend config file is valid HCL\n"
+                        "  - Check credentials in environment variables\n"
+                        "  - Ensure backend infrastructure exists (bucket, table, etc.)"
+                    )
+                return error_msg
+
+            # Run terraform output to get tunnel_tokens
+            try:
+                tf_ctr = tf_ctr.with_exec(["terraform", "output", "-json", "tunnel_tokens"])
+                tokens_json_str = await tf_ctr.stdout()
+            except dagger.ExecError as e:
+                error_str = str(e)
+                if "No outputs found" in error_str or "output" in error_str.lower():
+                    return "✗ Failed: No tunnels found in Terraform outputs. State may be corrupted."
+                elif "state" in error_str.lower() or "tfstate" in error_str.lower():
+                    return "✗ Failed: No Terraform state found. Have you run deploy-cloudflare yet?"
+                else:
+                    return f"✗ Failed: Could not retrieve tunnel tokens\n{str(e)}"
+
+            # Run terraform output to get credentials_json
+            try:
+                tf_ctr = tf_ctr.with_exec(["terraform", "output", "-json", "credentials_json"])
+                credentials_json_str = await tf_ctr.stdout()
+            except dagger.ExecError as e:
+                error_str = str(e)
+                if "No outputs found" in error_str or "output" in error_str.lower():
+                    return "✗ Failed: No tunnels found in Terraform outputs. State may be corrupted."
+                else:
+                    return f"✗ Failed: Could not retrieve credentials\n{str(e)}"
+
+            # Parse JSON outputs
+            try:
+                tunnel_tokens = json.loads(tokens_json_str.strip())
+                credentials = json.loads(credentials_json_str.strip())
+            except json.JSONDecodeError as e:
+                return f"✗ Failed: Could not parse Terraform output as JSON\n{str(e)}"
+
+            # Validate that we have data
+            if not tunnel_tokens or not credentials:
+                return "✗ Failed: No tunnels found in Terraform outputs. State may be corrupted."
+
+            # Format and return output
+            if output_format == "json":
+                result = {
+                    "tunnel_tokens": tunnel_tokens,
+                    "credentials_json": credentials,
+                    "count": len(tunnel_tokens)
+                }
+                return json.dumps(result, indent=2)
+            else:
+                # Human-readable format
+                output_lines = [
+                    "=" * 60,
+                    "CLOUDFLARE TUNNEL SECRETS",
+                    "=" * 60,
+                    "",
+                    f"Zone: {zone_name}",
+                    f"Total Tunnels: {len(tunnel_tokens)}",
+                    "",
+                    "-" * 60,
+                    "TUNNEL TOKENS (for cloudflared login)",
+                    "-" * 60,
+                    "",
+                ]
+
+                for mac, token in tunnel_tokens.items():
+                    output_lines.append(f"MAC Address: {mac}")
+                    output_lines.append(f"Token: {token}")
+                    output_lines.append("")
+
+                output_lines.extend([
+                    "-" * 60,
+                    "CREDENTIALS JSON (for cloudflared config.yml)",
+                    "-" * 60,
+                    "",
+                ])
+
+                for mac, creds in credentials.items():
+                    output_lines.append(f"MAC Address: {mac}")
+                    output_lines.append(f"  Account Tag: {creds.get('AccountTag', 'N/A')}")
+                    output_lines.append(f"  Tunnel ID: {creds.get('TunnelID', 'N/A')}")
+                    output_lines.append(f"  Tunnel Name: {creds.get('TunnelName', 'N/A')}")
+                    output_lines.append(f"  Tunnel Secret: {creds.get('TunnelSecret', 'N/A')}")
+                    output_lines.append("")
+
+                output_lines.extend([
+                    "-" * 60,
+                    "USAGE INSTRUCTIONS",
+                    "-" * 60,
+                    "",
+                    "1. Install cloudflared on your device:",
+                    "   https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/",
+                    "",
+                    "2. Authenticate using tunnel token (interactive):",
+                    "   cloudflared tunnel login",
+                    "",
+                    "3. Or use credentials JSON for automated setup:",
+                    "   Create /etc/cloudflared/config.yml with the credentials above",
+                    "",
+                    "4. Run cloudflared:",
+                    "   cloudflared tunnel run",
+                    "",
+                    "=" * 60,
+                ])
+
+                return "\n".join(output_lines)
+
+        except Exception as e:
+            return f"✗ Failed: Unexpected error retrieving tunnel secrets\n{str(e)}"

@@ -9,6 +9,7 @@ A complete, production-ready example demonstrating the full `unifi-cloudflare-gl
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
 - [Detailed Setup](#detailed-setup)
+- [Retrieving Tunnel Secrets](#retrieving-tunnel-secrets)
 - [Service Distribution](#service-distribution)
 - [Customization Guide](#customization-guide)
 - [Troubleshooting](#troubleshooting)
@@ -181,13 +182,23 @@ ip link show
    terraform apply -target=module.cloudflare_tunnel
    ```
 
-7. **Configure cloudflared**:
+7. **Retrieve tunnel secrets**:
    ```bash
-   # Get tunnel token from Terraform output
-   terraform output -json cloudflare_tunnel_tokens
+   # Using Dagger (recommended)
+   dagger call get-tunnel-secrets \\
+       --source=. \\
+       --cloudflare-token=env:CF_TOKEN \\
+       --cloudflare-account-id=xxx \\
+       --zone-name=example.com
    
+   # Or using Terraform CLI
+   terraform output -json cloudflare_tunnel_tokens
+   ```
+
+8. **Configure cloudflared**:
+   ```bash
    # Install and run cloudflared on your media server
-   cloudflared service install <token>
+   cloudflared service install <tunnel-token>
    ```
 
 ## Detailed Setup
@@ -306,15 +317,195 @@ This creates:
 - DNS records for all Cloudflare-only and dual-exposure services
 - Ingress rules mapping public hostnames to internal URLs
 
-### Step 6: Configure cloudflared
+## Retrieving Tunnel Secrets
 
-After Terraform applies successfully, get your tunnel token:
+After deploying Cloudflare Tunnels, you need to retrieve the tunnel tokens and credentials to configure `cloudflared` on your devices. The `get-tunnel-secrets` function provides a Dagger-native way to do this.
+
+### Prerequisites
+
+- Successful deployment via `deploy-cloudflare` or `deploy`
+- Same Cloudflare credentials used during deployment
+- Same backend configuration (local state, persistent state dir, or remote backend)
+
+### Usage Examples
+
+#### Local Ephemeral State (Default)
+
+If you deployed without `--state-dir` or remote backend:
+
+```bash
+dagger call get-tunnel-secrets \\
+    --source=. \\
+    --cloudflare-token=env:CF_TOKEN \\
+    --cloudflare-account-id=<your-account-id> \\
+    --zone-name=<your-domain>
+```
+
+#### Persistent Local State
+
+If you deployed with `--state-dir=./terraform-state`:
+
+```bash
+dagger call get-tunnel-secrets \\
+    --source=. \\
+    --cloudflare-token=env:CF_TOKEN \\
+    --cloudflare-account-id=<your-account-id> \\
+    --zone-name=<your-domain> \\
+    --state-dir=./terraform-state
+```
+
+**Note**: The `--state-dir` must match the path used during deployment.
+
+#### Remote Backend (S3)
+
+If you deployed with `--backend-type=s3`:
+
+```bash
+dagger call get-tunnel-secrets \\
+    --source=. \\
+    --cloudflare-token=env:CF_TOKEN \\
+    --cloudflare-account-id=<your-account-id> \\
+    --zone-name=<your-domain> \\
+    --backend-type=s3 \\
+    --backend-config-file=./s3-backend.hcl
+```
+
+**Important**: Backend configuration must match deployment exactly.
+
+#### JSON Output for Automation
+
+For scripts and CI/CD pipelines:
+
+```bash
+dagger call get-tunnel-secrets \\
+    --source=. \\
+    --cloudflare-token=env:CF_TOKEN \\
+    --cloudflare-account-id=<your-account-id> \\
+    --zone-name=<your-domain> \\
+    --output-format=json
+```
+
+Output format:
+```json
+{
+  "tunnel_tokens": {
+    "aa:bb:cc:dd:ee:ff": "eyJh..."
+  },
+  "credentials_json": {
+    "aa:bb:cc:dd:ee:ff": {
+      "AccountTag": "...",
+      "TunnelID": "...",
+      "TunnelName": "...",
+      "TunnelSecret": "..."
+    }
+  },
+  "count": 1
+}
+```
+
+### Backend Configuration Matching
+
+**Critical**: The backend parameters must match your deployment exactly:
+
+| Deployment | Retrieval |
+|------------|-----------|
+| `dagger call deploy --source=.` | `dagger call get-tunnel-secrets --source=.` |
+| `dagger call deploy --state-dir=./state` | `dagger call get-tunnel-secrets --state-dir=./state` |
+| `dagger call deploy --backend-type=s3 --backend-config-file=./s3.hcl` | `dagger call get-tunnel-secrets --backend-type=s3 --backend-config-file=./s3.hcl` |
+
+If you get "No Terraform state found" errors, verify your backend configuration matches.
+
+### Using Retrieved Credentials
+
+#### Install cloudflared with Tunnel Token
+
+```bash
+# Get token from human-readable output or JSON
+token=$(dagger call get-tunnel-secrets ... --output-format=json | jq -r '.tunnel_tokens["aa:bb:cc:dd:ee:ff"]')
+
+# Install as service
+sudo cloudflared service install "$token"
+```
+
+#### Using credentials.json
+
+```bash
+# Extract credentials for a specific MAC
+dagger call get-tunnel-secrets ... --output-format=json | \\
+    jq '.credentials_json["aa:bb:cc:dd:ee:ff"]' > /etc/cloudflared/credentials.json
+```
+
+### Troubleshooting
+
+**"No Terraform state found"**
+- Verify you've run `deploy-cloudflare` first
+- Check that `--state-dir` matches deployment (if used)
+- Check that `--backend-type` matches deployment (if used)
+
+**"Terraform init failed"**
+- Verify backend config file is valid HCL
+- Check credentials are correct
+- Ensure backend infrastructure exists (S3 bucket, DynamoDB table, etc.)
+
+**"No tunnels found in outputs"**
+- State file exists but has no tunnel outputs
+- Deployment may have failed or been destroyed
+- Check `terraform output` manually to verify
+
+### Step 6: Retrieve Tunnel Secrets
+
+After deploying Cloudflare Tunnels, retrieve the tunnel tokens and credentials using the Dagger function:
+
+#### Using Dagger (Recommended)
+
+```bash
+# Retrieve secrets in human-readable format (default)
+dagger call get-tunnel-secrets \\
+    --source=. \\
+    --cloudflare-token=env:CF_TOKEN \\
+    --cloudflare-account-id=<your-account-id> \\
+    --zone-name=<your-domain>
+
+# Retrieve secrets as JSON for automation
+dagger call get-tunnel-secrets \\
+    --source=. \\
+    --cloudflare-token=env:CF_TOKEN \\
+    --cloudflare-account-id=<your-account-id> \\
+    --zone-name=<your-domain> \\
+    --output-format=json
+
+# Retrieve from persistent state directory
+dagger call get-tunnel-secrets \\
+    --source=. \\
+    --cloudflare-token=env:CF_TOKEN \\
+    --cloudflare-account-id=<your-account-id> \\
+    --zone-name=<your-domain> \\
+    --state-dir=./terraform-state
+
+# Retrieve from remote backend (S3)
+dagger call get-tunnel-secrets \\
+    --source=. \\
+    --cloudflare-token=env:CF_TOKEN \\
+    --cloudflare-account-id=<your-account-id> \\
+    --zone-name=<your-domain> \\
+    --backend-type=s3 \\
+    --backend-config-file=./s3-backend.hcl
+```
+
+**Important**: The backend parameters (`--state-dir`, `--backend-type`, `--backend-config-file`) must match what you used during deployment.
+
+#### Using Terraform CLI (Alternative)
+
+If you prefer using Terraform directly:
 
 ```bash
 terraform output -json cloudflare_tunnel_tokens
+terraform output -json cloudflare_credentials_json
 ```
 
-On your media server:
+### Step 7: Configure cloudflared
+
+After retrieving your tunnel token, install and configure cloudflared on your media server:
 
 ```bash
 # Install cloudflared (Debian/Ubuntu)

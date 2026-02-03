@@ -1,32 +1,45 @@
 # OpenSpec Prompts Index
 
-This directory contains OpenSpec prompts for planned changes to the unifi-cloudflare-glue project.
+This directory contains OpenSpec change prompts for the unifi-cloudflare-glue project.
 
-## Current Prompts
+## Prompts
 
-### State Management Enhancements
+### 01-add-get-tunnel-secrets-function.md
+**Status**: Pending  
+**Description**: Add `get_tunnel_secrets()` Dagger function to retrieve Cloudflare tunnel tokens from Terraform state.
 
-1. **[01-add-backend-config-support.md](./01-add-backend-config-support.md)** - Add remote Terraform backend support via config file mounting
-2. **[02-add-persistent-state-directory.md](./02-add-persistent-state-directory.md)** - Add persistent local state directory support with mutual exclusion
+Creates a new function that allows users to retrieve tunnel credentials on-demand after deployment, without storing sensitive tokens in deployment logs.
 
-## Previous Prompts (Completed/Archived)
+**Dependencies**: None
 
-- **fix-test-config-domain** - Fixed test integration domain configuration
-- **preserve-terraform-state** - Preserved Terraform state between operations
-- **fix-state-mount-bug** - Fixed state file mounting in cleanup phase
-- **fix-unifi-fqdn** - Fixed UniFi FQDN configuration
+---
 
-## Workflow
+### 02-add-tunnel-token-guidance-to-deploy.md
+**Status**: Pending  
+**Description**: Update `deploy()` and `deploy_cloudflare()` functions to add guidance messages about retrieving tunnel tokens.
 
-1. Each prompt file is numbered: `NN-<change-id>.md`
-2. Prompts should be processed in order
-3. Use `/openspec-proposal.md` workflow to generate proposals from each prompt
-4. After implementation, archive completed prompts to `openspec/archive/`
+Modifies success messages in deployment functions to inform users how to retrieve tunnel secrets using either Terraform outputs or the new Dagger function.
 
-## Creating New Prompts
+**Dependencies**: 01-add-get-tunnel-secrets-function.md (for Dagger command example)
 
-When adding new prompts:
-1. Use the next available number
-2. Follow the standard OpenSpec prompt structure (Context, Goal, Scope, etc.)
-3. Update this INDEX.md file
-4. Keep prompts focused on a single, reviewable change
+---
+
+## Execution Order
+
+1. Implement `01-add-get-tunnel-secrets-function.md` first (creates the function)
+2. Then implement `02-add-tunnel-token-guidance-to-deploy.md` (adds references to the new function)
+
+## About This Directory
+
+Each prompt file follows OpenSpec format with:
+- Context: Background and motivation
+- Goal: What this change accomplishes
+- Scope: What's in/out of scope
+- Desired Behavior: Expected functionality
+- Constraints & Assumptions: Technical limitations
+- Acceptance Criteria: Testable requirements
+
+To implement a prompt:
+1. Copy the prompt to `OPENSPEC_PROMPT.md` at project root
+2. Run your OpenSpec proposal workflow
+3. Review and implement the generated proposal
