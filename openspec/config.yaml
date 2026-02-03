@@ -1,20 +1,70 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+# Project: unifi-cloudflare-glue
+# A hybrid DNS infrastructure tool that bridges local UniFi network DNS with
+# Cloudflare Tunnel edge DNS using a unified configuration layer.
+context: |
+  ## Purpose
+  "Define once, deploy everywhere" - users describe their infrastructure in KCL 
+  (services, MAC addresses, internal hostnames), and the system generates 
+  Terraform-compatible JSON for both UniFi local resolution and Cloudflare 
+  public exposure.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  ## Tech Stack
+  - KCL (Kusion Configuration Language): Schema definitions and JSON generators
+  - Terraform: Infrastructure provisioning (UniFi DNS, Cloudflare Tunnel)
+  - Dagger: Containerized CI/CD pipelines and CLI tooling
+  - Python: Dagger module SDK
+
+  ## Architecture Patterns
+  - Unified Configuration: Single KCL config generates both UniFi and Cloudflare outputs
+  - MAC Address Normalization: All MACs stored as lowercase colon format (aa:bb:cc:dd:ee:ff)
+  - One Tunnel Per Device: Each physical host gets exactly one Cloudflare tunnel
+  - DNS Loop Prevention: Cloudflare local_service_url must use internal domains only
+
+  ## DNS Architecture
+  - UniFi DNS: Local network resolution for internal services (.internal.lan)
+  - Cloudflare Tunnel: Edge connectivity for external access (.example.com)
+  - Service Distribution: Services marked as unifi_only, cloudflare_only, or both
+
+  ## Data Flow
+  1. User writes KCL defining servers, MACs, NICs, services
+  2. KCL validation ensures cross-provider consistency
+  3. KCL generators output unifi.json and cloudflare.json
+  4. Terraform applies UniFi DNS first (creates local DNS)
+  5. Terraform applies Cloudflare tunnels (points to now-resolvable local hostnames)
+
+  ## Important Constraints
+  - No DNS Loops: Cloudflare local_service_url must use .internal.lan domains
+  - MAC Normalization: Support multiple input formats, normalize to lowercase colons
+  - Existing Resources: Both modules use data sources for existing infrastructure
+  - External Deployment: Cloudflared containers run outside Terraform
+
+  ## External Dependencies
+  - UniFi Controller: API access for DNS management (provider: filipowm/unifi)
+  - Cloudflare: Zero Trust Tunnel and DNS management (provider: cloudflare/cloudflare)
+  - KCL Registry: Module dependencies from kcl-lang.io or GitHub
+  - KCL Container Image: kcllang/kcl for Dagger containerized execution
+
+  ## Dagger Module Naming
+  - Module name: unifi-cloudflare-glue (from dagger.json)
+  - Class name: UnifiCloudflareGlue (Dagger generates from module name)
+  - Repository: Called via dagger call -m github.com/user/repo@version unifi-cloudflare-glue <function>
+
+rules:
+  proposal:
+    - Focus on infrastructure-as-code patterns
+    - Consider DNS loop prevention in Cloudflare configurations
+    - Ensure MAC address normalization is maintained
+
+  tasks:
+    - Validate KCL schemas before implementing Terraform changes
+    - Run Dagger integration tests for any provider changes
+    - Test both UniFi and Cloudflare outputs when modifying generators
+
+  general:
+    - Python (Dagger): Use async functions with Annotated[..., Doc(...)] type annotations
+    - KCL: Expression-based functional style (no statement for-loops)
+    - Terraform: Standard HCL formatting
+    - Git: Feature branches, OpenSpec-managed proposals in openspec/changes/
+    - Change archiving: Completed prompts go to openspec/archive/prompts/
