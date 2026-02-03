@@ -139,6 +139,101 @@ class UnifiCloudflareGlue:
         # Return as file
         return dagger.dag.directory().with_new_file("unifi.json", result).file("unifi.json")
 
+    def _validate_backend_config(
+        self,
+        backend_type: str,
+        backend_config_file: Optional[dagger.File],
+    ) -> tuple[bool, str]:
+        """
+        Validate backend configuration parameters.
+        
+        Args:
+            backend_type: Type of backend (local, s3, azurerm, gcs, remote, etc.)
+            backend_config_file: Optional File object containing backend configuration
+            
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        # Non-local backend requires config file
+        if backend_type != "local" and backend_config_file is None:
+            return False, (
+                f"✗ Failed: Backend type '{backend_type}' requires --backend-config-file\n\n"
+                f"Example:\n"
+                f"  dagger call deploy-unifi \\\n"
+                f"      --backend-type={backend_type} \\\n"
+                f"      --backend-config-file=./{backend_type}-backend.hcl \\\n"
+                f"      ..."
+            )
+        
+        # Config file provided but local backend selected
+        if backend_type == "local" and backend_config_file is not None:
+            return False, (
+                "✗ Failed: --backend-config-file specified but backend_type is 'local'\n\n"
+                "To use a remote backend, set --backend-type to one of:\n"
+                "  s3, azurerm, gcs, remote, consul, http, etc.\n\n"
+                "To use local backend without config file:\n"
+                "  Omit --backend-config-file or set --backend-type=local"
+            )
+        
+        return True, ""
+
+    def _validate_state_storage_config(
+        self,
+        backend_type: str,
+        state_dir: Optional[dagger.Directory],
+    ) -> tuple[bool, str]:
+        """
+        Validate mutual exclusion between remote backend and persistent local state directory.
+        
+        Args:
+            backend_type: Type of backend (local, s3, azurerm, gcs, remote, etc.)
+            state_dir: Optional Directory for persistent local state storage
+            
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        # Check for mutual exclusion between remote backend and state_dir
+        if backend_type != "local" and state_dir is not None:
+            return False, (
+                "✗ Failed: Cannot use both --state-dir and --backend-type (remote backend).\n\n"
+                "These options are mutually exclusive. Choose one state management mode:\n\n"
+                "1. Ephemeral state (default - no flags):\n"
+                "   dagger call deploy-unifi \\\n"
+                "       --source=. \\\n"
+                "       --unifi-url=https://unifi.local:8443 \\\n"
+                "       --unifi-api-key=env:UNIFI_API_KEY\n\n"
+                "2. Persistent local state (--state-dir):\n"
+                "   dagger call deploy-unifi \\\n"
+                "       --source=. \\\n"
+                "       --unifi-url=https://unifi.local:8443 \\\n"
+                "       --unifi-api-key=env:UNIFI_API_KEY \\\n"
+                "       --state-dir=./terraform-state\n\n"
+                "3. Remote backend (--backend-type):\n"
+                "   dagger call deploy-unifi \\\n"
+                "       --source=. \\\n"
+                "       --unifi-url=https://unifi.local:8443 \\\n"
+                "       --unifi-api-key=env:UNIFI_API_KEY \\\n"
+                "       --backend-type=s3 \\\n"
+                "       --backend-config-file=./s3-backend.hcl"
+            )
+        
+        return True, ""
+
+    def _generate_backend_block(self, backend_type: str) -> str:
+        """
+        Generate backend.tf content for remote backends.
+        
+        Args:
+            backend_type: Type of backend (s3, azurerm, gcs, remote, etc.)
+            
+        Returns:
+            HCL content for backend.tf file
+        """
+        return f'''terraform {{
+  backend "{backend_type}" {{}}
+}}
+'''
+
     @function
     async def deploy_unifi(
         self,
@@ -150,6 +245,9 @@ class UnifiCloudflareGlue:
         unifi_password: Annotated[Optional[Secret], Doc("UniFi password (use with username)")] = None,
         unifi_insecure: Annotated[bool, Doc("Skip TLS verification for UniFi controller (useful for self-signed certificates)")] = False,
         terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
+        backend_type: Annotated[str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")] = "local",
+        backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
+        state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
     ) -> str:
         """
         Deploy UniFi DNS configuration using Terraform.
@@ -161,6 +259,11 @@ class UnifiCloudflareGlue:
         1. API Key: Provide --unifi-api-key
         2. Username/Password: Provide both --unifi-username and --unifi-password
 
+        State Management (choose one):
+        1. Ephemeral (default): State stored in container, lost on exit
+        2. Persistent Local: Use --state-dir=./terraform-state to persist state locally
+        3. Remote Backend: Use --backend-type=s3 --backend-config-file=... for team/enterprise
+
         Args:
             source: Directory containing unifi.json configuration file
             unifi_url: UniFi Controller URL
@@ -170,6 +273,9 @@ class UnifiCloudflareGlue:
             unifi_password: UniFi password for authentication
             unifi_insecure: Skip TLS verification for self-signed certificates
             terraform_version: Terraform version to use (default: "latest")
+            backend_type: Terraform backend type (local, s3, azurerm, gcs, remote, etc.)
+            backend_config_file: Backend configuration HCL file (required for remote backends)
+            state_dir: Directory for persistent Terraform state (mutually exclusive with remote backend)
 
         Returns:
             Status message indicating success or failure of deployment
@@ -186,6 +292,13 @@ class UnifiCloudflareGlue:
                 --unifi-url=https://192.168.10.1 \\
                 --unifi-api-key=env:UNIFI_API_KEY \\
                 --unifi-insecure
+
+            # With persistent local state
+            dagger call deploy-unifi \\
+                --source=. \\
+                --unifi-url=https://unifi.local:8443 \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --state-dir=./terraform-state
         """
         # Validate authentication - either API key OR username/password, not both
         using_api_key = unifi_api_key is not None
@@ -197,6 +310,16 @@ class UnifiCloudflareGlue:
         if using_api_key and using_password:
             return "✗ Failed: Cannot use both API key and username/password. Choose one authentication method."
 
+        # Validate backend configuration
+        is_valid, error_msg = self._validate_backend_config(backend_type, backend_config_file)
+        if not is_valid:
+            return error_msg
+
+        # Validate mutual exclusion between state_dir and remote backend
+        is_valid, error_msg = self._validate_state_storage_config(backend_type, state_dir)
+        if not is_valid:
+            return error_msg
+
         # Use unifi_url as default for api_url if not provided
         actual_api_url = api_url if api_url else unifi_url
 
@@ -207,10 +330,6 @@ class UnifiCloudflareGlue:
         except Exception:
             return "✗ Failed: unifi.json not found in source directory. Run generate-unifi-config first."
 
-        # Get project root directory (parent of source)
-        # We need to mount the terraform modules from the project
-        project_dir = dagger.dag.directory()
-
         # Create Terraform container
         ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
 
@@ -218,14 +337,26 @@ class UnifiCloudflareGlue:
         ctr = ctr.with_directory("/workspace", source)
 
         # Mount the UniFi DNS Terraform module
-        # Note: The module should be available in the project
         try:
-            # Try to get the terraform module from the project
             tf_module = dagger.dag.directory().directory("terraform/modules/unifi-dns")
             ctr = ctr.with_directory("/module", tf_module)
         except Exception:
-            # If not available, we'll use the config directly
             pass
+
+        # Generate and mount backend.tf if using remote backend
+        if backend_type != "local":
+            try:
+                backend_hcl = self._generate_backend_block(backend_type)
+                ctr = ctr.with_new_file("/module/backend.tf", backend_hcl)
+            except Exception as e:
+                return f"✗ Failed: Could not generate backend configuration\n{str(e)}"
+
+        # Mount backend config file if provided
+        if backend_config_file is not None:
+            try:
+                ctr = ctr.with_file("/root/.terraform/backend.hcl", backend_config_file)
+            except Exception as e:
+                return f"✗ Failed: Could not mount backend config file\n{str(e)}"
 
         # Set up environment variables for Terraform
         ctr = ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
@@ -235,27 +366,55 @@ class UnifiCloudflareGlue:
 
         # Add authentication secrets via environment variables
         if using_api_key and unifi_api_key:
-            api_key_value = await unifi_api_key.plaintext()
             ctr = ctr.with_secret_variable("TF_VAR_unifi_api_key", unifi_api_key)
         elif using_password and unifi_username and unifi_password:
             ctr = ctr.with_secret_variable("TF_VAR_unifi_username", unifi_username)
             ctr = ctr.with_secret_variable("TF_VAR_unifi_password", unifi_password)
 
-        # Set working directory to the module
-        ctr = ctr.with_workdir("/module" if "/module" in str(ctr) else "/workspace")
+        # Handle state directory mounting and setup (persistent local state)
+        using_persistent_state = state_dir is not None
+        if using_persistent_state:
+            # Mount state directory
+            ctr = ctr.with_directory("/state", state_dir)
+            # Copy module files to state directory
+            ctr = ctr.with_exec(["sh", "-c", "cp -r /module/* /state/ && ls -la /state"])
+            # Set working directory to state directory
+            ctr = ctr.with_workdir("/state")
+        else:
+            # Set working directory to the module (ephemeral or remote backend)
+            ctr = ctr.with_workdir("/module" if "/module" in str(ctr) else "/workspace")
 
-        # Run terraform init
+        # Run terraform init (with backend config if provided)
+        init_cmd = ["terraform", "init"]
+        if backend_config_file is not None:
+            init_cmd.extend(["-backend-config=/root/.terraform/backend.hcl"])
+        
         try:
-            init_result = await ctr.with_exec(["terraform", "init"]).stdout()
+            init_result = await ctr.with_exec(init_cmd).stdout()
         except dagger.ExecError as e:
-            return f"✗ Failed: Terraform init failed\n{str(e)}"
+            error_msg = f"✗ Failed: Terraform init failed\n{str(e)}"
+            if backend_type != "local":
+                error_msg += (
+                    "\n\nBackend configuration troubleshooting:\n"
+                    "  - Verify backend config file is valid HCL\n"
+                    "  - Check credentials in environment variables\n"
+                    "  - Ensure backend infrastructure exists (bucket, table, etc.)"
+                )
+            return error_msg
 
         # Run terraform apply
         try:
             apply_result = await ctr.with_exec([
                 "terraform", "apply", "-auto-approve"
             ]).stdout()
-            return f"✓ Success: UniFi DNS deployment completed\n\n{apply_result}"
+            
+            result_msg = "✓ Success: UniFi DNS deployment completed"
+            if backend_type != "local":
+                result_msg += f"\n  Backend: {backend_type}"
+            elif using_persistent_state:
+                result_msg += "\n  State: Persistent local (mounted state directory)"
+            result_msg += f"\n\n{apply_result}"
+            return result_msg
         except dagger.ExecError as e:
             return f"✗ Failed: Terraform apply failed\n{str(e)}"
 
@@ -267,6 +426,9 @@ class UnifiCloudflareGlue:
         cloudflare_account_id: Annotated[str, Doc("Cloudflare Account ID")],
         zone_name: Annotated[str, Doc("DNS zone name (e.g., example.com)")],
         terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
+        backend_type: Annotated[str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")] = "local",
+        backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
+        state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
     ) -> str:
         """
         Deploy Cloudflare Tunnel configuration using Terraform.
@@ -274,12 +436,20 @@ class UnifiCloudflareGlue:
         This function runs Terraform to deploy Cloudflare Tunnels and DNS records
         from the generated cloudflare.json configuration.
 
+        State Management (choose one):
+        1. Ephemeral (default): State stored in container, lost on exit
+        2. Persistent Local: Use --state-dir=./terraform-state to persist state locally
+        3. Remote Backend: Use --backend-type=s3 --backend-config-file=... for team/enterprise
+
         Args:
             source: Directory containing cloudflare.json configuration file
             cloudflare_token: Cloudflare API Token (Secret)
             cloudflare_account_id: Cloudflare Account ID
             zone_name: DNS zone name
             terraform_version: Terraform version to use (default: "latest")
+            backend_type: Terraform backend type (local, s3, azurerm, gcs, remote, etc.)
+            backend_config_file: Backend configuration HCL file (required for remote backends)
+            state_dir: Directory for persistent Terraform state (mutually exclusive with remote backend)
 
         Returns:
             Status message indicating success or failure of deployment
@@ -290,7 +460,25 @@ class UnifiCloudflareGlue:
                 --cloudflare-token=env:CF_TOKEN \\
                 --cloudflare-account-id=xxx \\
                 --zone-name=example.com
+
+            # With persistent local state
+            dagger call deploy-cloudflare \\
+                --source=. \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --state-dir=./terraform-state
         """
+        # Validate backend configuration
+        is_valid, error_msg = self._validate_backend_config(backend_type, backend_config_file)
+        if not is_valid:
+            return error_msg
+
+        # Validate mutual exclusion between state_dir and remote backend
+        is_valid, error_msg = self._validate_state_storage_config(backend_type, state_dir)
+        if not is_valid:
+            return error_msg
+
         # Check for cloudflare.json
         try:
             config_file = source.file("cloudflare.json")
@@ -311,6 +499,21 @@ class UnifiCloudflareGlue:
         except Exception:
             pass
 
+        # Generate and mount backend.tf if using remote backend
+        if backend_type != "local":
+            try:
+                backend_hcl = self._generate_backend_block(backend_type)
+                ctr = ctr.with_new_file("/module/backend.tf", backend_hcl)
+            except Exception as e:
+                return f"✗ Failed: Could not generate backend configuration\n{str(e)}"
+
+        # Mount backend config file if provided
+        if backend_config_file is not None:
+            try:
+                ctr = ctr.with_file("/root/.terraform/backend.hcl", backend_config_file)
+            except Exception as e:
+                return f"✗ Failed: Could not mount backend config file\n{str(e)}"
+
         # Set up environment variables
         ctr = ctr.with_env_variable("TF_VAR_cloudflare_account_id", cloudflare_account_id)
         ctr = ctr.with_env_variable("TF_VAR_zone_name", zone_name)
@@ -320,21 +523,50 @@ class UnifiCloudflareGlue:
         ctr = ctr.with_secret_variable("TF_VAR_cloudflare_token", cloudflare_token)
         ctr = ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
 
-        # Set working directory
-        ctr = ctr.with_workdir("/module" if "/module" in str(ctr) else "/workspace")
+        # Handle state directory mounting and setup (persistent local state)
+        using_persistent_state = state_dir is not None
+        if using_persistent_state:
+            # Mount state directory
+            ctr = ctr.with_directory("/state", state_dir)
+            # Copy module files to state directory
+            ctr = ctr.with_exec(["sh", "-c", "cp -r /module/* /state/ && ls -la /state"])
+            # Set working directory to state directory
+            ctr = ctr.with_workdir("/state")
+        else:
+            # Set working directory to the module (ephemeral or remote backend)
+            ctr = ctr.with_workdir("/module" if "/module" in str(ctr) else "/workspace")
 
-        # Run terraform init
+        # Run terraform init (with backend config if provided)
+        init_cmd = ["terraform", "init"]
+        if backend_config_file is not None:
+            init_cmd.extend(["-backend-config=/root/.terraform/backend.hcl"])
+        
         try:
-            init_result = await ctr.with_exec(["terraform", "init"]).stdout()
+            init_result = await ctr.with_exec(init_cmd).stdout()
         except dagger.ExecError as e:
-            return f"✗ Failed: Terraform init failed\n{str(e)}"
+            error_msg = f"✗ Failed: Terraform init failed\n{str(e)}"
+            if backend_type != "local":
+                error_msg += (
+                    "\n\nBackend configuration troubleshooting:\n"
+                    "  - Verify backend config file is valid HCL\n"
+                    "  - Check credentials in environment variables\n"
+                    "  - Ensure backend infrastructure exists (bucket, table, etc.)"
+                )
+            return error_msg
 
         # Run terraform apply
         try:
             apply_result = await ctr.with_exec([
                 "terraform", "apply", "-auto-approve"
             ]).stdout()
-            return f"✓ Success: Cloudflare Tunnel deployment completed\n\n{apply_result}"
+            
+            result_msg = "✓ Success: Cloudflare Tunnel deployment completed"
+            if backend_type != "local":
+                result_msg += f"\n  Backend: {backend_type}"
+            elif using_persistent_state:
+                result_msg += "\n  State: Persistent local (mounted state directory)"
+            result_msg += f"\n\n{apply_result}"
+            return result_msg
         except dagger.ExecError as e:
             return f"✗ Failed: Terraform apply failed\n{str(e)}"
 
@@ -353,6 +585,9 @@ class UnifiCloudflareGlue:
         unifi_insecure: Annotated[bool, Doc("Skip TLS verification for UniFi controller")] = False,
         terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
         kcl_version: Annotated[str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")] = "latest",
+        backend_type: Annotated[str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")] = "local",
+        backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
+        state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
     ) -> str:
         """
         Orchestrate full deployment: UniFi DNS first, then Cloudflare Tunnels.
@@ -363,6 +598,11 @@ class UnifiCloudflareGlue:
         Authentication (pick one method for UniFi):
         1. API Key: Provide --unifi-api-key
         2. Username/Password: Provide both --unifi-username and --unifi-password
+
+        State Management (choose one):
+        1. Ephemeral (default): State stored in container, lost on exit
+        2. Persistent Local: Use --state-dir=./terraform-state to persist state locally
+        3. Remote Backend: Use --backend-type=s3 --backend-config-file=... for team/enterprise
 
         Args:
             kcl_source: Directory containing KCL module
@@ -377,6 +617,9 @@ class UnifiCloudflareGlue:
             unifi_insecure: Skip TLS verification for self-signed certificates
             terraform_version: Terraform version to use (default: "latest")
             kcl_version: KCL version to use (default: "latest")
+            backend_type: Terraform backend type (local, s3, azurerm, gcs, remote, etc.)
+            backend_config_file: Backend configuration HCL file (required for remote backends)
+            state_dir: Directory for persistent Terraform state (mutually exclusive with remote backend)
 
         Returns:
             Combined status message for both deployments
@@ -399,6 +642,16 @@ class UnifiCloudflareGlue:
                 --zone-name=example.com \\
                 --unifi-api-key=env:UNIFI_API_KEY \\
                 --unifi-insecure
+
+            # With persistent local state
+            dagger call deploy \\
+                --kcl-source=./kcl \\
+                --unifi-url=https://unifi.local:8443 \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --state-dir=./terraform-state
         """
         results = []
 
@@ -436,6 +689,9 @@ class UnifiCloudflareGlue:
             unifi_password=unifi_password,
             unifi_insecure=unifi_insecure,
             terraform_version=terraform_version,
+            backend_type=backend_type,
+            backend_config_file=backend_config_file,
+            state_dir=state_dir,
         )
 
         if "✗ Failed" in unifi_result:
@@ -461,6 +717,9 @@ class UnifiCloudflareGlue:
             cloudflare_account_id=cloudflare_account_id,
             zone_name=zone_name,
             terraform_version=terraform_version,
+            backend_type=backend_type,
+            backend_config_file=backend_config_file,
+            state_dir=state_dir,
         )
 
         results.append(cloudflare_result)
@@ -497,6 +756,9 @@ class UnifiCloudflareGlue:
         unifi_insecure: Annotated[bool, Doc("Skip TLS verification for UniFi controller")] = False,
         terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
         kcl_version: Annotated[str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")] = "latest",
+        backend_type: Annotated[str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")] = "local",
+        backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
+        state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
     ) -> str:
         """
         Destroy all resources in reverse order: Cloudflare first, then UniFi.
@@ -506,6 +768,11 @@ class UnifiCloudflareGlue:
         Authentication (pick one method for UniFi):
         1. API Key: Provide --unifi-api-key
         2. Username/Password: Provide both --unifi-username and --unifi-password
+
+        State Management (choose one):
+        1. Ephemeral (default): State stored in container, lost on exit
+        2. Persistent Local: Use --state-dir=./terraform-state to persist state locally
+        3. Remote Backend: Use --backend-type=s3 --backend-config-file=... for team/enterprise
 
         Args:
             kcl_source: Directory containing KCL module
@@ -520,6 +787,9 @@ class UnifiCloudflareGlue:
             unifi_insecure: Skip TLS verification for self-signed certificates
             terraform_version: Terraform version to use (default: "latest")
             kcl_version: KCL version to use (default: "latest")
+            backend_type: Terraform backend type (local, s3, azurerm, gcs, remote, etc.)
+            backend_config_file: Backend configuration HCL file (required for remote backends)
+            state_dir: Directory for persistent Terraform state (mutually exclusive with remote backend)
 
         Returns:
             Combined status message for destruction
@@ -542,6 +812,16 @@ class UnifiCloudflareGlue:
                 --zone-name=example.com \\
                 --unifi-api-key=env:UNIFI_API_KEY \\
                 --unifi-insecure
+
+            # With persistent local state
+            dagger call destroy \\
+                --kcl-source=./kcl \\
+                --unifi-url=https://unifi.local:8443 \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --state-dir=./terraform-state
         """
         results = []
 
@@ -566,6 +846,19 @@ class UnifiCloudflareGlue:
 
         actual_api_url = api_url if api_url else unifi_url
 
+        # Validate backend configuration
+        is_valid, error_msg = self._validate_backend_config(backend_type, backend_config_file)
+        if not is_valid:
+            return error_msg
+
+        # Validate mutual exclusion between state_dir and remote backend
+        is_valid, error_msg = self._validate_state_storage_config(backend_type, state_dir)
+        if not is_valid:
+            return error_msg
+
+        # Track if using persistent local state
+        using_persistent_state = state_dir is not None
+
         # Phase 1: Destroy Cloudflare first (reverse order)
         results.append("")
         results.append("=" * 60)
@@ -589,17 +882,56 @@ class UnifiCloudflareGlue:
         except Exception:
             pass
 
+        # Generate and mount backend.tf if using remote backend
+        if backend_type != "local":
+            try:
+                backend_hcl = self._generate_backend_block(backend_type)
+                ctr = ctr.with_new_file("/module/backend.tf", backend_hcl)
+            except Exception as e:
+                return f"✗ Failed: Could not generate backend configuration\n{str(e)}"
+
+        # Mount backend config file if provided
+        if backend_config_file is not None:
+            try:
+                ctr = ctr.with_file("/root/.terraform/backend.hcl", backend_config_file)
+            except Exception as e:
+                return f"✗ Failed: Could not mount backend config file\n{str(e)}"
+
         ctr = ctr.with_env_variable("TF_VAR_cloudflare_account_id", cloudflare_account_id)
         ctr = ctr.with_env_variable("TF_VAR_zone_name", zone_name)
         ctr = ctr.with_env_variable("TF_VAR_config_file", "/workspace/cloudflare.json")
         ctr = ctr.with_secret_variable("TF_VAR_cloudflare_token", cloudflare_token)
         ctr = ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
-        ctr = ctr.with_workdir("/module" if "/module" in str(ctr) else "/workspace")
+
+        # Handle state directory mounting and setup (persistent local state)
+        if using_persistent_state:
+            # Mount state directory
+            ctr = ctr.with_directory("/state", state_dir)
+            # Copy module files to state directory
+            ctr = ctr.with_exec(["sh", "-c", "cp -r /module/* /state/ && ls -la /state"])
+            # Set working directory to state directory
+            ctr = ctr.with_workdir("/state")
+        else:
+            # Set working directory to the module (ephemeral or remote backend)
+            ctr = ctr.with_workdir("/module" if "/module" in str(ctr) else "/workspace")
+
+        # Run terraform init (with backend config if provided)
+        init_cmd = ["terraform", "init"]
+        if backend_config_file is not None:
+            init_cmd.extend(["-backend-config=/root/.terraform/backend.hcl"])
 
         try:
-            await ctr.with_exec(["terraform", "init"]).stdout()
+            await ctr.with_exec(init_cmd).stdout()
         except dagger.ExecError as e:
-            results.append(f"✗ Terraform init failed: {str(e)}")
+            error_msg = f"✗ Terraform init failed: {str(e)}"
+            if backend_type != "local":
+                error_msg += (
+                    "\n\nBackend configuration troubleshooting:\n"
+                    "  - Verify backend config file is valid HCL\n"
+                    "  - Check credentials in environment variables\n"
+                    "  - Ensure backend infrastructure exists (bucket, table, etc.)"
+                )
+            results.append(error_msg)
             return "\n".join(results)
 
         try:
@@ -641,6 +973,21 @@ class UnifiCloudflareGlue:
         except Exception:
             pass
 
+        # Generate and mount backend.tf if using remote backend
+        if backend_type != "local":
+            try:
+                backend_hcl = self._generate_backend_block(backend_type)
+                ctr = ctr.with_new_file("/module/backend.tf", backend_hcl)
+            except Exception as e:
+                return f"✗ Failed: Could not generate backend configuration\n{str(e)}"
+
+        # Mount backend config file if provided
+        if backend_config_file is not None:
+            try:
+                ctr = ctr.with_file("/root/.terraform/backend.hcl", backend_config_file)
+            except Exception as e:
+                return f"✗ Failed: Could not mount backend config file\n{str(e)}"
+
         ctr = ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
         ctr = ctr.with_env_variable("TF_VAR_api_url", actual_api_url)
         ctr = ctr.with_env_variable("TF_VAR_config_file", "/workspace/unifi.json")
@@ -652,12 +999,35 @@ class UnifiCloudflareGlue:
             ctr = ctr.with_secret_variable("TF_VAR_unifi_username", unifi_username)
             ctr = ctr.with_secret_variable("TF_VAR_unifi_password", unifi_password)
 
-        ctr = ctr.with_workdir("/module" if "/module" in str(ctr) else "/workspace")
+        # Handle state directory mounting and setup (persistent local state)
+        if using_persistent_state:
+            # Mount state directory
+            ctr = ctr.with_directory("/state", state_dir)
+            # Copy module files to state directory
+            ctr = ctr.with_exec(["sh", "-c", "cp -r /module/* /state/ && ls -la /state"])
+            # Set working directory to state directory
+            ctr = ctr.with_workdir("/state")
+        else:
+            # Set working directory to the module (ephemeral or remote backend)
+            ctr = ctr.with_workdir("/module" if "/module" in str(ctr) else "/workspace")
+
+        # Run terraform init (with backend config if provided)
+        init_cmd = ["terraform", "init"]
+        if backend_config_file is not None:
+            init_cmd.extend(["-backend-config=/root/.terraform/backend.hcl"])
 
         try:
-            await ctr.with_exec(["terraform", "init"]).stdout()
+            await ctr.with_exec(init_cmd).stdout()
         except dagger.ExecError as e:
-            results.append(f"✗ Terraform init failed: {str(e)}")
+            error_msg = f"✗ Terraform init failed: {str(e)}"
+            if backend_type != "local":
+                error_msg += (
+                    "\n\nBackend configuration troubleshooting:\n"
+                    "  - Verify backend config file is valid HCL\n"
+                    "  - Check credentials in environment variables\n"
+                    "  - Ensure backend infrastructure exists (bucket, table, etc.)"
+                )
+            results.append(error_msg)
             return "\n".join(results)
 
         try:
