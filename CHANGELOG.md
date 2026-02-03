@@ -8,6 +8,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Persistent Local State Directory Support:**
+  - Added `state_dir` parameter to `deploy`, `deploy-unifi`, `deploy-cloudflare`, and `destroy` functions
+  - Enables persistent Terraform state storage on local filesystem without remote backend setup
+  - Mounts user-provided directory at `/state` in the container
+  - Copies Terraform module files to state directory for co-location with state
+  - Sets working directory to `/state` when using persistent local state
+  - Mutual exclusion with remote backend configuration (`--state-dir` and `--backend-type` cannot be used together)
+  - Clear error messages when conflicting state storage options are provided
+  - Perfect for solo development workflows - state persists between runs
+  - Usage:
+    ```bash
+    dagger call deploy \
+        --state-dir=./terraform-state \
+        --kcl-source=./kcl \
+        --unifi-url=https://unifi.local:8443 \
+        ... other parameters ...
+    ```
+
+- **Remote Backend Configuration Support:**
+  - Added `backend_type` parameter to `deploy`, `deploy-unifi`, `deploy-cloudflare`, and `destroy` functions
+  - Added `backend_config_file` parameter for mounting HCL backend configuration files
+  - Supports all Terraform backends: S3, Azure Blob Storage, GCS, Terraform Cloud, and more
+  - Automatic backend validation with clear error messages
+  - Dynamic `backend.tf` generation for remote backends
+  - Example configuration files in `examples/backend-configs/` for common backends
+  - Full backward compatibility - default behavior (local ephemeral state) unchanged
+  - Usage:
+    ```bash
+    dagger call deploy \
+        --backend-type=s3 \
+        --backend-config-file=./s3-backend.hcl \
+        ... other parameters ...
+    ```
+
 - **`--no-cache` Flag for Integration Tests:**
   - Added `no_cache` parameter to `test_integration` function
   - Automatically generates epoch timestamp (`int(time.time())`) when enabled
