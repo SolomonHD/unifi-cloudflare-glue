@@ -742,6 +742,390 @@ class UnifiCloudflareGlue:
         return "\n".join(results)
 
     @function
+    async def plan(
+        self,
+        kcl_source: Annotated[dagger.Directory, Doc("Source directory containing KCL configs")],
+        unifi_url: Annotated[str, Doc("UniFi Controller URL")],
+        cloudflare_token: Annotated[Secret, Doc("Cloudflare API Token")],
+        cloudflare_account_id: Annotated[str, Doc("Cloudflare Account ID")],
+        zone_name: Annotated[str, Doc("DNS zone name")],
+        api_url: Annotated[str, Doc("UniFi API URL (defaults to unifi_url)")] = "",
+        unifi_api_key: Annotated[Optional[Secret], Doc("UniFi API key (mutually exclusive with username/password)")] = None,
+        unifi_username: Annotated[Optional[Secret], Doc("UniFi username (use with password)")] = None,
+        unifi_password: Annotated[Optional[Secret], Doc("UniFi password (use with username)")] = None,
+        unifi_insecure: Annotated[bool, Doc("Skip TLS verification for UniFi controller (useful for self-signed certificates)")] = False,
+        terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
+        kcl_version: Annotated[str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")] = "latest",
+        backend_type: Annotated[str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")] = "local",
+        backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
+        state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
+        no_cache: Annotated[bool, Doc("Bypass Dagger cache, force fresh execution by auto-generating epoch timestamp")] = False,
+        cache_buster: Annotated[str, Doc("Custom cache key for advanced use (cannot be used with --no-cache)")] = "",
+    ) -> dagger.Directory:
+        """
+        Generate Terraform plans for both UniFi DNS and Cloudflare Tunnel configurations.
+
+        This function creates execution plans without applying changes, enabling the
+        standard plan → review → apply workflow. It generates three output formats
+        per module: binary plan files, JSON for automation, and human-readable text.
+
+        Authentication (pick one method for UniFi):
+        1. API Key: Provide --unifi-api-key
+        2. Username/Password: Provide both --unifi-username and --unifi-password
+
+        State Management (choose one):
+        1. Ephemeral (default): State stored in container, lost on exit
+        2. Persistent Local: Use --state-dir=./terraform-state to persist state locally
+        3. Remote Backend: Use --backend-type=s3 --backend-config-file=... for team/enterprise
+
+        Args:
+            kcl_source: Directory containing KCL module
+            unifi_url: UniFi Controller URL
+            cloudflare_token: Cloudflare API Token
+            cloudflare_account_id: Cloudflare Account ID
+            zone_name: DNS zone name
+            api_url: Optional UniFi API URL
+            unifi_api_key: UniFi API key (optional)
+            unifi_username: UniFi username (optional)
+            unifi_password: UniFi password (optional)
+            unifi_insecure: Skip TLS verification for self-signed certificates
+            terraform_version: Terraform version to use (default: "latest")
+            kcl_version: KCL version to use (default: "latest")
+            backend_type: Terraform backend type (local, s3, azurerm, gcs, remote, etc.)
+            backend_config_file: Backend configuration HCL file (required for remote backends)
+            state_dir: Directory for persistent Terraform state (mutually exclusive with remote backend)
+            no_cache: Bypass Dagger cache by auto-generating an epoch timestamp
+            cache_buster: Custom cache key for advanced use cases
+
+        Returns:
+            dagger.Directory containing all plan artifacts:
+            - unifi-plan.tfplan, unifi-plan.json, unifi-plan.txt
+            - cloudflare-plan.tfplan, cloudflare-plan.json, cloudflare-plan.txt
+            - plan-summary.txt
+
+        Example:
+            # Basic usage - export plans to ./plans directory
+            dagger call plan \\
+                --kcl-source=./kcl \\
+                --unifi-url=https://unifi.local:8443 \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                export --path=./plans
+
+            # With persistent local state
+            dagger call plan \\
+                --kcl-source=./kcl \\
+                --unifi-url=https://unifi.local:8443 \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --state-dir=./terraform-state \\
+                export --path=./plans
+
+            # With remote backend (S3)
+            dagger call plan \\
+                --kcl-source=./kcl \\
+                --unifi-url=https://unifi.local:8443 \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --backend-type=s3 \\
+                --backend-config-file=./s3-backend.hcl \\
+                export --path=./plans
+        """
+        # Validate cache control options
+        if no_cache and cache_buster:
+            raise ValueError("✗ Failed: Cannot use both --no-cache and --cache-buster")
+
+        # Determine effective cache buster value
+        effective_cache_buster = cache_buster
+        if no_cache:
+            effective_cache_buster = str(int(time.time()))
+
+        # Validate UniFi authentication
+        using_api_key = unifi_api_key is not None
+        using_password = unifi_username is not None and unifi_password is not None
+
+        if not using_api_key and not using_password:
+            raise ValueError("✗ Failed: Must provide either unifi_api_key OR both unifi_username and unifi_password")
+
+        if using_api_key and using_password:
+            raise ValueError("✗ Failed: Cannot use both API key and username/password. Choose one authentication method.")
+
+        # Validate backend configuration
+        is_valid, error_msg = self._validate_backend_config(backend_type, backend_config_file)
+        if not is_valid:
+            raise ValueError(error_msg)
+
+        # Validate mutual exclusion between state_dir and remote backend
+        is_valid, error_msg = self._validate_state_storage_config(backend_type, state_dir)
+        if not is_valid:
+            raise ValueError(error_msg)
+
+        actual_api_url = api_url if api_url else unifi_url
+        using_persistent_state = state_dir is not None
+
+        # Phase 1: Generate KCL configurations
+        try:
+            unifi_file = await self.generate_unifi_config(kcl_source, kcl_version)
+            unifi_dir = dagger.dag.directory().with_file("unifi.json", unifi_file)
+        except Exception as e:
+            raise RuntimeError(f"✗ Failed: Could not generate UniFi config\n{str(e)}")
+
+        try:
+            cloudflare_file = await self.generate_cloudflare_config(kcl_source, kcl_version)
+            cloudflare_dir = dagger.dag.directory().with_file("cloudflare.json", cloudflare_file)
+        except Exception as e:
+            raise RuntimeError(f"✗ Failed: Could not generate Cloudflare config\n{str(e)}")
+
+        # Create output directory
+        output_dir = dagger.dag.directory()
+
+        # Phase 2: UniFi Plan Generation
+        try:
+            # Create Terraform container for UniFi
+            unifi_ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
+            unifi_ctr = unifi_ctr.with_directory("/workspace", unifi_dir)
+
+            # Mount the UniFi DNS Terraform module
+            try:
+                tf_module = dagger.dag.directory().directory("terraform/modules/unifi-dns")
+                unifi_ctr = unifi_ctr.with_directory("/module", tf_module)
+            except Exception:
+                pass
+
+            # Generate and mount backend.tf if using remote backend
+            if backend_type != "local":
+                backend_hcl = self._generate_backend_block(backend_type)
+                unifi_ctr = unifi_ctr.with_new_file("/module/backend.tf", backend_hcl)
+
+            # Mount backend config file if provided
+            if backend_config_file is not None:
+                unifi_ctr = unifi_ctr.with_file("/root/.terraform/backend.hcl", backend_config_file)
+
+            # Set up environment variables
+            unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
+            unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_api_url", actual_api_url)
+            unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_config_file", "/workspace/unifi.json")
+            unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_unifi_insecure", str(unifi_insecure).lower())
+
+            # Add authentication secrets
+            if using_api_key and unifi_api_key:
+                unifi_ctr = unifi_ctr.with_secret_variable("TF_VAR_unifi_api_key", unifi_api_key)
+            elif using_password and unifi_username and unifi_password:
+                unifi_ctr = unifi_ctr.with_secret_variable("TF_VAR_unifi_username", unifi_username)
+                unifi_ctr = unifi_ctr.with_secret_variable("TF_VAR_unifi_password", unifi_password)
+
+            # Add cache buster if provided
+            if effective_cache_buster:
+                unifi_ctr = unifi_ctr.with_env_variable("CACHE_BUSTER", effective_cache_buster)
+
+            # Handle state directory mounting and setup
+            if using_persistent_state:
+                unifi_ctr = unifi_ctr.with_directory("/state", state_dir)
+                unifi_ctr = unifi_ctr.with_exec(["sh", "-c", "cp -r /module/* /state/ && ls -la /state"])
+                unifi_ctr = unifi_ctr.with_workdir("/state")
+            else:
+                unifi_ctr = unifi_ctr.with_workdir("/module")
+
+            # Run terraform init
+            init_cmd = ["terraform", "init"]
+            if backend_config_file is not None:
+                init_cmd.extend(["-backend-config=/root/.terraform/backend.hcl"])
+
+            unifi_ctr = unifi_ctr.with_exec(init_cmd)
+            _ = await unifi_ctr.stdout()
+
+            # Run terraform plan - CRITICAL: Preserve container reference
+            unifi_ctr = unifi_ctr.with_exec(["terraform", "plan", "-out=unifi-plan.tfplan"])
+            _ = await unifi_ctr.stdout()
+
+            # Generate JSON output
+            unifi_ctr = unifi_ctr.with_exec(["sh", "-c", "terraform show -json unifi-plan.tfplan > unifi-plan.json"])
+            _ = await unifi_ctr.stdout()
+
+            # Generate text output
+            unifi_ctr = unifi_ctr.with_exec(["sh", "-c", "terraform show unifi-plan.tfplan > unifi-plan.txt"])
+            _ = await unifi_ctr.stdout()
+
+            # Extract plan files from POST-execution container
+            unifi_plan_binary = await unifi_ctr.file("/state/unifi-plan.tfplan" if using_persistent_state else "/module/unifi-plan.tfplan")
+            unifi_plan_json = await unifi_ctr.file("/state/unifi-plan.json" if using_persistent_state else "/module/unifi-plan.json")
+            unifi_plan_txt = await unifi_ctr.file("/state/unifi-plan.txt" if using_persistent_state else "/module/unifi-plan.txt")
+
+            # Add to output directory
+            output_dir = output_dir.with_file("unifi-plan.tfplan", unifi_plan_binary)
+            output_dir = output_dir.with_file("unifi-plan.json", unifi_plan_json)
+            output_dir = output_dir.with_file("unifi-plan.txt", unifi_plan_txt)
+
+            # Parse UniFi plan for resource counts
+            try:
+                unifi_json_content = await unifi_plan_json.contents()
+                unifi_plan_data = json.loads(unifi_json_content)
+                unifi_changes = unifi_plan_data.get("resource_changes", [])
+                unifi_add = sum(1 for c in unifi_changes if any(a.get("action") in ["create", "add"] for a in c.get("change", {}).get("actions", [])))
+                unifi_change = sum(1 for c in unifi_changes if any(a.get("action") in ["update", "change"] for a in c.get("change", {}).get("actions", [])))
+                unifi_destroy = sum(1 for c in unifi_changes if any(a.get("action") in ["delete", "destroy"] for a in c.get("change", {}).get("actions", [])))
+            except Exception:
+                # Fallback: parse from text
+                unifi_txt_content = await unifi_plan_txt.contents()
+                unifi_add = unifi_txt_content.count("will be created")
+                unifi_change = unifi_txt_content.count("will be changed")
+                unifi_destroy = unifi_txt_content.count("will be destroyed")
+
+        except Exception as e:
+            raise RuntimeError(f"✗ Failed: UniFi Terraform plan failed\n{str(e)}")
+
+        # Phase 3: Cloudflare Plan Generation
+        try:
+            # Create Terraform container for Cloudflare
+            cf_ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
+            cf_ctr = cf_ctr.with_directory("/workspace", cloudflare_dir)
+
+            # Mount the Cloudflare Tunnel Terraform module
+            try:
+                tf_module = dagger.dag.directory().directory("terraform/modules/cloudflare-tunnel")
+                cf_ctr = cf_ctr.with_directory("/module", tf_module)
+            except Exception:
+                pass
+
+            # Generate and mount backend.tf if using remote backend
+            if backend_type != "local":
+                backend_hcl = self._generate_backend_block(backend_type)
+                cf_ctr = cf_ctr.with_new_file("/module/backend.tf", backend_hcl)
+
+            # Mount backend config file if provided
+            if backend_config_file is not None:
+                cf_ctr = cf_ctr.with_file("/root/.terraform/backend.hcl", backend_config_file)
+
+            # Set up environment variables
+            cf_ctr = cf_ctr.with_env_variable("TF_VAR_cloudflare_account_id", cloudflare_account_id)
+            cf_ctr = cf_ctr.with_env_variable("TF_VAR_zone_name", zone_name)
+            cf_ctr = cf_ctr.with_env_variable("TF_VAR_config_file", "/workspace/cloudflare.json")
+
+            # Add Cloudflare token as secret
+            cf_ctr = cf_ctr.with_secret_variable("TF_VAR_cloudflare_token", cloudflare_token)
+            cf_ctr = cf_ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
+
+            # Add cache buster if provided
+            if effective_cache_buster:
+                cf_ctr = cf_ctr.with_env_variable("CACHE_BUSTER", effective_cache_buster)
+
+            # Handle state directory mounting and setup
+            if using_persistent_state:
+                cf_ctr = cf_ctr.with_directory("/state", state_dir)
+                cf_ctr = cf_ctr.with_exec(["sh", "-c", "cp -r /module/* /state/ && ls -la /state"])
+                cf_ctr = cf_ctr.with_workdir("/state")
+            else:
+                cf_ctr = cf_ctr.with_workdir("/module")
+
+            # Run terraform init
+            init_cmd = ["terraform", "init"]
+            if backend_config_file is not None:
+                init_cmd.extend(["-backend-config=/root/.terraform/backend.hcl"])
+
+            cf_ctr = cf_ctr.with_exec(init_cmd)
+            _ = await cf_ctr.stdout()
+
+            # Run terraform plan - CRITICAL: Preserve container reference
+            cf_ctr = cf_ctr.with_exec(["terraform", "plan", "-out=cloudflare-plan.tfplan"])
+            _ = await cf_ctr.stdout()
+
+            # Generate JSON output
+            cf_ctr = cf_ctr.with_exec(["sh", "-c", "terraform show -json cloudflare-plan.tfplan > cloudflare-plan.json"])
+            _ = await cf_ctr.stdout()
+
+            # Generate text output
+            cf_ctr = cf_ctr.with_exec(["sh", "-c", "terraform show cloudflare-plan.tfplan > cloudflare-plan.txt"])
+            _ = await cf_ctr.stdout()
+
+            # Extract plan files from POST-execution container
+            cf_plan_binary = await cf_ctr.file("/state/cloudflare-plan.tfplan" if using_persistent_state else "/module/cloudflare-plan.tfplan")
+            cf_plan_json = await cf_ctr.file("/state/cloudflare-plan.json" if using_persistent_state else "/module/cloudflare-plan.json")
+            cf_plan_txt = await cf_ctr.file("/state/cloudflare-plan.txt" if using_persistent_state else "/module/cloudflare-plan.txt")
+
+            # Add to output directory
+            output_dir = output_dir.with_file("cloudflare-plan.tfplan", cf_plan_binary)
+            output_dir = output_dir.with_file("cloudflare-plan.json", cf_plan_json)
+            output_dir = output_dir.with_file("cloudflare-plan.txt", cf_plan_txt)
+
+            # Parse Cloudflare plan for resource counts
+            try:
+                cf_json_content = await cf_plan_json.contents()
+                cf_plan_data = json.loads(cf_json_content)
+                cf_changes = cf_plan_data.get("resource_changes", [])
+                cf_add = sum(1 for c in cf_changes if any(a.get("action") in ["create", "add"] for a in c.get("change", {}).get("actions", [])))
+                cf_change = sum(1 for c in cf_changes if any(a.get("action") in ["update", "change"] for a in c.get("change", {}).get("actions", [])))
+                cf_destroy = sum(1 for c in cf_changes if any(a.get("action") in ["delete", "destroy"] for a in c.get("change", {}).get("actions", [])))
+            except Exception:
+                # Fallback: parse from text
+                cf_txt_content = await cf_plan_txt.contents()
+                cf_add = cf_txt_content.count("will be created")
+                cf_change = cf_txt_content.count("will be changed")
+                cf_destroy = cf_txt_content.count("will be destroyed")
+
+        except Exception as e:
+            raise RuntimeError(f"✗ Failed: Cloudflare Terraform plan failed\n{str(e)}")
+
+        # Phase 4: Create plan summary
+        timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        total_add = unifi_add + cf_add
+        total_change = unifi_change + cf_change
+        total_destroy = unifi_destroy + cf_destroy
+
+        summary_content = f"""Terraform Plan Summary
+======================
+
+Generated: {timestamp}
+Terraform Version: {terraform_version}
+KCL Version: {kcl_version}
+Backend Type: {backend_type}
+
+UniFi DNS Module
+----------------
+Resources to add:     {unifi_add}
+Resources to change:  {unifi_change}
+Resources to destroy: {unifi_destroy}
+
+Cloudflare Tunnel Module
+------------------------
+Resources to add:     {cf_add}
+Resources to change:  {cf_change}
+Resources to destroy: {cf_destroy}
+
+Overall Totals
+--------------
+Resources to add:     {total_add}
+Resources to change:  {total_change}
+Resources to destroy: {total_destroy}
+Total changes:        {total_add + total_change + total_destroy}
+
+Output Files
+------------
+- unifi-plan.tfplan      (binary plan for terraform apply)
+- unifi-plan.json        (structured JSON for automation)
+- unifi-plan.txt         (human-readable format)
+- cloudflare-plan.tfplan (binary plan for terraform apply)
+- cloudflare-plan.json   (structured JSON for automation)
+- cloudflare-plan.txt    (human-readable format)
+
+Notes
+-----
+- Binary plan files (*.tfplan) can be used with 'terraform apply <planfile>'
+- JSON files are suitable for policy-as-code tools (OPA, Sentinel)
+- Text files are optimized for manual review and diffing
+- Plan files may contain sensitive values - handle securely
+"""
+
+        output_dir = output_dir.with_new_file("plan-summary.txt", summary_content)
+
+        return output_dir
+
+    @function
     async def destroy(
         self,
         kcl_source: Annotated[dagger.Directory, Doc("Source directory containing KCL configs")],

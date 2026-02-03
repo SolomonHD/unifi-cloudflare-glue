@@ -18,6 +18,13 @@ This index maps the sequence of changes needed to implement the `unifi-cloudflar
 | 010 | [example-homelab-media-stack](./010-example-homelab-media-stack.md) | Working example with media services | 007, 008, 009 |
 | 011 | [test-integration-cache-buster](./011-test-integration-cache-buster.md) | Add cache_buster and wait_before_cleanup parameters to test_integration | 010 |
 
+## Active Changes
+
+| Change ID | Description | Status |
+|-----------|-------------|--------|
+| [add-terraform-plan-function](./add-terraform-plan-function/) | Add Terraform plan function for plan → review → apply workflow | In Progress |
+| [add-remote-dagger-module-docs](./add-remote-dagger-module-docs/) | Add documentation for remote Dagger module consumption | Proposed |
+
 ## Implementation Phases
 
 ### Phase 1: Foundation (001)

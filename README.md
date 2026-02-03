@@ -92,6 +92,370 @@ dagger call generate-cloudflare-config --source=./kcl export --path=./cloudflare
     terraform apply -var-file="../../unifi.json"
     ```
 
+## Using as a Dagger Module
+
+The `unifi-cloudflare-glue` Dagger module can be used remotely from other projects without cloning this repository. This enables you to leverage containerized infrastructure deployment in your own projects with guaranteed reproducibility and no local tool installation requirements.
+
+### Installation
+
+Install the module in your project using `dagger install`:
+
+```bash
+dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.2.0
+```
+
+This registers the module in your project's `dagger.json` and makes it available with the `-m unifi-cloudflare-glue` flag.
+
+### Version Selection
+
+**Production environments should always pin to specific versions:**
+
+- ✅ **Recommended**: Use `@vX.Y.Z` for production (e.g., `@v0.2.0`)
+- ⚠️ **Not recommended**: Avoid `@main` in production (unpredictable changes)
+
+**Finding available versions:**
+
+- Check [GitHub releases](https://github.com/SolomonHD/unifi-cloudflare-glue/releases)
+- Review [`CHANGELOG.md`](./CHANGELOG.md) for version changes
+- Test new versions in non-production environments first
+
+### Critical: Parameter Differences
+
+> **⚠️ IMPORTANT:** Remote module users must understand the difference between `--source` and `--kcl-source` parameters.
+
+| Parameter | Purpose | When to Use |
+|-----------|---------|-------------|
+| `--source=.` | Reads the **module's** KCL files | ❌ Only for local development within this repository |
+| `--kcl-source=./your-config` | Reads **your project's** KCL files | ✅ Required when using the module remotely |
+
+**Why this matters:**
+
+- Local development (within this repo): `--source=.` works because it reads the module's own KCL schemas
+- Remote usage (from your project): You **must** use `--kcl-source=./your-config` to provide your own KCL configuration
+- Using `--source=.` remotely will fail or read the wrong files
+
+### Function Usage Examples
+
+All examples below assume the module is installed. For direct remote usage without installation, see [Module Calling Patterns](#module-calling-patterns).
+
+#### Deploy (Full Orchestration)
+
+Deploys both UniFi DNS and Cloudflare Tunnel in the correct order:
+
+```bash
+dagger call -m unifi-cloudflare-glue deploy \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com
+
+# With persistent local state
+dagger call -m unifi-cloudflare-glue deploy \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com \
+    --state-dir=./terraform-state
+
+# With pinned tool versions
+dagger call -m unifi-cloudflare-glue deploy \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com \
+    --terraform-version=1.10.0 \
+    --kcl-version=0.11.0
+```
+
+#### Deploy-UniFi (UniFi Only)
+
+Deploys only UniFi DNS records:
+
+```bash
+dagger call -m unifi-cloudflare-glue deploy-unifi \
+    --source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY
+
+# With self-signed certificates
+dagger call -m unifi-cloudflare-glue deploy-unifi \
+    --source=./kcl \
+    --unifi-url=https://192.168.10.1 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --unifi-insecure
+
+# With persistent local state
+dagger call -m unifi-cloudflare-glue deploy-unifi \
+    --source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --state-dir=./terraform-state
+```
+
+#### Deploy-Cloudflare (Cloudflare Only)
+
+Deploys only Cloudflare Tunnel and DNS:
+
+```bash
+dagger call -m unifi-cloudflare-glue deploy-cloudflare \
+    --source=./kcl \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com
+
+# With persistent local state
+dagger call -m unifi-cloudflare-glue deploy-cloudflare \
+    --source=./kcl \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com \
+    --state-dir=./terraform-state
+```
+
+#### Destroy (Infrastructure Teardown)
+
+**⚠️ DESTRUCTIVE OPERATION:** Destroys all managed infrastructure in reverse order (Cloudflare first, then UniFi):
+
+```bash
+dagger call -m unifi-cloudflare-glue destroy \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com
+
+# With persistent local state (use same state-dir as deploy)
+dagger call -m unifi-cloudflare-glue destroy \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com \
+    --state-dir=./terraform-state
+```
+
+#### Plan (Preview Changes)
+
+Generates Terraform plans without applying changes:
+
+```bash
+# Export plans to ./plans directory
+dagger call -m unifi-cloudflare-glue plan \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com \
+    export --path=./plans
+
+# With persistent local state
+dagger call -m unifi-cloudflare-glue plan \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com \
+    --state-dir=./terraform-state \
+    export --path=./plans
+```
+
+**Output files:** `plans/unifi-plan.{tfplan,json,txt}`, `plans/cloudflare-plan.{tfplan,json,txt}`, `plans/plan-summary.txt`
+
+#### Test-Integration (Integration Testing)
+
+Runs ephemeral integration tests against live APIs:
+
+```bash
+dagger call -m unifi-cloudflare-glue test-integration \
+    --source=./kcl \
+    --cloudflare-zone=test.example.com \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --unifi-url=https://unifi.local:8443 \
+    --api-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY
+
+# Force fresh execution (bypass cache)
+dagger call -m unifi-cloudflare-glue test-integration \
+    --source=./kcl \
+    --cloudflare-zone=test.example.com \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --unifi-url=https://unifi.local:8443 \
+    --api-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --no-cache
+
+# With real MAC address from your UniFi controller
+dagger call -m unifi-cloudflare-glue test-integration \
+    --source=./kcl \
+    --cloudflare-zone=test.example.com \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --unifi-url=https://unifi.local:8443 \
+    --api-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --test-mac-address=de:ad:be:ef:12:34
+```
+
+### Module Calling Patterns
+
+There are two ways to call module functions:
+
+#### 1. Installed Module Pattern (Recommended for Local Development)
+
+After running `dagger install`, use the module name directly:
+
+```bash
+dagger call -m unifi-cloudflare-glue <function-name> \
+    --kcl-source=./your-config \
+    <other-parameters>
+```
+
+**Pros:**
+- Shorter commands
+- Persistent across terminal sessions
+- Cleaner for iterative development
+
+**Cons:**
+- Requires initial `dagger install` step
+- Version managed in `dagger.json`
+
+#### 2. Direct Remote Pattern (Recommended for CI/CD)
+
+Call the module directly without installation:
+
+```bash
+dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.2.0 \
+    unifi-cloudflare-glue <function-name> \
+    --kcl-source=./your-config \
+    <other-parameters>
+```
+
+**Pros:**
+- No installation required
+- Explicit version control in command
+- Ideal for CI/CD pipelines
+
+**Cons:**
+- Longer commands
+- Must repeat full URL each time
+
+#### Pattern Comparison
+
+| Aspect | Installed Module | Direct Remote |
+|--------|-----------------|---------------|
+| **Command Length** | Short (`-m unifi-cloudflare-glue`) | Long (full URL + module name) |
+| **Installation** | Required (`dagger install`) | Not required |
+| **Versioning** | In `dagger.json` | In command (`@v0.2.0`) |
+| **Best For** | Local development, iteration | CI/CD, one-off operations |
+
+### Version Pinning Best Practices
+
+**⚠️ ALWAYS use specific version tags (`@vX.Y.Z`) in production environments.**
+
+**Benefits:**
+- **Reproducibility**: Same version = same behavior across time and environments
+- **Predictability**: No unexpected breaking changes
+- **Safety**: Test changes before upgrading
+
+**Version update strategy:**
+
+1. Test new version in non-production environment
+2. Review [`CHANGELOG.md`](./CHANGELOG.md) for breaking changes
+3. Update version pin only after validation
+4. Use automated testing to catch regressions
+
+**Example CI/CD with version pinning:**
+
+```yaml
+# .github/workflows/deploy.yml
+- name: Deploy infrastructure
+  run: |
+    dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.2.0 \
+      unifi-cloudflare-glue deploy \
+      --kcl-source=./kcl \
+      --unifi-url=${{ secrets.UNIFI_URL }} \
+      --unifi-api-key=env:UNIFI_API_KEY \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=${{ secrets.CF_ACCOUNT_ID }} \
+      --zone-name=${{ secrets.CF_ZONE }}
+```
+
+### CI/CD Integration
+
+Example GitHub Actions workflow:
+
+```yaml
+name: Deploy Infrastructure
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Dagger
+        uses: dagger/dagger-for-github@v5
+        with:
+          install-only: true
+      
+      - name: Deploy with Dagger module
+        run: |
+          # Direct remote pattern - no installation step
+          dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.2.0 \
+            unifi-cloudflare-glue deploy \
+            --kcl-source=./kcl \
+            --unifi-url=${{ secrets.UNIFI_URL }} \
+            --unifi-api-key=env:UNIFI_API_KEY \
+            --cloudflare-token=env:CF_TOKEN \
+            --cloudflare-account-id=${{ secrets.CF_ACCOUNT_ID }} \
+            --zone-name=${{ secrets.CF_ZONE }}
+        env:
+          UNIFI_API_KEY: ${{ secrets.UNIFI_API_KEY }}
+          CF_TOKEN: ${{ secrets.CF_TOKEN }}
+```
+
+**Key CI/CD patterns:**
+
+- Use **direct remote pattern** (no installation step required)
+- **Pin versions** for reproducibility (`@v0.2.0`)
+- Store **secrets in CI environment variables**
+- Use **ephemeral state** or remote backend for state management
+
+**Adapting to other CI systems:**
+
+This pattern works with any CI system (GitLab CI, CircleCI, Jenkins, etc.):
+
+1. Install Dagger CLI
+2. Set environment variables for secrets
+3. Call module using direct remote pattern
+4. Use appropriate state management for your environment
+
+See [Dagger CI integration docs](https://docs.dagger.io/integrations/ci) for platform-specific guidance.
+
+### Additional Resources
+
+- **KCL configuration examples**: See [`examples/homelab-media-stack/`](./examples/homelab-media-stack/) for complete working configuration
+- **Terraform module usage**: See [Using as Terraform Modules](#using-as-terraform-modules) if you only need the Terraform modules
+- **Function signatures**: Run `dagger functions` to list all available functions
+- **Parameter details**: Use `dagger call <function> --help` for detailed parameter information
+- **KCL language guide**: [KCL Documentation](https://kcl-lang.io/)
+
 ## Modules
 
 ### Dagger Functions
@@ -292,6 +656,75 @@ The Dagger module provides containerized, reproducible pipelines for managing hy
        --zone-name=example.com \
        --state-dir=./terraform-state
    ```
+
+#### Plan Generation
+
+- **`plan`** - Generate Terraform plans for both UniFi DNS and Cloudflare Tunnel configurations
+
+  Creates execution plans without applying changes, enabling the standard plan → review → apply
+  workflow. Generates three output formats per module: binary plan files, JSON for automation,
+  and human-readable text for manual review.
+
+  TLS options (optional):
+  - `--unifi-insecure` - Skip TLS certificate verification for self-signed certificates
+
+  Container version options (optional):
+  - `--terraform-version` - Terraform version to use (default: "latest")
+  - `--kcl-version` - KCL version to use (default: "latest")
+
+  Cache control options (optional):
+  - `--no-cache` - Bypass Dagger cache, force fresh execution
+  - `--cache-buster` - Custom cache key (advanced use)
+
+  ```bash
+  # Basic usage - export plans to ./plans directory
+  dagger call plan \
+      --kcl-source=./kcl \
+      --unifi-url=https://unifi.local:8443 \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=xxx \
+      --zone-name=example.com \
+      --unifi-api-key=env:UNIFI_API_KEY \
+      export --path=./plans
+
+  # With persistent local state
+  dagger call plan \
+      --kcl-source=./kcl \
+      --unifi-url=https://unifi.local:8443 \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=xxx \
+      --zone-name=example.com \
+      --unifi-api-key=env:UNIFI_API_KEY \
+      --state-dir=./terraform-state \
+      export --path=./plans
+
+  # With remote backend (S3)
+  dagger call plan \
+      --kcl-source=./kcl \
+      --unifi-url=https://unifi.local:8443 \
+      --cloudflare-token=env:CF_TOKEN \
+      --cloudflare-account-id=xxx \
+      --zone-name=example.com \
+      --unifi-api-key=env:UNIFI_API_KEY \
+      --backend-type=s3 \
+      --backend-config-file=./s3-backend.hcl \
+      export --path=./plans
+  ```
+
+  **Output Directory Structure:**
+  ```
+  plans/
+  ├── unifi-plan.tfplan      # Binary plan (for terraform apply)
+  ├── unifi-plan.json        # Structured JSON (for automation)
+  ├── unifi-plan.txt         # Human-readable (for review)
+  ├── cloudflare-plan.tfplan # Binary plan
+  ├── cloudflare-plan.json   # Structured JSON
+  ├── cloudflare-plan.txt    # Human-readable
+  └── plan-summary.txt       # Aggregated summary
+  ```
+
+  **Security Note:** Plan files may contain sensitive values (API tokens, passwords). 
+  Add your plans directory to `.gitignore` and handle plan files securely.
 
 #### Testing
 

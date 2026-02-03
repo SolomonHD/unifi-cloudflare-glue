@@ -8,6 +8,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Terraform Plan Function:**
+  - Added `plan()` function for generating Terraform plans without applying changes
+  - Supports plan → review → apply workflows for infrastructure changes
+  - Generates three output formats per module:
+    - Binary plan files (`*.tfplan`) - usable with `terraform apply`
+    - JSON format (`*.json`) - for automation and policy-as-code tools
+    - Human-readable text (`*.txt`) - for manual review
+  - Creates `plan-summary.txt` with aggregated resource counts across both modules
+  - Returns `dagger.Directory` containing all plan artifacts
+  - Supports all existing state management options (ephemeral, persistent local, remote backends)
+  - Includes cache control options (`--no-cache`, `--cache-buster`)
+  - Usage:
+    ```bash
+    dagger call plan \
+        --kcl-source=./kcl \
+        --unifi-url=https://unifi.local:8443 \
+        --cloudflare-token=env:CF_TOKEN \
+        --cloudflare-account-id=xxx \
+        --zone-name=example.com \
+        --unifi-api-key=env:UNIFI_API_KEY \
+        export --path=./plans
+    ```
+
 - **Persistent Local State Directory Support:**
   - Added `state_dir` parameter to `deploy`, `deploy-unifi`, `deploy-cloudflare`, and `destroy` functions
   - Enables persistent Terraform state storage on local filesystem without remote backend setup
