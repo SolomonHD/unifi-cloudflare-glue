@@ -101,7 +101,7 @@ The `unifi-cloudflare-glue` Dagger module can be used remotely from other projec
 Install the module in your project using `dagger install`:
 
 ```bash
-dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.2.0
+dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.3.2
 ```
 
 This registers the module in your project's `dagger.json` and makes it available with the `-m unifi-cloudflare-glue` flag.
@@ -110,7 +110,7 @@ This registers the module in your project's `dagger.json` and makes it available
 
 **Production environments should always pin to specific versions:**
 
-- ✅ **Recommended**: Use `@vX.Y.Z` for production (e.g., `@v0.2.0`)
+- ✅ **Recommended**: Use `@vX.Y.Z` for production (e.g., `@v0.3.2`)
 - ⚠️ **Not recommended**: Avoid `@main` in production (unpredictable changes)
 
 **Finding available versions:**
@@ -336,7 +336,7 @@ dagger call -m unifi-cloudflare-glue <function-name> \
 Call the module directly without installation:
 
 ```bash
-dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.2.0 \
+dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.3.2 \
     unifi-cloudflare-glue <function-name> \
     --kcl-source=./your-config \
     <other-parameters>
@@ -357,7 +357,7 @@ dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.2.0 \
 |--------|-----------------|---------------|
 | **Command Length** | Short (`-m unifi-cloudflare-glue`) | Long (full URL + module name) |
 | **Installation** | Required (`dagger install`) | Not required |
-| **Versioning** | In `dagger.json` | In command (`@v0.2.0`) |
+| **Versioning** | In `dagger.json` | In command (`@v0.3.2`) |
 | **Best For** | Local development, iteration | CI/CD, one-off operations |
 
 ### Version Pinning Best Practices
@@ -382,7 +382,7 @@ dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.2.0 \
 # .github/workflows/deploy.yml
 - name: Deploy infrastructure
   run: |
-    dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.2.0 \
+    dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.3.2 \
       unifi-cloudflare-glue deploy \
       --kcl-source=./kcl \
       --unifi-url=${{ secrets.UNIFI_URL }} \
@@ -417,7 +417,7 @@ jobs:
       - name: Deploy with Dagger module
         run: |
           # Direct remote pattern - no installation step
-          dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.2.0 \
+          dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.3.2 \
             unifi-cloudflare-glue deploy \
             --kcl-source=./kcl \
             --unifi-url=${{ secrets.UNIFI_URL }} \
@@ -433,7 +433,7 @@ jobs:
 **Key CI/CD patterns:**
 
 - Use **direct remote pattern** (no installation step required)
-- **Pin versions** for reproducibility (`@v0.2.0`)
+- **Pin versions** for reproducibility (`@v0.3.2`)
 - Store **secrets in CI environment variables**
 - Use **ephemeral state** or remote backend for state management
 
