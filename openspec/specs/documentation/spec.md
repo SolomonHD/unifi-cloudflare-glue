@@ -462,3 +462,232 @@ All documentation links SHALL follow consistent formatting conventions.
 - **WHEN** listing documentation links
 - **THEN** use format: `[Link Text](path) - Brief description of content`
 
+---
+
+## ADDED Requirements (from change: architecture-diagrams)
+
+### Requirement: System architecture diagram SHALL visualize component layers
+
+The documentation SHALL include a system architecture diagram that shows the four main layers: Configuration Layer (KCL schemas and user config), Orchestration Layer (Dagger module and Terraform engine), Infrastructure Layer (UniFi Controller and Cloudflare API), and Network Layer (local DNS, tunnels, and edge DNS).
+
+#### Scenario: User views architecture diagram
+- **WHEN** a user opens the architecture documentation
+- **THEN** they SHALL see a diagram clearly showing component relationships across all four layers
+
+#### Scenario: Components are labeled for clarity
+- **WHEN** a diagram shows a component
+- **THEN** each component SHALL have a clear label indicating its purpose
+
+### Requirement: Architecture diagram SHALL use Mermaid format
+
+The architecture diagrams SHALL be written in Mermaid syntax to ensure native rendering on GitHub without external tools.
+
+#### Scenario: Diagram renders on GitHub
+- **WHEN** architecture documentation is viewed on GitHub
+- **THEN** all Mermaid diagrams SHALL render correctly without broken syntax
+
+#### Scenario: Diagram syntax validation
+- **WHEN** Mermaid code is committed
+- **THEN** the syntax SHALL be valid according to Mermaid specifications
+
+### Requirement: Component relationships SHALL be clearly depicted
+
+The system SHALL show directional relationships between components indicating data flow or dependencies.
+
+#### Scenario: Data flow direction is visible
+- **WHEN** viewing the architecture diagram
+- **THEN** arrows SHALL indicate the direction of data or control flow between components
+
+#### Scenario: Layer boundaries are evident
+- **WHEN** viewing the architecture diagram
+- **THEN** subgraph containers SHALL clearly separate the four architectural layers
+
+### Requirement: Data flow SHALL show configuration transformation pipeline
+
+The documentation SHALL include a data flow diagram illustrating the complete transformation from KCL configuration through validation to infrastructure deployment, including separate paths for UniFi and Cloudflare.
+
+#### Scenario: Complete pipeline is visualized
+- **WHEN** a user views the data flow diagram
+- **THEN** they SHALL see the full path from main.k configuration through KCL validation, JSON generation, and Terraform apply
+
+#### Scenario: Validation decision point is shown
+- **WHEN** viewing the data flow
+- **THEN** the diagram SHALL show a decision point after KCL validation with success and error paths
+
+### Requirement: JSON generation SHALL be depicted as parallel outputs
+
+The diagram SHALL show that KCL generates both UniFi JSON and Cloudflare JSON as parallel outputs from a single configuration source.
+
+#### Scenario: Split into provider-specific outputs
+- **WHEN** viewing JSON generation step
+- **THEN** the diagram SHALL show one configuration source splitting into two output paths (UniFi and Cloudflare)
+
+### Requirement: Infrastructure creation SHALL show sequential phases
+
+The diagram SHALL illustrate that UniFi DNS is created first, followed by Cloudflare tunnel and edge DNS.
+
+#### Scenario: Phase ordering is visible
+- **WHEN** viewing the infrastructure deployment section
+- **THEN** the diagram SHALL clearly show UniFi resources created before Cloudflare resources
+
+#### Scenario: Final state is indicated
+- **WHEN** both infrastructure phases complete
+- **THEN** the diagram SHALL show the end state with both local DNS and tunnel/edge DNS created
+
+### Requirement: Deployment workflow SHALL show interaction sequence
+
+The documentation SHALL include a sequence diagram showing the step-by-step interaction between User, Dagger, Terraform, UniFi, and Cloudflare during deployment.
+
+#### Scenario: User initiates deployment
+- **WHEN** viewing the deployment workflow diagram
+- **THEN** the diagram SHALL show the user invoking the `dagger call deploy` command as the starting point
+
+#### Scenario: Initialization is depicted
+- **WHEN** Dagger processes the deployment request
+- **THEN** the diagram SHALL show configuration generation and terraform init steps
+
+### Requirement: Deployment phases SHALL be visually separated
+
+The diagram SHALL use visual grouping (colored rectangles or swim lanes) to distinguish Phase 1 (UniFi DNS) from Phase 2 (Cloudflare Tunnel and DNS).
+
+#### Scenario: Phase 1 is clearly marked
+- **WHEN** viewing the deployment sequence
+- **THEN** UniFi DNS creation SHALL be contained in a visually distinct Phase 1 section
+
+#### Scenario: Phase 2 follows Phase 1
+- **WHEN** viewing the deployment sequence
+- **THEN** Cloudflare operations SHALL be contained in a Phase 2 section that visually follows Phase 1
+
+### Requirement: Success responses SHALL be indicated
+
+The diagram SHALL show success responses flowing back from external services through Terraform to Dagger and finally to the user.
+
+#### Scenario: UniFi confirms DNS creation
+- **WHEN** UniFi successfully creates DNS records
+- **THEN** the diagram SHALL show a success response arrow from UniFi back to Terraform
+
+#### Scenario: Final completion message
+- **WHEN** all phases complete successfully
+- **THEN** the diagram SHALL show Dagger returning a completion confirmation to the user
+
+### Requirement: Error handling paths SHALL be identifiable
+
+The diagram SHALL indicate where errors might occur and how they are communicated back to the user.
+
+#### Scenario: Terraform failure communication
+- **WHEN** Terraform encounters an error
+- **THEN** the diagram SHALL show the error path back to Dagger and the user
+
+### Requirement: DNS resolution SHALL show local and remote access paths
+
+The documentation SHALL include a diagram illustrating how client devices resolve DNS differently for local network requests (via UniFi DNS) versus external requests (via Cloudflare Edge).
+
+#### Scenario: Local network path is visualized
+- **WHEN** a client makes a local network request
+- **THEN** the diagram SHALL show the request path from Client Device → UniFi DNS → Internal Service
+
+#### Scenario: External access path is visualized
+- **WHEN** a client makes an external request
+- **THEN** the diagram SHALL show the request path from Client Device → Internet → Edge DNS → Tunnel → Internal Service
+
+### Requirement: Domain naming conventions SHALL be illustrated
+
+The diagram SHALL show example domain names for local (.internal.lan) versus external (.example.com) access patterns.
+
+#### Scenario: Local domain example
+- **WHEN** viewing the local resolution path
+- **THEN** the diagram SHALL include an example like "media.internal.lan"
+
+#### Scenario: External domain example
+- **WHEN** viewing the external resolution path
+- **THEN** the diagram SHALL include an example like "media.example.com"
+
+### Requirement: Network boundaries SHALL be clearly delineated
+
+The diagram SHALL use subgraph containers or visual boundaries to distinguish the Local Network from the Cloudflare Edge.
+
+#### Scenario: Local network components grouped
+- **WHEN** viewing the diagram
+- **THEN** Client Device, UniFi DNS, and Internal Service SHALL be grouped within a "Local Network" boundary
+
+#### Scenario: Cloudflare Edge components grouped
+- **WHEN** viewing the diagram
+- **THEN** Edge DNS and Tunnel Connector SHALL be grouped within a "Cloudflare Edge" boundary
+
+### Requirement: Secure tunnel connection SHALL be distinguished
+
+The diagram SHALL visually differentiate the secure tunnel connection from regular network paths (e.g., using a different line style).
+
+#### Scenario: Tunnel connection is visually distinct
+- **WHEN** viewing the connection from Tunnel to Internal Service
+- **THEN** the connection SHALL use a different visual style (dotted line, different color, etc.) than direct connections
+
+#### Scenario: Security is indicated
+- **WHEN** viewing the tunnel connection
+- **THEN** the connection SHALL be labeled or annotated to indicate it's a secure connection
+
+### Requirement: Architecture Documentation File
+
+The project SHALL maintain a `docs/architecture.md` file containing comprehensive visual diagrams of the system architecture, data flow, deployment workflow, state management, and DNS resolution.
+
+#### Scenario: Architecture documentation exists
+- **WHEN** a user navigates to the docs/ directory
+- **THEN** they SHALL find an `architecture.md` file containing Mermaid diagrams
+
+#### Scenario: Diagrams render on GitHub
+- **WHEN** viewing `docs/architecture.md` on GitHub
+- **THEN** all Mermaid diagrams SHALL render correctly without external tools
+
+### Requirement: Architecture Diagrams in README
+
+The README SHALL include or link to a high-level architecture diagram that provides immediate visual context for the project.
+
+#### Scenario: Visual architecture in README
+- **WHEN** a user reads the README.md file
+- **THEN** they SHALL find either an embedded architecture diagram or a clear link to `docs/architecture.md`
+
+#### Scenario: Architecture link in navigation
+- **WHEN** viewing the README Documentation section
+- **THEN** it SHALL include a link to architecture documentation: `[Architecture](docs/architecture.md) - Visual diagrams of system components and data flow`
+
+### Requirement: Embedded Diagrams in Topic Documentation
+
+Relevant documentation files SHALL embed simplified versions of architecture diagrams where they enhance understanding.
+
+#### Scenario: Getting Started includes architecture context
+- **WHEN** a user reads `docs/getting-started.md`
+- **THEN** it MAY include a simplified architecture diagram showing the main components
+
+#### Scenario: State Management includes decision tree
+- **WHEN** a user reads `docs/state-management.md`
+- **THEN** it SHALL include the state management decision tree diagram
+
+### Requirement: Architecture Documentation Structure
+
+The `docs/architecture.md` file SHALL organize diagrams with clear section headers and explanatory text.
+
+#### Scenario: Organized diagram sections
+- **WHEN** viewing the architecture documentation
+- **THEN** it SHALL include sections for:
+  - System Architecture (component layers)
+  - Data Flow (transformation pipeline)
+  - Deployment Workflow (step sequence)
+  - State Management (decision criteria)
+  - DNS Resolution (local vs remote paths)
+
+#### Scenario: Diagram context provided
+- **WHEN** viewing each diagram
+- **THEN** it SHALL be accompanied by explanatory text describing what the diagram illustrates
+
+### Requirement: Consistent Diagram Terminology
+
+All architecture diagrams SHALL use terminology consistent with the rest of the documentation.
+
+#### Scenario: Component naming consistency
+- **WHEN** a diagram shows a component
+- **THEN** the component name SHALL match terminology used in getting-started.md, dagger-reference.md, and other documentation
+
+#### Scenario: Domain example consistency
+- **WHEN** diagrams show example domain names
+- **THEN** they SHALL use `.internal.lan` for local domains and `.example.com` or actual project domains for external access
+

@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Architecture Diagrams:**
+  - Created `docs/architecture.md` with comprehensive Mermaid diagrams
+  - Five core diagrams illustrating system design:
+    - System Architecture: Component layers (Configuration, Orchestration, Infrastructure, Network)
+    - Data Flow: Configuration transformation pipeline from KCL to deployed infrastructure
+    - Deployment Workflow: Sequence diagram showing interaction between User, Dagger, Terraform, UniFi, and Cloudflare
+    - State Management Decision Tree: Visual guide for choosing ephemeral, local persistent, or remote backend state
+    - DNS Resolution: Local vs external access paths with UniFi DNS and Cloudflare Tunnel
+  - Embedded state management diagram in `docs/state-management.md`
+  - Added architecture entry to `docs/README.md` index
+  - Added architecture link to main `README.md` Documentation section
+  - All diagrams use GitHub-native Mermaid format for version control and automatic rendering
+
 - **Documentation Restructuring:**
   - Created `docs/` directory with specialized documentation files organized by topic
   - New documentation files:

@@ -10,7 +10,7 @@ A hybrid DNS infrastructure tool that bridges UniFi network DNS with Cloudflare 
 
 ```bash
 # 1. Install the Dagger module
-dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.3.2
+dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.4.0
 
 # 2. Deploy both UniFi DNS and Cloudflare Tunnel
 dagger call -m unifi-cloudflare-glue deploy \
@@ -28,7 +28,9 @@ See the [examples/homelab-media-stack/](examples/homelab-media-stack/) directory
 
 | Document | Description |
 |----------|-------------|
+| **[Architecture](docs/architecture.md)** | Visual diagrams of system components and data flow |
 | **[KCL Configuration Guide](docs/kcl-guide.md)** | Complete KCL schema reference, validation rules, and examples |
+| **[Deployment Patterns](docs/deployment-patterns.md)** | Environment-specific patterns (dev, staging, production) |
 | **[Getting Started](docs/getting-started.md)** | Installation, prerequisites, and first deployment |
 | **[Dagger Reference](docs/dagger-reference.md)** | Complete function reference with examples |
 | **[Terraform Modules](docs/terraform-modules.md)** | Standalone Terraform module usage |
@@ -163,7 +165,7 @@ Always pin to specific versions in production:
 
 ```bash
 # ✅ Recommended - pinned version
-dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.3.2
+dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.4.0
 
 # ⚠️ Not recommended - latest main
 dagger install github.com/SolomonHD/unifi-cloudflare-glue@main
@@ -198,7 +200,7 @@ See [docs/security.md](docs/security.md) for comprehensive security guidance.
 # GitHub Actions example
 - name: Deploy infrastructure
   run: |
-    dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.3.2 \
+    dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.4.0 \
       unifi-cloudflare-glue deploy \
       --kcl-source=./kcl \
       --unifi-url=${{ secrets.UNIFI_URL }} \
