@@ -1,6 +1,23 @@
 # S3 Backend Configuration (YAML format)
 # This file is automatically converted to HCL format by the Dagger module
 #
+# IMPORTANT: Two S3 Locking Options Available
+# -----------------------------------------------------------------------------
+# This example uses DynamoDB for state locking (traditional approach).
+# Terraform 1.9+ also supports S3 native lockfile as an alternative:
+#
+#   • DynamoDB Locking (this file): Works with all Terraform versions
+#     See: s3-backend-dynamodb.yaml for dedicated DynamoDB example
+#
+#   • S3 Native Lockfile: Requires Terraform 1.9+, no DynamoDB needed
+#     See: s3-backend-lockfile.yaml for S3 native locking example
+#
+# This configuration uses: DynamoDB Locking (dynamodb_table parameter)
+#
+# For help choosing between locking options, see the Backend Configuration Guide:
+# https://github.com/SolomonHD/unifi-cloudflare-glue/blob/main/docs/backend-configuration.md
+# -----------------------------------------------------------------------------
+#
 # Usage:
 #   dagger call deploy \
 #       --backend-type=s3 \
@@ -14,4 +31,7 @@ bucket: my-terraform-state-bucket
 key: unifi-cloudflare-glue/terraform.tfstate
 region: us-east-1
 encrypt: true
+
+# DynamoDB table for state locking (traditional locking, all Terraform versions)
+# To use S3 native lockfile instead (Terraform 1.9+), see s3-backend-lockfile.yaml
 dynamodb_table: terraform-state-lock

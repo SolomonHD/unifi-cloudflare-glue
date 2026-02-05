@@ -28,13 +28,14 @@ See the [examples/homelab-media-stack/](examples/homelab-media-stack/) directory
 
 | Document | Description |
 |----------|-------------|
+| **[KCL Configuration Guide](docs/kcl-guide.md)** | Complete KCL schema reference, validation rules, and examples |
 | **[Getting Started](docs/getting-started.md)** | Installation, prerequisites, and first deployment |
 | **[Dagger Reference](docs/dagger-reference.md)** | Complete function reference with examples |
 | **[Terraform Modules](docs/terraform-modules.md)** | Standalone Terraform module usage |
 | **[State Management](docs/state-management.md)** | State backends: ephemeral, local, and remote |
 | **[Security](docs/security.md)** | Security best practices and credential handling |
 | **[vals Integration](docs/vals-integration.md)** | Secret injection with vals for backend configs |
-| **[Backend Configuration](docs/backend-configuration.md)** | Backend config guide *(coming soon)* |
+| **[Backend Configuration](docs/backend-configuration.md)** | Comprehensive backend and state locking guide |
 | **[Troubleshooting](docs/troubleshooting.md)** | Common issues and solutions *(coming soon)* |
 
 ## Architecture
