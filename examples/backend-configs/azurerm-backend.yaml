@@ -1,0 +1,22 @@
+# Azure Blob Storage Backend Configuration (YAML format)
+# This file is automatically converted to HCL format by the Dagger module
+#
+# Usage:
+#   dagger call deploy \
+#       --backend-type=azurerm \
+#       --backend-config-file=./azurerm-backend.yaml \
+#       ...
+#
+# Required Environment Variables:
+#   export ARM_CLIENT_ID="your-service-principal-client-id"
+#   export ARM_CLIENT_SECRET="your-service-principal-client-secret"
+#   export ARM_SUBSCRIPTION_ID="your-subscription-id"
+#   export ARM_TENANT_ID="your-tenant-id"
+#
+# For vals integration:
+#   vals eval -f azurerm-backend.yaml.tmpl > azurerm-backend.yaml
+
+storage_account_name: myterraformstate
+container_name: terraform-state
+key: unifi-cloudflare-glue/terraform.tfstate
+resource_group_name: my-resource-group

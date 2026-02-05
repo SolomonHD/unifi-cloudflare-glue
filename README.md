@@ -1034,6 +1034,106 @@ Example configuration files are provided in [`examples/backend-configs/`](./exam
 - `gcs-backend.hcl` - Google Cloud Storage configuration
 - `remote-backend.hcl` - Terraform Cloud configuration
 
+### YAML Backend Config Support
+
+The module now supports YAML format for backend configuration files, enabling seamless integration with secret management tools like `vals`. YAML files are automatically converted to Terraform-compatible HCL format.
+
+#### Why Use YAML?
+
+- **Native vals integration**: YAML works seamlessly with `vals` for secret injection
+- **Simpler syntax**: No need to quote strings or handle HCL-specific formatting
+- **Backward compatible**: Existing HCL files continue to work unchanged
+
+#### Usage
+
+Pass a YAML file to `--backend-config-file` and it will be automatically converted:
+
+```bash
+# Deploy with YAML backend config
+dagger call deploy \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=xxx \
+    --zone-name=example.com \
+    --backend-type=s3 \
+    --backend-config-file=./s3-backend.yaml
+```
+
+#### YAML Format
+
+Create your backend config in YAML format:
+
+```yaml
+# s3-backend.yaml
+bucket: my-terraform-state-bucket
+key: unifi-cloudflare-glue/terraform.tfstate
+region: us-east-1
+encrypt: true
+dynamodb_table: terraform-state-lock
+```
+
+This is equivalent to the HCL format:
+
+```hcl
+# s3-backend.hcl
+bucket = "my-terraform-state-bucket"
+key    = "unifi-cloudflare-glue/terraform.tfstate"
+region = "us-east-1"
+encrypt = true
+dynamodb_table = "terraform-state-lock"
+```
+
+#### Supported YAML Types
+
+The following YAML value types are supported and properly converted to HCL:
+
+| YAML Type | Example | HCL Output |
+|-----------|---------|------------|
+| String | `bucket: my-bucket` | `bucket = "my-bucket"` |
+| Integer | `port: 8080` | `port = 8080` |
+| Float | `version: 1.5` | `version = 1.5` |
+| Boolean | `encrypt: true` | `encrypt = true` |
+| List | `endpoints: ["a", "b"]` | `endpoints = ["a", "b"]` |
+| Nested Object | `workspaces: {name: dev}` | `workspaces = { name = "dev" }` |
+
+#### vals Integration Workflow
+
+Use `vals` to inject secrets into your YAML backend config:
+
+```bash
+# 1. Create a YAML template with vals references
+# s3-backend.yaml.tmpl
+bucket: my-terraform-state
+key: unifi-cloudflare-glue/terraform.tfstate
+region: us-east-1
+encrypt: true
+dynamodb_table: terraform-state-lock
+access_key: ref+awssecretsmanager://terraform-aws-access-key
+secret_key: ref+awssecretsmanager://terraform-aws-secret-key
+
+# 2. Use vals to evaluate the template
+vals eval -f s3-backend.yaml.tmpl > s3-backend.yaml
+
+# 3. Pass the rendered YAML to the module
+dagger call deploy \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=xxx \
+    --zone-name=example.com \
+    --backend-type=s3 \
+    --backend-config-file=./s3-backend.yaml
+```
+
+#### Backward Compatibility
+
+- **HCL files continue to work**: The module auto-detects YAML vs HCL format
+- **No API changes**: The `--backend-config-file` parameter works with both formats
+- **Graceful fallback**: If YAML parsing fails, the file is treated as HCL
+
 #### S3 Backend Example
 
 ```hcl

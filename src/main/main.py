@@ -14,6 +14,28 @@ import json
 import shlex
 import time
 
+from .backend_config import process_backend_config_content
+
+
+async def _process_backend_config(backend_config_file: dagger.File) -> tuple[str, str]:
+    """
+    Process a backend configuration file, converting YAML to HCL if necessary.
+    
+    Args:
+        backend_config_file: File object containing backend configuration (YAML or HCL)
+        
+    Returns:
+        Tuple of (content, extension) where content is the HCL-formatted backend config
+        and extension is '.tfbackend' for mounting
+    """
+    try:
+        # Get the file contents
+        content = await backend_config_file.contents()
+        return process_backend_config_content(content)
+    except Exception:
+        # If we can't read the file, return empty content
+        return ("", '.tfbackend')
+
 
 # Custom exception for KCL generation errors
 class KCLGenerationError(Exception):
@@ -351,12 +373,15 @@ class UnifiCloudflareGlue:
             except Exception as e:
                 return f"✗ Failed: Could not generate backend configuration\n{str(e)}"
 
-        # Mount backend config file if provided
+        # Process and mount backend config file if provided
         if backend_config_file is not None:
             try:
-                ctr = ctr.with_file("/root/.terraform/backend.hcl", backend_config_file)
+                # Convert YAML to HCL if necessary
+                config_content, _ = await _process_backend_config(backend_config_file)
+                # Mount the processed content as a .tfbackend file
+                ctr = ctr.with_new_file("/root/.terraform/backend.tfbackend", config_content)
             except Exception as e:
-                return f"✗ Failed: Could not mount backend config file\n{str(e)}"
+                return f"✗ Failed: Could not process backend config file\n{str(e)}"
 
         # Set up environment variables for Terraform
         ctr = ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
@@ -387,7 +412,7 @@ class UnifiCloudflareGlue:
         # Run terraform init (with backend config if provided)
         init_cmd = ["terraform", "init"]
         if backend_config_file is not None:
-            init_cmd.extend(["-backend-config=/root/.terraform/backend.hcl"])
+            init_cmd.extend(["-backend-config=/root/.terraform/backend.tfbackend"])
         
         try:
             init_result = await ctr.with_exec(init_cmd).stdout()
@@ -507,12 +532,15 @@ class UnifiCloudflareGlue:
             except Exception as e:
                 return f"✗ Failed: Could not generate backend configuration\n{str(e)}"
 
-        # Mount backend config file if provided
+        # Process and mount backend config file if provided
         if backend_config_file is not None:
             try:
-                ctr = ctr.with_file("/root/.terraform/backend.hcl", backend_config_file)
+                # Convert YAML to HCL if necessary
+                config_content, _ = await _process_backend_config(backend_config_file)
+                # Mount the processed content as a .tfbackend file
+                ctr = ctr.with_new_file("/root/.terraform/backend.tfbackend", config_content)
             except Exception as e:
-                return f"✗ Failed: Could not mount backend config file\n{str(e)}"
+                return f"✗ Failed: Could not process backend config file\n{str(e)}"
 
         # Set up environment variables
         ctr = ctr.with_env_variable("TF_VAR_cloudflare_account_id", cloudflare_account_id)
@@ -539,7 +567,7 @@ class UnifiCloudflareGlue:
         # Run terraform init (with backend config if provided)
         init_cmd = ["terraform", "init"]
         if backend_config_file is not None:
-            init_cmd.extend(["-backend-config=/root/.terraform/backend.hcl"])
+            init_cmd.extend(["-backend-config=/root/.terraform/backend.tfbackend"])
         
         try:
             init_result = await ctr.with_exec(init_cmd).stdout()
@@ -701,6 +729,21 @@ class UnifiCloudflareGlue:
                 --zone-name=example.com \\
                 --unifi-api-key=env:UNIFI_API_KEY \\
                 --state-dir=./terraform-state
+
+            # With YAML backend config (automatically converted to HCL)
+            dagger call deploy \\
+                --kcl-source=./kcl \\
+                --unifi-url=https://unifi.local:8443 \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --backend-type=s3 \\
+                --backend-config-file=./s3-backend.yaml
+
+            # Using vals for secret injection into YAML backend config:
+            #   vals eval -f backend.yaml.tmpl > backend.yaml
+            #   dagger call deploy ... --backend-config-file=./backend.yaml
         """
         results = []
 
@@ -925,7 +968,7 @@ class UnifiCloudflareGlue:
                 --state-dir=./terraform-state \\
                 export --path=./plans
 
-            # With remote backend (S3)
+            # With remote backend (S3) using HCL config
             dagger call plan \\
                 --kcl-source=./kcl \\
                 --unifi-url=https://unifi.local:8443 \\
@@ -935,6 +978,18 @@ class UnifiCloudflareGlue:
                 --unifi-api-key=env:UNIFI_API_KEY \\
                 --backend-type=s3 \\
                 --backend-config-file=./s3-backend.hcl \\
+                export --path=./plans
+
+            # With YAML backend config (automatically converted)
+            dagger call plan \\
+                --kcl-source=./kcl \\
+                --unifi-url=https://unifi.local:8443 \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --backend-type=s3 \\
+                --backend-config-file=./s3-backend.yaml \\
                 export --path=./plans
         """
         # Validate cache control options
@@ -1035,7 +1090,7 @@ class UnifiCloudflareGlue:
             # Run terraform init
             init_cmd = ["terraform", "init"]
             if backend_config_file is not None:
-                init_cmd.extend(["-backend-config=/root/.terraform/backend.hcl"])
+                init_cmd.extend(["-backend-config=/root/.terraform/backend.tfbackend"])
 
             unifi_ctr = unifi_ctr.with_exec(init_cmd)
             _ = await unifi_ctr.stdout()
@@ -1126,7 +1181,7 @@ class UnifiCloudflareGlue:
             # Run terraform init
             init_cmd = ["terraform", "init"]
             if backend_config_file is not None:
-                init_cmd.extend(["-backend-config=/root/.terraform/backend.hcl"])
+                init_cmd.extend(["-backend-config=/root/.terraform/backend.tfbackend"])
 
             cf_ctr = cf_ctr.with_exec(init_cmd)
             _ = await cf_ctr.stdout()
@@ -1306,6 +1361,17 @@ Notes
                 --zone-name=example.com \\
                 --unifi-api-key=env:UNIFI_API_KEY \\
                 --state-dir=./terraform-state
+
+            # With YAML backend config (automatically converted to HCL)
+            dagger call destroy \\
+                --kcl-source=./kcl \\
+                --unifi-url=https://unifi.local:8443 \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --backend-type=s3 \\
+                --backend-config-file=./s3-backend.yaml
         """
         results = []
 
@@ -1374,12 +1440,15 @@ Notes
             except Exception as e:
                 return f"✗ Failed: Could not generate backend configuration\n{str(e)}"
 
-        # Mount backend config file if provided
+        # Process and mount backend config file if provided
         if backend_config_file is not None:
             try:
-                ctr = ctr.with_file("/root/.terraform/backend.hcl", backend_config_file)
+                # Convert YAML to HCL if necessary
+                config_content, _ = await _process_backend_config(backend_config_file)
+                # Mount the processed content as a .tfbackend file
+                ctr = ctr.with_new_file("/root/.terraform/backend.tfbackend", config_content)
             except Exception as e:
-                return f"✗ Failed: Could not mount backend config file\n{str(e)}"
+                return f"✗ Failed: Could not process backend config file\n{str(e)}"
 
         ctr = ctr.with_env_variable("TF_VAR_cloudflare_account_id", cloudflare_account_id)
         ctr = ctr.with_env_variable("TF_VAR_zone_name", zone_name)
@@ -1402,7 +1471,7 @@ Notes
         # Run terraform init (with backend config if provided)
         init_cmd = ["terraform", "init"]
         if backend_config_file is not None:
-            init_cmd.extend(["-backend-config=/root/.terraform/backend.hcl"])
+            init_cmd.extend(["-backend-config=/root/.terraform/backend.tfbackend"])
 
         try:
             await ctr.with_exec(init_cmd).stdout()
@@ -1465,12 +1534,15 @@ Notes
             except Exception as e:
                 return f"✗ Failed: Could not generate backend configuration\n{str(e)}"
 
-        # Mount backend config file if provided
+        # Process and mount backend config file if provided
         if backend_config_file is not None:
             try:
-                ctr = ctr.with_file("/root/.terraform/backend.hcl", backend_config_file)
+                # Convert YAML to HCL if necessary
+                config_content, _ = await _process_backend_config(backend_config_file)
+                # Mount the processed content as a .tfbackend file
+                ctr = ctr.with_new_file("/root/.terraform/backend.tfbackend", config_content)
             except Exception as e:
-                return f"✗ Failed: Could not mount backend config file\n{str(e)}"
+                return f"✗ Failed: Could not process backend config file\n{str(e)}"
 
         ctr = ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
         ctr = ctr.with_env_variable("TF_VAR_api_url", actual_api_url)
@@ -1498,7 +1570,7 @@ Notes
         # Run terraform init (with backend config if provided)
         init_cmd = ["terraform", "init"]
         if backend_config_file is not None:
-            init_cmd.extend(["-backend-config=/root/.terraform/backend.hcl"])
+            init_cmd.extend(["-backend-config=/root/.terraform/backend.tfbackend"])
 
         try:
             await ctr.with_exec(init_cmd).stdout()
@@ -2573,7 +2645,7 @@ Notes
                 --zone-name=example.com \\
                 --state-dir=./terraform-state
 
-            # Retrieve secrets from remote backend (S3)
+            # Retrieve secrets from remote backend (S3) using HCL config
             dagger call get-tunnel-secrets \\
                 --source=. \\
                 --cloudflare-token=env:CF_TOKEN \\
@@ -2581,6 +2653,15 @@ Notes
                 --zone-name=example.com \\
                 --backend-type=s3 \\
                 --backend-config-file=./s3-backend.hcl
+
+            # Retrieve secrets using YAML backend config (auto-converted)
+            dagger call get-tunnel-secrets \\
+                --source=. \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --backend-type=s3 \\
+                --backend-config-file=./s3-backend.yaml
 
             # Get JSON output for automation
             dagger call get-tunnel-secrets \\
@@ -2677,7 +2758,7 @@ Notes
             # Run terraform init
             init_cmd = ["terraform", "init"]
             if backend_config_file is not None:
-                init_cmd.extend(["-backend-config=/root/.terraform/backend.hcl"])
+                init_cmd.extend(["-backend-config=/root/.terraform/backend.tfbackend"])
 
             try:
                 tf_ctr = tf_ctr.with_exec(init_cmd)

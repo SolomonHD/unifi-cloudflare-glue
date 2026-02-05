@@ -1,0 +1,17 @@
+# S3 Backend Configuration (YAML format)
+# This file is automatically converted to HCL format by the Dagger module
+#
+# Usage:
+#   dagger call deploy \
+#       --backend-type=s3 \
+#       --backend-config-file=./s3-backend.yaml \
+#       ...
+#
+# For vals integration:
+#   vals eval -f s3-backend.yaml.tmpl > s3-backend.yaml
+
+bucket: my-terraform-state-bucket
+key: unifi-cloudflare-glue/terraform.tfstate
+region: us-east-1
+encrypt: true
+dynamodb_table: terraform-state-lock

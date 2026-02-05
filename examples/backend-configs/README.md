@@ -4,6 +4,8 @@ This directory contains example configuration files for various Terraform remote
 
 ## Available Backend Examples
 
+### HCL Format (Traditional)
+
 | File | Backend | Best For |
 |------|---------|----------|
 | `s3-backend.hcl` | AWS S3 + DynamoDB | AWS environments, most popular option |
@@ -11,7 +13,20 @@ This directory contains example configuration files for various Terraform remote
 | `gcs-backend.hcl` | Google Cloud Storage | Google Cloud environments |
 | `remote-backend.hcl` | Terraform Cloud | Teams wanting managed Terraform |
 
+### YAML Format (New - vals Integration)
+
+| File | Backend | Best For |
+|------|---------|----------|
+| `s3-backend.yaml` | AWS S3 + DynamoDB | AWS environments with vals secret injection |
+| `azurerm-backend.yaml` | Azure Blob Storage | Azure environments with vals secret injection |
+| `gcs-backend.yaml` | Google Cloud Storage | GCP environments with vals secret injection |
+| `remote-backend.yaml` | Terraform Cloud | Terraform Cloud with vals secret injection |
+
+**Note:** YAML files are automatically converted to HCL format by the Dagger module. Both formats are fully supported and can be used interchangeably.
+
 ## Quick Start
+
+### Using HCL Format
 
 1. Copy the example file for your chosen backend:
    ```bash
@@ -37,6 +52,33 @@ This directory contains example configuration files for various Terraform remote
        --cloudflare-account-id=xxx \
        --zone-name=example.com
    ```
+
+### Using YAML Format (vals Integration)
+
+1. Copy the YAML example file:
+   ```bash
+   cp s3-backend.yaml my-backend.yaml
+   ```
+
+2. Edit with your values (YAML is cleaner for secret injection):
+   ```bash
+   vim my-backend.yaml
+   ```
+
+3. Deploy with the YAML backend configuration:
+   ```bash
+   dagger call deploy \
+       --backend-type=s3 \
+       --backend-config-file=./my-backend.yaml \
+       --kcl-source=./kcl \
+       --unifi-url=https://unifi.local:8443 \
+       --unifi-api-key=env:UNIFI_API_KEY \
+       --cloudflare-token=env:CF_TOKEN \
+       --cloudflare-account-id=xxx \
+       --zone-name=example.com
+   ```
+
+The module automatically converts YAML to HCL format.
 
 ## Backend Types Reference
 
@@ -214,9 +256,55 @@ Check that your credentials have the required permissions:
 - Check IAM policies (AWS), RBAC (Azure), or IAM (GCP)
 - Ensure the backend resource (bucket, container) exists
 
+## vals Integration with YAML
+
+The YAML format enables seamless integration with `vals` for secret injection. This allows you to reference secrets from AWS Secrets Manager, Azure Key Vault, GCP Secret Manager, and more.
+
+### Example: AWS Secrets Manager with vals
+
+Create a YAML template with vals references:
+
+```yaml
+# backend.yaml.tmpl
+bucket: my-terraform-state-bucket
+key: unifi-cloudflare-glue/terraform.tfstate
+region: us-east-1
+encrypt: true
+dynamodb_table: terraform-state-lock
+access_key: ref+awssecretsmanager://terraform-aws-access-key
+secret_key: ref+awssecretsmanager://terraform-aws-secret-key
+```
+
+Evaluate the template with vals:
+
+```bash
+# Install vals if needed: https://github.com/helmfile/vals
+vals eval -f backend.yaml.tmpl > backend.yaml
+```
+
+Use the rendered YAML:
+
+```bash
+dagger call deploy \
+    --backend-type=s3 \
+    --backend-config-file=./backend.yaml \
+    --kcl-source=./kcl \
+    ...
+```
+
+### Supported vals Backends
+
+- `ref+awssecretsmanager://` - AWS Secrets Manager
+- `ref+azurekeyvault://` - Azure Key Vault
+- `ref+gcpsecretsmanager://` - GCP Secret Manager
+- `ref+vault://` - HashiCorp Vault
+- `ref+ssm://` - AWS SSM Parameter Store
+- And more: see [vals documentation](https://github.com/helmfile/vals)
+
 ## Additional Resources
 
 - [Terraform S3 Backend Documentation](https://developer.hashicorp.com/terraform/language/settings/backends/s3)
 - [Terraform Azure Backend Documentation](https://developer.hashicorp.com/terraform/language/settings/backends/azurerm)
 - [Terraform GCS Backend Documentation](https://developer.hashicorp.com/terraform/language/settings/backends/gcs)
 - [Terraform Cloud Documentation](https://developer.hashicorp.com/terraform/cloud-docs)
+- [vals - Configuration Values](https://github.com/helmfile/vals)

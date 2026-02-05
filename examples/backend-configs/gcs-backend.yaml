@@ -1,0 +1,17 @@
+# Google Cloud Storage Backend Configuration (YAML format)
+# This file is automatically converted to HCL format by the Dagger module
+#
+# Usage:
+#   dagger call deploy \
+#       --backend-type=gcs \
+#       --backend-config-file=./gcs-backend.yaml \
+#       ...
+#
+# Required Environment Variables:
+#   export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
+#
+# For vals integration:
+#   vals eval -f gcs-backend.yaml.tmpl > gcs-backend.yaml
+
+bucket: my-terraform-state-bucket
+prefix: unifi-cloudflare-glue/terraform
