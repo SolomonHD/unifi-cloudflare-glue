@@ -6,13 +6,14 @@ Welcome to the `unifi-cloudflare-glue` documentation. This directory contains co
 
 | Document | Description |
 |----------|-------------|
+| **[KCL Configuration Guide](kcl-guide.md)** | Complete KCL schema reference, validation rules, patterns, and examples |
 | **[Getting Started](getting-started.md)** | Installation, prerequisites, and first deployment |
 | **[Dagger Reference](dagger-reference.md)** | Complete function reference and CI/CD integration |
 | **[Terraform Modules](terraform-modules.md)** | Standalone Terraform module usage |
 | **[State Management](state-management.md)** | State backends: ephemeral, local, and remote |
 | **[Security](security.md)** | Security best practices and credential handling |
 | **[vals Integration](vals-integration.md)** | Secret injection with vals for backend configurations |
-| **[Backend Configuration](backend-configuration.md)** | Backend config guide *(coming soon)* |
+| **[Backend Configuration](backend-configuration.md)** | Comprehensive backend and state locking guide |
 | **[Troubleshooting](troubleshooting.md)** | Common issues and solutions *(coming soon)* |
 
 ## Getting Started

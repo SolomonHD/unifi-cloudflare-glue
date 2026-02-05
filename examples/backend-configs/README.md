@@ -22,6 +22,15 @@ This directory contains example configuration files for various Terraform remote
 | `gcs-backend.yaml` | Google Cloud Storage | GCP environments with basic YAML config |
 | `remote-backend.yaml` | Terraform Cloud | Terraform Cloud with basic YAML config |
 
+### S3 Backend Locking Options (Terraform 1.9+)
+
+| File | Locking Mechanism | Terraform Version | Best For |
+|------|-------------------|-------------------|----------|
+| `s3-backend-lockfile.yaml` | S3 Native Lockfile | 1.9+ only | Simplest setup, lowest cost |
+| `s3-backend-dynamodb.yaml` | DynamoDB Table | All versions | Maximum compatibility, multi-team |
+
+> **Note:** DynamoDB locking is **NOT deprecated**. Both options remain fully supported. See [S3 Locking Options](#s3-locking-options) below for detailed comparison.
+
 ### YAML Templates (vals Secret Injection)
 
 | File | Backend | Secret Source |
@@ -110,6 +119,47 @@ dagger call deploy \
     --backend-config-file=./s3-backend.hcl \
     ...
 ```
+
+### S3 Locking Options
+
+AWS S3 backends support two state locking mechanisms. Choose based on your Terraform version and requirements:
+
+| Feature | S3 Native Lockfile | DynamoDB Locking |
+|---------|-------------------|------------------|
+| **Terraform Version** | 1.9+ only | All versions (1.0+) |
+| **Additional Infrastructure** | None (S3 only) | DynamoDB table |
+| **Cost** | Lower (S3 only) | ~$0.25/month (DynamoDB table) |
+| **Setup Complexity** | Simple | Moderate (table creation) |
+| **Stale Lock Cleanup** | Automatic | Manual (`force-unlock`) |
+| **Production Maturity** | HashiCorp validated | Battle-tested |
+| **Best For** | Simple setups, cost-conscious | Multi-team, complex workflows |
+
+> **Cost Note:** DynamoDB pricing is approximately $0.25/month per table for on-demand capacity. Pricing may vary by region. See [AWS DynamoDB Pricing](https://aws.amazon.com/dynamodb/pricing/).
+
+**When to use `s3-backend-lockfile.yaml`:**
+- You use Terraform 1.9 or later exclusively
+- You want the simplest setup with minimal infrastructure
+- Cost optimization is a priority
+- You don't need advanced lock management features
+
+**When to use `s3-backend-dynamodb.yaml`:**
+- You need to support older Terraform versions
+- You have complex multi-team coordination requirements
+- You prefer battle-tested infrastructure patterns
+- You need explicit lock visibility and control
+
+> **Important:** DynamoDB locking is **NOT deprecated**. Both options remain fully supported. The S3 native lockfile is an alternative, not a replacement.
+
+**Quick Start:**
+```bash
+# S3 Native Lockfile (Terraform 1.9+)
+cp s3-backend-lockfile.yaml my-backend.yaml
+
+# DynamoDB Locking (All versions)
+cp s3-backend-dynamodb.yaml my-backend.yaml
+```
+
+For comprehensive guidance including migration instructions, security best practices, and IAM policies, see the [Backend Configuration Guide](../../docs/backend-configuration.md).
 
 ### Azure Blob Storage Backend (`azurerm`)
 

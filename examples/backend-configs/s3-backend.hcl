@@ -4,6 +4,21 @@
 # DynamoDB table for state locking. This enables team collaboration and
 # provides state persistence across container executions.
 #
+# IMPORTANT: Two S3 Locking Options Available
+# -----------------------------------------------------------------------------
+# This example uses DynamoDB for state locking (traditional approach).
+# Terraform 1.9+ also supports S3 native lockfile as an alternative:
+#
+#   • DynamoDB Locking (this file): Works with all Terraform versions
+#     See: s3-backend-dynamodb.yaml for YAML format
+#
+#   • S3 Native Lockfile: Requires Terraform 1.9+, no DynamoDB needed
+#     See: s3-backend-lockfile.yaml for YAML format
+#
+# For help choosing, see the Backend Configuration Guide:
+# https://github.com/SolomonHD/unifi-cloudflare-glue/blob/main/docs/backend-configuration.md
+# -----------------------------------------------------------------------------
+#
 # Usage:
 #   dagger call deploy \
 #       --backend-type=s3 \

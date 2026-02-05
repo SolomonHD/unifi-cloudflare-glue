@@ -2,6 +2,8 @@
 
 This directory contains KCL (Kusion Configuration Language) schemas and generators for the `unifi-cloudflare-glue` project.
 
+> **📖 Complete Documentation**: For comprehensive KCL documentation including schema reference, validation rules, configuration patterns, debugging guide, and examples, see the **[KCL Configuration Guide](../docs/kcl-guide.md)**.
+
 ## Purpose
 
 The KCL module provides:
