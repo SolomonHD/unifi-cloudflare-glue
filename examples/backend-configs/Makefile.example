@@ -1,0 +1,174 @@
+# Makefile for vals-driven secret management with automatic cleanup
+# Copy this file to your project as 'Makefile' and customize variables
+#
+# Features:
+#   - Automatic secret rendering with vals
+#   - Deployment with rendered backend configs
+#   - Guaranteed cleanup (even on failure)
+#   - 1Password CLI integration for inline account ID injection
+#
+# Prerequisites:
+#   - vals installed: https://github.com/helmfile/vals
+#   - 1Password CLI installed and authenticated: eval $(op signin)
+#   - Dagger module installed
+#
+# Usage:
+#   make deploy    # Deploy infrastructure with rendered secrets
+#   make destroy   # Destroy infrastructure with rendered secrets
+#   make clean     # Clean up rendered secret files
+#
+# Security:
+#   - Rendered files are automatically deleted after use
+#   - Cleanup runs even if deployment fails (via trap)
+#   - Never commit rendered .yaml files to version control
+
+# =============================================================================
+# Configuration Variables (Customize for your environment)
+# =============================================================================
+
+# Backend configuration template to use
+BACKEND_TEMPLATE ?= s3-backend-1password.yaml.tmpl
+BACKEND_RENDERED ?= backend.yaml
+BACKEND_TYPE ?= s3
+
+# KCL configuration source directory
+KCL_SOURCE ?= ./kcl
+
+# UniFi configuration
+UNIFI_URL ?= https://unifi.local:8443
+UNIFI_API_KEY_VAR ?= UNIFI_API_KEY
+
+# Cloudflare configuration (using 1Password for account ID)
+# Uses 1Password CLI to fetch account ID dynamically
+CLOUDFLARE_ACCOUNT_ID_CMD = op read op://Terraform\ State/Cloudflare\ Account/account_id
+CLOUDFLARE_TOKEN_VAR ?= CF_TOKEN
+ZONE_NAME ?= example.com
+
+# Dagger module name (adjust if different)
+DAGGER_MODULE ?= unifi-cloudflare-glue
+
+# =============================================================================
+# Internal Variables (Do not modify)
+# =============================================================================
+
+# Suppress echo for commands that might expose secrets
+QUIET = @
+
+# =============================================================================
+# Targets
+# =============================================================================
+
+.PHONY: all deploy destroy clean clean-secrets help
+
+# Default target
+all: deploy
+
+## Show help message
+help:
+	@echo "Available targets:"
+	@echo ""
+	@echo "  deploy       - Render secrets, deploy infrastructure, clean up"
+	@echo "  destroy      - Render secrets, destroy infrastructure, clean up"
+	@echo "  clean        - Remove rendered secret files"
+	@echo "  help         - Show this help message"
+	@echo ""
+	@echo "Configuration (set via environment or command line):"
+	@echo "  BACKEND_TEMPLATE    - Template file to use (default: $(BACKEND_TEMPLATE))"
+	@echo "  BACKEND_TYPE        - Backend type: s3, azurerm, gcs (default: $(BACKEND_TYPE))"
+	@echo "  KCL_SOURCE          - Path to KCL source (default: $(KCL_SOURCE))"
+	@echo "  UNIFI_URL           - UniFi controller URL"
+	@echo "  ZONE_NAME           - DNS zone name"
+	@echo ""
+	@echo "Examples:"
+	@echo '  make deploy BACKEND_TEMPLATE=azurerm-backend-1password.yaml.tmpl BACKEND_TYPE=azurerm'
+	@echo '  make destroy BACKEND_TYPE=s3'
+
+## Render secrets using vals
+render-secrets:
+	@echo "Rendering secrets from template: $(BACKEND_TEMPLATE)"
+	$(QUIET)vals eval -f $(BACKEND_TEMPLATE) > $(BACKEND_RENDERED)
+	@echo "✓ Secrets rendered to $(BACKEND_RENDERED)"
+
+## Remove rendered secret files
+clean-secrets:
+	$(QUIET)if [ -f $(BACKEND_RENDERED) ]; then \
+		rm -f $(BACKEND_RENDERED); \
+		echo "✓ Cleaned up $(BACKEND_RENDERED)"; \
+	else \
+		echo "✓ No rendered files to clean"; \
+	fi
+
+## Alias for clean-secrets
+clean: clean-secrets
+
+## Deploy infrastructure with rendered secrets
+deploy: render-secrets
+	@echo "Deploying infrastructure..."
+	$(QUIET)trap 'echo "Cleaning up secrets..."; rm -f $(BACKEND_RENDERED)' EXIT; \
+	dagger call -m $(DAGGER_MODULE) deploy \
+		--kcl-source=$(KCL_SOURCE) \
+		--unifi-url=$(UNIFI_URL) \
+		--unifi-api-key=env:$(UNIFI_API_KEY_VAR) \
+		--cloudflare-token=env:$(CLOUDFLARE_TOKEN_VAR) \
+		--cloudflare-account-id=$$($(CLOUDFLARE_ACCOUNT_ID_CMD)) \
+		--zone-name=$(ZONE_NAME) \
+		--backend-type=$(BACKEND_TYPE) \
+		--backend-config-file=./$(BACKEND_RENDERED)
+	@echo "✓ Deployment complete"
+
+## Destroy infrastructure with rendered secrets
+destroy: render-secrets
+	@echo "Destroying infrastructure..."
+	$(QUIET)trap 'echo "Cleaning up secrets..."; rm -f $(BACKEND_RENDERED)' EXIT; \
+	dagger call -m $(DAGGER_MODULE) destroy \
+		--kcl-source=$(KCL_SOURCE) \
+		--unifi-url=$(UNIFI_URL) \
+		--unifi-api-key=env:$(UNIFI_API_KEY_VAR) \
+		--cloudflare-token=env:$(CLOUDFLARE_TOKEN_VAR) \
+		--cloudflare-account-id=$$($(CLOUDFLARE_ACCOUNT_ID_CMD)) \
+		--zone-name=$(ZONE_NAME) \
+		--backend-type=$(BACKEND_TYPE) \
+		--backend-config-file=./$(BACKEND_RENDERED)
+	@echo "✓ Destroy complete"
+
+# =============================================================================
+# Advanced Examples (Uncomment and customize as needed)
+# =============================================================================
+
+## Deploy with AWS Secrets Manager backend (alternative example)
+# deploy-aws:
+# 	$(QUIET)vals eval -f s3-backend-aws-secrets.yaml.tmpl > $(BACKEND_RENDERED)
+# 	$(QUIET)trap 'rm -f $(BACKEND_RENDERED)' EXIT; \
+# 	dagger call -m $(DAGGER_MODULE) deploy \
+# 		--kcl-source=$(KCL_SOURCE) \
+# 		--unifi-url=$(UNIFI_URL) \
+# 		--unifi-api-key=env:$(UNIFI_API_KEY_VAR) \
+# 		--cloudflare-token=env:$(CLOUDFLARE_TOKEN_VAR) \
+# 		--cloudflare-account-id=$$($(CLOUDFLARE_ACCOUNT_ID_CMD)) \
+# 		--zone-name=$(ZONE_NAME) \
+# 		--backend-type=s3 \
+# 		--backend-config-file=./$(BACKEND_RENDERED)
+
+## Deploy with Azure Key Vault backend (alternative example)
+# deploy-azure:
+# 	$(QUIET)vals eval -f azurerm-backend-azure-kv.yaml.tmpl > $(BACKEND_RENDERED)
+# 	$(QUIET)trap 'rm -f $(BACKEND_RENDERED)' EXIT; \
+# 	dagger call -m $(DAGGER_MODULE) deploy \
+# 		--kcl-source=$(KCL_SOURCE) \
+# 		--unifi-url=$(UNIFI_URL) \
+# 		--unifi-api-key=env:$(UNIFI_API_KEY_VAR) \
+# 		--cloudflare-token=env:$(CLOUDFLARE_TOKEN_VAR) \
+# 		--cloudflare-account-id=$$($(CLOUDFLARE_ACCOUNT_ID_CMD)) \
+# 		--zone-name=$(ZONE_NAME) \
+# 		--backend-type=azurerm \
+# 		--backend-config-file=./$(BACKEND_RENDERED)
+
+## Deploy with environment variable only (no backend config file)
+# deploy-ephemeral:
+# 	dagger call -m $(DAGGER_MODULE) deploy \
+# 		--kcl-source=$(KCL_SOURCE) \
+# 		--unifi-url=$(UNIFI_URL) \
+# 		--unifi-api-key=env:$(UNIFI_API_KEY_VAR) \
+# 		--cloudflare-token=env:$(CLOUDFLARE_TOKEN_VAR) \
+# 		--cloudflare-account-id=$$($(CLOUDFLARE_ACCOUNT_ID_CMD)) \
+# 		--zone-name=$(ZONE_NAME)

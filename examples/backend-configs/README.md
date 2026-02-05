@@ -13,14 +13,26 @@ This directory contains example configuration files for various Terraform remote
 | `gcs-backend.hcl` | Google Cloud Storage | Google Cloud environments |
 | `remote-backend.hcl` | Terraform Cloud | Teams wanting managed Terraform |
 
-### YAML Format (New - vals Integration)
+### YAML Format (vals Integration)
 
 | File | Backend | Best For |
 |------|---------|----------|
-| `s3-backend.yaml` | AWS S3 + DynamoDB | AWS environments with vals secret injection |
-| `azurerm-backend.yaml` | Azure Blob Storage | Azure environments with vals secret injection |
-| `gcs-backend.yaml` | Google Cloud Storage | GCP environments with vals secret injection |
-| `remote-backend.yaml` | Terraform Cloud | Terraform Cloud with vals secret injection |
+| `s3-backend.yaml` | AWS S3 + DynamoDB | AWS environments with basic YAML config |
+| `azurerm-backend.yaml` | Azure Blob Storage | Azure environments with basic YAML config |
+| `gcs-backend.yaml` | Google Cloud Storage | GCP environments with basic YAML config |
+| `remote-backend.yaml` | Terraform Cloud | Terraform Cloud with basic YAML config |
+
+### YAML Templates (vals Secret Injection)
+
+| File | Backend | Secret Source |
+|------|---------|---------------|
+| `s3-backend-1password.yaml.tmpl` | AWS S3 + DynamoDB | 1Password vault |
+| `azurerm-backend-1password.yaml.tmpl` | Azure Blob Storage | 1Password vault |
+| `s3-backend-aws-secrets.yaml.tmpl` | AWS S3 + DynamoDB | AWS Secrets Manager |
+| `azurerm-backend-azure-kv.yaml.tmpl` | Azure Blob Storage | Azure Key Vault |
+| `gcs-backend-gcp-secrets.yaml.tmpl` | Google Cloud Storage | GCP Secret Manager |
+
+**Template files use vals for secret injection.** See the [vals Integration Guide](../../docs/vals-integration.md) for complete documentation.
 
 **Note:** YAML files are automatically converted to HCL format by the Dagger module. Both formats are fully supported and can be used interchangeably.
 
@@ -301,6 +313,43 @@ dagger call deploy \
 - `ref+ssm://` - AWS SSM Parameter Store
 - And more: see [vals documentation](https://github.com/helmfile/vals)
 
+## vals Integration with Makefile Automation
+
+For automated secret management with automatic cleanup, use the [Makefile.example](Makefile.example):
+
+```bash
+# Copy the example Makefile
+cp Makefile.example Makefile
+
+# Deploy with automatic secret rendering and cleanup
+make deploy
+
+# Destroy with automatic secret rendering and cleanup
+make destroy
+```
+
+The Makefile provides:
+- Automatic secret rendering with vals
+- 1Password CLI integration for inline account ID injection
+- Guaranteed cleanup (even on deployment failure)
+- Customizable variables for different backends
+
+See the [vals Integration Guide](../../docs/vals-integration.md) for complete documentation on using vals with various secret backends.
+
+## Template Files Reference
+
+Template files (`.yaml.tmpl`) contain vals references and can be safely committed to version control:
+
+| Template | Backend | Secret Source |
+|----------|---------|---------------|
+| `s3-backend-1password.yaml.tmpl` | AWS S3 | 1Password |
+| `azurerm-backend-1password.yaml.tmpl` | Azure Blob | 1Password |
+| `s3-backend-aws-secrets.yaml.tmpl` | AWS S3 | AWS Secrets Manager |
+| `azurerm-backend-azure-kv.yaml.tmpl` | Azure Blob | Azure Key Vault |
+| `gcs-backend-gcp-secrets.yaml.tmpl` | GCS | GCP Secret Manager |
+
+**Important:** Rendered `.yaml` files contain plaintext secrets and must never be committed. Use `.gitignore` to exclude them.
+
 ## Additional Resources
 
 - [Terraform S3 Backend Documentation](https://developer.hashicorp.com/terraform/language/settings/backends/s3)
@@ -308,3 +357,4 @@ dagger call deploy \
 - [Terraform GCS Backend Documentation](https://developer.hashicorp.com/terraform/language/settings/backends/gcs)
 - [Terraform Cloud Documentation](https://developer.hashicorp.com/terraform/cloud-docs)
 - [vals - Configuration Values](https://github.com/helmfile/vals)
+- [vals Integration Guide](../../docs/vals-integration.md) - Complete guide for secret injection

@@ -1,0 +1,55 @@
+# Azure Blob Storage Backend Template for Azure Key Vault Integration
+# This template uses vals to inject secrets from Azure Key Vault at runtime.
+#
+# Prerequisites:
+#   1. Install vals: https://github.com/helmfile/vals
+#   2. Install Azure CLI: https://learn.microsoft.com/en-us/cli/azure/install-azure-cli
+#   3. Login: az login
+#
+# Required Azure Key Vault Secrets:
+#   - Vault: "my-terraform-kv" (or your vault name)
+#   - Secrets: tf-client-id, tf-client-secret, tf-subscription-id, tf-tenant-id
+#
+#   Create secrets with:
+#   az keyvault secret set --vault-name my-terraform-kv --name tf-client-id --value "..."
+#
+# Usage:
+#   # Render the template (creates backend.yaml with actual secrets)
+#   vals eval -f azurerm-backend-azure-kv.yaml.tmpl > backend.yaml
+#
+#   # Deploy with rendered backend
+#   dagger call deploy \
+#       --backend-type=azurerm \
+#       --backend-config-file=./backend.yaml \
+#       --kcl-source=./kcl \
+#       ...
+#
+#   # Clean up rendered secrets immediately after use
+#   rm backend.yaml
+#
+# vals Reference Format:
+#   ref+azurekeyvault://<vault-name>/<secret-name>
+#
+# Security Notes:
+#   - NEVER commit rendered .yaml files to version control
+#   - Add *.yaml (but not *.yaml.tmpl) to .gitignore
+#   - Use automated cleanup with Makefile to prevent secret leaks
+
+storage_account_name: myterraformstate
+container_name: terraform-state
+key: unifi-cloudflare-glue/terraform.tfstate
+resource_group_name: my-resource-group
+
+# Azure Key Vault vals references
+# Format: ref+azurekeyvault://<vault-name>/<secret-name>
+client_id: ref+azurekeyvault://my-terraform-kv/tf-client-id
+client_secret: ref+azurekeyvault://my-terraform-kv/tf-client-secret
+subscription_id: ref+azurekeyvault://my-terraform-kv/tf-subscription-id
+tenant_id: ref+azurekeyvault://my-terraform-kv/tf-tenant-id
+
+# Optional: Static credentials (not recommended - use vals instead)
+# Uncomment below if not using vals secret injection
+# client_id: "00000000-0000-0000-0000-000000000000"
+# client_secret: "your-client-secret"
+# subscription_id: "00000000-0000-0000-0000-000000000000"
+# tenant_id: "00000000-0000-0000-0000-000000000000"

@@ -1,45 +1,68 @@
-# OpenSpec Prompts Index
+# OpenSpec Prompts Index: Documentation Revamp
 
-This directory contains OpenSpec change prompts for the unifi-cloudflare-glue project.
+This directory contains a series of prompts for revamping the project documentation to be more modular, maintainable, and comprehensive.
 
-## Prompts
+## Prompt Sequence
 
-### 01-add-get-tunnel-secrets-function.md
-**Status**: Pending  
-**Description**: Add `get_tunnel_secrets()` Dagger function to retrieve Cloudflare tunnel tokens from Terraform state.
+The following prompts should be executed in order:
 
-Creates a new function that allows users to retrieve tunnel credentials on-demand after deployment, without storing sensitive tokens in deployment logs.
+1. **[01-create-docs-structure.md](01-create-docs-structure.md)** - Create modular docs directory structure and split README
+2. **[02-vals-integration-guide.md](02-vals-integration-guide.md)** - Write comprehensive vals + 1Password integration documentation
+3. **[03-backend-configuration-guide.md](03-backend-configuration-guide.md)** - Document S3 lockfile vs DynamoDB locking options
+4. **[04-kcl-configuration-guide.md](04-kcl-configuration-guide.md)** - Expand KCL schema documentation with examples
+5. **[05-environment-examples.md](05-environment-examples.md)** - Add environment-specific deployment examples
+6. **[06-architecture-diagrams.md](06-architecture-diagrams.md)** - Create Mermaid architecture diagrams
+7. **[07-troubleshooting-guide.md](07-troubleshooting-guide.md)** - Write systematic troubleshooting documentation
 
-**Dependencies**: None
+## Overview
 
----
+### Goal
 
-### 02-add-tunnel-token-guidance-to-deploy.md
-**Status**: Pending  
-**Description**: Update `deploy()` and `deploy_cloudflare()` functions to add guidance messages about retrieving tunnel tokens.
+Transform the monolithic 1355-line README into a modular documentation system that:
+- Makes information easier to find and maintain
+- Provides progressive disclosure of complexity
+- Adds missing critical documentation (vals integration, S3 lockfile options)
+- Improves user onboarding and debugging experience
 
-Modifies success messages in deployment functions to inform users how to retrieve tunnel secrets using either Terraform outputs or the new Dagger function.
+### Key Changes
 
-**Dependencies**: 01-add-get-tunnel-secrets-function.md (for Dagger command example)
+1. **Modular Structure**: Split README into focused documentation files
+2. **vals Integration**: Complete workflow guide for 1Password and other secret backends
+3. **Backend Clarification**: Document both S3 lockfile and DynamoDB locking options
+4. **KCL Documentation**: Expand schema reference and validation guide
+5. **Visual Documentation**: Add architecture diagrams using Mermaid
+6. **Environment Examples**: Provide dev/staging/prod deployment patterns
+7. **Troubleshooting**: Systematic problem-solving guide
 
----
+### Dependencies
 
-## Execution Order
+- **Prompt 01** must complete before others (creates structure)
+- **Prompts 02-04** are independent and can run in parallel after 01
+- **Prompts 05-07** can run after their respective dependencies
 
-1. Implement `01-add-get-tunnel-secrets-function.md` first (creates the function)
-2. Then implement `02-add-tunnel-token-guidance-to-deploy.md` (adds references to the new function)
+### Handoff Process
 
-## About This Directory
+Each prompt follows the standard OpenSpec workflow:
 
-Each prompt file follows OpenSpec format with:
-- Context: Background and motivation
-- Goal: What this change accomplishes
-- Scope: What's in/out of scope
-- Desired Behavior: Expected functionality
-- Constraints & Assumptions: Technical limitations
-- Acceptance Criteria: Testable requirements
+1. Run proposal generation: `./openspec-proposal.md` workflow
+2. Review proposal and approve
+3. Implement changes
+4. Move to next prompt in sequence
 
-To implement a prompt:
-1. Copy the prompt to `OPENSPEC_PROMPT.md` at project root
-2. Run your OpenSpec proposal workflow
-3. Review and implement the generated proposal
+### Success Criteria
+
+- [ ] README.md reduced to ~300 lines with clear links to docs
+- [ ] Complete docs/ directory with 7+ specialized files
+- [ ] vals + 1Password workflow fully documented with examples
+- [ ] S3 lockfile and DynamoDB options clearly explained
+- [ ] KCL schemas comprehensively documented
+- [ ] Architecture diagrams created using Mermaid
+- [ ] Environment-specific examples in examples/ directory
+- [ ] Troubleshooting guide with decision trees
+
+## Status
+
+- **Status**: Not Started
+- **Created**: 2026-02-05
+- **Priority**: High
+- **Estimated Completion**: 2-3 weeks (7 prompts)

@@ -202,3 +202,263 @@ Then: It demonstrates version-pinning:
   - `dagger install github.com/user/repo@v0.1.0`
   - Or uses the version query function
 
+---
+
+## ADDED Requirements (from change: create-docs-structure)
+
+### Requirement: README Length Target
+
+The README.md file SHALL be approximately 300 lines or less, serving as an entry point and navigation hub rather than comprehensive documentation.
+
+#### Scenario: Quick README scan
+- **WHEN** a user first discovers the project
+- **THEN** they can read the entire README in under 5 minutes to understand the project's purpose and navigate to detailed docs
+
+### Requirement: Project Overview Section
+
+The README SHALL include a concise project overview explaining the purpose and high-level architecture in 2-3 paragraphs.
+
+#### Scenario: Understanding project purpose at a glance
+- **WHEN** a user reads the README overview
+- **THEN** they MUST understand:
+  - What problem the project solves
+  - The "define once, deploy everywhere" approach
+  - How KCL, Terraform, and Dagger integrate
+  - The relationship between UniFi local DNS and Cloudflare tunnels
+
+### Requirement: Quick Start Section
+
+The README SHALL include a minimal quick start section with no more than 3-5 commands for initial deployment.
+
+#### Scenario: Getting started quickly
+- **WHEN** a user wants to try the system immediately
+- **THEN** they MUST find:
+  - Minimal command sequence for installation
+  - Link to detailed getting-started guide in docs/
+  - Prerequisites clearly stated or linked
+
+### Requirement: Documentation Navigation
+
+The README SHALL include a Documentation section with clear links to all specialized documentation files.
+
+#### Scenario: Finding detailed documentation
+- **WHEN** a user needs detailed information on a topic
+- **THEN** they MUST find intuitive navigation links organized by:
+  - User journey (Getting Started → Advanced Topics)
+  - Topic category (Configuration, Security, Troubleshooting)
+  - Each link with brief description of content
+
+#### Scenario: Documentation link structure
+- **WHEN** viewing the Documentation section
+- **THEN** it MUST include links in this format:
+  - `[Link Text](docs/filename.md) - Brief description of content`
+
+### Requirement: Architecture Summary
+
+The README SHALL include a high-level architecture section explaining the system's components WITHOUT duplicating detailed content from docs/.
+
+#### Scenario: Understanding system architecture
+- **WHEN** a user reads the architecture section
+- **THEN** they MUST find:
+  - High-level component diagram or description
+  - How components interact
+  - Link to detailed architecture documentation in docs/
+
+### Requirement: Key Features Highlight
+
+The README SHALL highlight key features that differentiate this project.
+
+#### Scenario: Understanding project value proposition
+- **WHEN** a user evaluates whether to use this project
+- **THEN** they MUST see key features listed:
+  - Unified Configuration
+  - DNS Loop Prevention
+  - MAC Address Management
+  - One Tunnel Per Device
+  - Cross-provider validation
+
+### Requirement: Project Structure Overview
+
+The README SHALL include a high-level project structure showing main directories.
+
+#### Scenario: Understanding repository organization
+- **WHEN** a user explores the repository
+- **THEN** they MUST find a directory tree showing:
+  - terraform/modules/ - Terraform infrastructure modules
+  - kcl/ - KCL schemas and generators
+  - src/ - Dagger module source
+  - examples/ - Example configurations
+  - docs/ - Detailed documentation
+
+### Requirement: Modular Documentation Structure Support
+
+The documentation system SHALL support a modular structure with specialized topic files organized under a docs/ directory.
+
+#### Scenario: Documentation organized by topic
+- **WHEN** project documentation covers multiple aspects
+- **THEN** it MUST be organized into separate files by topic area rather than a single monolithic document
+
+#### Scenario: Cross-referencing between documentation files
+- **WHEN** one documentation topic relates to another
+- **THEN** files MUST include working relative links to related documentation using Markdown link syntax
+
+### Requirement: Documentation Entry Point
+
+The project SHALL maintain a condensed README.md as the primary entry point with navigation to detailed documentation.
+
+#### Scenario: README as navigation hub
+- **WHEN** users discover the project
+- **THEN** README.md MUST provide:
+  - Brief project overview
+  - Quick start instructions
+  - Clear navigation links to detailed topic documentation
+  - Project structure overview
+
+#### Scenario: Documentation index
+- **WHEN** users navigate to the docs/ directory
+- **THEN** they MUST find a README.md index file listing available documentation files with descriptions
+
+### Requirement: Relative Path Links
+
+All documentation internal links SHALL use relative paths that resolve correctly regardless of viewing context (GitHub web, local filesystem, IDE).
+
+#### Scenario: Links from README to docs/
+- **WHEN** README.md links to documentation files
+- **THEN** links MUST use format: `[Text](docs/filename.md)`
+
+#### Scenario: Links between docs/ files
+- **WHEN** one docs/ file references another
+- **THEN** links MUST use format: `[Text](./filename.md)` or `[Text](filename.md)`
+
+#### Scenario: Links from docs/ to README
+- **WHEN** a docs/ file references the main README
+- **THEN** links MUST use format: `[Text](../README.md)`
+
+### Requirement: Section Anchor Links
+
+Documentation files SHALL support anchor links to specific sections for precise cross-referencing.
+
+#### Scenario: Linking to specific sections
+- **WHEN** referencing a specific section of another document
+- **THEN** links MAY use format: `[Text](filename.md#section-anchor)`
+
+#### Scenario: GitHub-compatible anchors
+- **WHEN** creating section anchors
+- **THEN** they MUST follow GitHub anchor rules:
+  - Lowercase
+  - Spaces become hyphens
+  - Special characters removed
+
+### Requirement: Link Validation
+
+All internal documentation links SHALL resolve to existing files after restructuring.
+
+#### Scenario: No broken links after migration
+- **WHEN** content is migrated from monolithic README
+- **THEN** all internal links MUST be updated to point to correct new locations
+
+#### Scenario: Link checking
+- **WHEN** documentation structure changes
+- **THEN** a mechanism MUST exist to verify all links resolve (manual review or automated check)
+
+### Requirement: External Link Preservation
+
+External links (to APIs, third-party docs, GitHub resources) SHALL be preserved unchanged during restructuring.
+
+#### Scenario: External links remain functional
+- **WHEN** migrating content with external links
+- **THEN** URLs to external resources MUST remain unchanged and functional
+
+### Requirement: Example Code Links
+
+Links to example configurations and code SHALL point to actual files in the repository.
+
+#### Scenario: Example file references
+- **WHEN** documentation references an example configuration
+- **THEN** it MUST link directly to the file: `[Example](../examples/homelab-media-stack/main.k)`
+
+#### Scenario: Example directory references
+- **WHEN** pointing users to explore examples
+- **THEN** link to the directory: `[Examples Directory](../examples/)`
+
+### Requirement: Documentation Directory Structure
+
+The project SHALL maintain a `docs/` directory containing specialized topic-based documentation files organized by user journey and technical depth.
+
+#### Scenario: Finding topic-specific documentation
+- **WHEN** a user needs information about a specific aspect of the system
+- **THEN** they can navigate to the appropriate docs/ file without searching through a monolithic document
+
+#### Scenario: Documentation organization
+- **WHEN** examining the project structure
+- **THEN** the docs/ directory MUST contain:
+  - `getting-started.md` - Installation and quickstart guide
+  - `dagger-reference.md` - Complete Dagger module function reference
+  - `terraform-modules.md` - Standalone Terraform module usage patterns
+  - `state-management.md` - State backend options and configuration
+  - `security.md` - Security best practices and credential handling
+  - `backend-configuration.md` - Backend configuration guides
+  - `troubleshooting.md` - Common issues and solutions
+  - `README.md` - Documentation index with navigation
+
+### Requirement: Content Preservation
+
+The documentation restructuring SHALL preserve all existing content from the original monolithic README.
+
+#### Scenario: No content loss during migration
+- **WHEN** comparing original README.md to the modular docs/
+- **THEN** all sections, examples, warnings, and technical details MUST be preserved in appropriate topic files
+
+#### Scenario: Original README backup
+- **WHEN** the restructuring is performed
+- **THEN** the original README.md MUST be backed up as README.old.md before modification
+
+### Requirement: Cross-Reference Links
+
+All documentation files SHALL use working relative links to reference related documentation.
+
+#### Scenario: Following documentation cross-references
+- **WHEN** a documentation file references another topic
+- **THEN** it MUST include a working relative link to the relevant docs/ file
+
+#### Scenario: Link integrity validation
+- **WHEN** documentation is restructured
+- **THEN** all internal links MUST resolve correctly without 404 errors
+
+### Requirement: No Detailed Content Duplication
+
+The README SHALL NOT duplicate detailed content that belongs in specialized docs/ files.
+
+#### Scenario: Avoiding content duplication
+- **WHEN** examining the README
+- **THEN** it MUST NOT contain:
+  - Complete function reference (belongs in dagger-reference.md)
+  - Detailed security practices (belongs in security.md)
+  - Troubleshooting guides (belongs in troubleshooting.md)
+  - Complete configuration examples (belongs in getting-started.md or examples/)
+
+#### Scenario: README focus
+- **WHEN** content could go in either README or a specialized doc
+- **THEN** prefer the specialized doc and link to it from README
+
+### Requirement: Link Text Clarity
+
+Link text SHALL clearly describe the destination content without requiring users to click to understand relevance.
+
+#### Scenario: Descriptive link text
+- **WHEN** creating a documentation link
+- **THEN** use descriptive text: `[State Management Guide](docs/state-management.md)`
+- **NOT** generic text: `[Click here](docs/state-management.md)`
+
+### Requirement: Consistent Link Style
+
+All documentation links SHALL follow consistent formatting conventions.
+
+#### Scenario: Markdown link syntax
+- **WHEN** creating any internal documentation link
+- **THEN** use Markdown link syntax: `[Text](path)` NOT HTML `<a href>` tags
+
+#### Scenario: Link with description
+- **WHEN** listing documentation links
+- **THEN** use format: `[Link Text](path) - Brief description of content`
+
