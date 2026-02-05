@@ -8,6 +8,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Documentation Restructuring:**
+  - Created `docs/` directory with specialized documentation files organized by topic
+  - New documentation files:
+    - `docs/getting-started.md` - Installation and first deployment guide
+    - `docs/dagger-reference.md` - Complete Dagger function reference and CI/CD integration
+    - `docs/terraform-modules.md` - Standalone Terraform module usage patterns
+    - `docs/state-management.md` - State backend options (ephemeral, local, remote)
+    - `docs/security.md` - Security best practices and credential handling
+    - `docs/backend-configuration.md` - Placeholder for detailed backend guide (to be populated)
+    - `docs/troubleshooting.md` - Placeholder for troubleshooting guide (to be populated)
+    - `docs/README.md` - Documentation index with navigation
+  - Rewrote `README.md` as a condensed entry point (~200 lines) with clear navigation to detailed docs
+  - Backed up original `README.md` as `README.old.md` for reference
+  - Updated `.gitignore` to include `terraform-state/` directory
+  - All original content preserved with improved organization and cross-linking
+
 - **Terraform Plan Function:**
   - Added `plan()` function for generating Terraform plans without applying changes
   - Supports plan → review → apply workflows for infrastructure changes

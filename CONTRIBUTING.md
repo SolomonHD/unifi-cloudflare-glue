@@ -35,8 +35,29 @@ All components share the same version number to ensure compatibility.
 1. Create a new branch for your changes
 2. Make your modifications
 3. Test your changes locally
-4. Update documentation if needed
+4. Update documentation if needed (see [Documentation](#documentation))
 5. Submit a pull request
+
+## Documentation
+
+Documentation is organized in the `docs/` directory:
+
+- `docs/getting-started.md` - Installation and first deployment
+- `docs/dagger-reference.md` - Complete function reference
+- `docs/terraform-modules.md` - Standalone module usage
+- `docs/state-management.md` - State backend options
+- `docs/security.md` - Security best practices
+- `docs/backend-configuration.md` - Backend configuration guide
+- `docs/troubleshooting.md` - Troubleshooting guide
+- `docs/README.md` - Documentation index
+
+The root `README.md` is a condensed entry point (~200 lines) that links to detailed documentation.
+
+When contributing:
+- Update relevant docs/ files for feature changes
+- Keep the README concise - add detailed content to appropriate docs/ files
+- Ensure cross-links between related documentation work correctly
+- Update `CHANGELOG.md` with user-facing changes
 
 ## Versioning
 

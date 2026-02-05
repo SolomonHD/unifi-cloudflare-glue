@@ -1,6 +1,7 @@
 # Terraform state files
 *.tfstate
 *.tfstate.*
+terraform-state/  # Persistent local state directory
 
 # Terraform plan files
 *.tfplan
@@ -28,6 +29,15 @@ __pycache__/
 *secret*
 *credential*
 *password*
+
+# Rendered vals backend configs (contain secrets)
+# Template files (.yaml.tmpl) should be committed, but not rendered files
+examples/backend-configs/*.yaml
+!examples/backend-configs/*.yaml.tmpl
+!examples/backend-configs/*.hcl
+/backend.yaml
+/backend-*.yaml
+*.rendered.yaml
 
 # IDE files
 .idea/
