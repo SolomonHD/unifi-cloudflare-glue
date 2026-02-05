@@ -1,0 +1,18 @@
+# Terraform Cloud Backend Configuration (YAML format)
+# This file is automatically converted to HCL format by the Dagger module
+#
+# Usage:
+#   dagger call deploy \
+#       --backend-type=remote \
+#       --backend-config-file=./remote-backend.yaml \
+#       ...
+#
+# Required Environment Variables:
+#   export TF_TOKEN_app_terraform_io="your-terraform-cloud-api-token"
+#
+# For vals integration:
+#   vals eval -f remote-backend.yaml.tmpl > remote-backend.yaml
+
+organization: my-organization
+workspaces:
+  name: unifi-cloudflare-glue
