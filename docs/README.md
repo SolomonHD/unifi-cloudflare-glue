@@ -6,7 +6,9 @@ Welcome to the `unifi-cloudflare-glue` documentation. This directory contains co
 
 | Document | Description |
 |----------|-------------|
+| **[Architecture](architecture.md)** | Visual diagrams of system components and data flow |
 | **[KCL Configuration Guide](kcl-guide.md)** | Complete KCL schema reference, validation rules, patterns, and examples |
+| **[Deployment Patterns](deployment-patterns.md)** | Environment-specific deployment patterns (dev, staging, production) |
 | **[Getting Started](getting-started.md)** | Installation, prerequisites, and first deployment |
 | **[Dagger Reference](dagger-reference.md)** | Complete function reference and CI/CD integration |
 | **[Terraform Modules](terraform-modules.md)** | Standalone Terraform module usage |
@@ -28,6 +30,7 @@ New to `unifi-cloudflare-glue`? Start here:
 
 ### Local Development
 - [Getting Started](getting-started.md) - Installation and setup
+- [Deployment Patterns](deployment-patterns.md#development-environment) - Development environment setup
 - [State Management](state-management.md) - Local state persistence
 - [Dagger Reference](dagger-reference.md) - All deployment functions
 
@@ -37,6 +40,7 @@ New to `unifi-cloudflare-glue`? Start here:
 - [State Management - Remote Backends](state-management.md#remote-backends)
 
 ### Production Deployment
+- [Deployment Patterns](deployment-patterns.md) - Environment-specific patterns
 - [Security](security.md) - Essential security practices
 - [State Management](state-management.md) - Remote state backends
 - [Terraform Modules](terraform-modules.md) - Standalone module usage

@@ -1,0 +1,27 @@
+# S3 Backend Configuration for Staging Environment
+#
+# This configuration uses S3 with native lockfile (Terraform 1.9+)
+# for state persistence and team collaboration.
+#
+# Requirements:
+#   - Terraform >= 1.9.0
+#   - AWS credentials configured (environment variables or IAM role)
+#   - S3 bucket for state storage
+#
+# For other backends (Azure, GCS), see the backend configuration documentation.
+
+bucket: my-terraform-state-bucket
+key: unifi-cloudflare-glue/staging/terraform.tfstate
+region: us-east-1
+encrypt: true
+use_lockfile: true # Enable S3 native locking (Terraform 1.9+)
+
+# Alternative: DynamoDB locking (works with all Terraform versions)
+# Uncomment the line below and comment out use_lockfile to use DynamoDB
+# dynamodb_table: terraform-state-lock
+
+# Note: Do NOT commit AWS credentials to version control.
+# Set credentials via environment variables:
+#   export AWS_ACCESS_KEY_ID="..."
+#   export AWS_SECRET_ACCESS_KEY="..."
+#   export AWS_REGION="us-east-1"

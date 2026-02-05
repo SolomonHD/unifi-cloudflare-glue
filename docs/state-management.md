@@ -2,6 +2,48 @@
 
 All deployment functions support configurable Terraform state management with three modes to suit different workflows.
 
+## State Management Decision Tree
+
+Use this decision tree to choose the appropriate state management strategy:
+
+```mermaid
+graph TD
+    A[State Management] --> B{Use Case?}
+
+    B -->|Development<br/>Testing<br/>CI/CD| C[Ephemeral State]
+    B -->|Solo Developer<br/>Local Dev| D[Persistent Local State]
+    B -->|Team/Production| E[Remote Backend]
+
+    C --> C1[Container-only storage]
+    C --> C2[Lost on exit]
+    C --> C3[No setup required]
+
+    D --> D1[Local filesystem]
+    D --> D2[--state-dir flag]
+    D --> D3[No cloud costs]
+
+    E --> F{Backend Type?}
+    F -->|AWS| G[S3 Backend]
+    F -->|Azure| H[Azure Blob]
+    F -->|GCP| I[GCS Backend]
+
+    G --> J{Locking?}
+    J -->|Terraform 1.9+| K[S3 Lockfile<br/>Native locking]
+    J -->|All Versions| L[DynamoDB<br/>Lock table]
+
+    H --> M[Built-in locking]
+    I --> N[Built-in locking]
+
+    style A fill:#e1f5ff
+    style C fill:#ffebee
+    style D fill:#fff9c4
+    style E fill:#e8f5e9
+    style K fill:#e1f5ff
+    style L fill:#e1f5ff
+```
+
+See [Architecture Documentation](architecture.md#state-management) for more details on the complete system architecture.
+
 ## State Management Modes
 
 | Mode | Use Case | Persistence | Best For |

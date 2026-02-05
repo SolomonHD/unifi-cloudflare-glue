@@ -1,0 +1,84 @@
+# Staging Environment - Git Ignore
+#
+# This file prevents sensitive and generated files from being committed.
+
+# =============================================================================
+# Secrets and Environment Files
+# =============================================================================
+
+# Environment variables (contains secrets)
+.env
+.env.local
+.env.*.local
+
+# =============================================================================
+# Terraform State and Lock Files
+# =============================================================================
+
+# Local state files (shouldn't exist with S3 backend, but just in case)
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Terraform lock files (if using local locking)
+*.tflock
+
+# Terraform plan files
+*.tfplan
+
+# =============================================================================
+# Generated Files
+# =============================================================================
+
+# Plan output directory
+plan-output/
+
+# Generated configurations
+*.generated.json
+*.generated.yaml
+
+# =============================================================================
+# KCL Specific
+# =============================================================================
+
+# KCL module cache (if any)
+.kcl/
+
+# =============================================================================
+# IDE and Editor Files
+# =============================================================================
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# IntelliJ / JetBrains
+.idea/
+*.iml
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+.#*
+
+# =============================================================================
+# OS Generated Files
+# =============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+.nfs*

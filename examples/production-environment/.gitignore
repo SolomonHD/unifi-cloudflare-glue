@@ -1,0 +1,114 @@
+# Production Environment - Git Ignore
+#
+# This file prevents sensitive and generated files from being committed.
+# CRITICAL: Never commit rendered secrets or state files!
+
+# =============================================================================
+# Secrets and Environment Files (CRITICAL)
+# =============================================================================
+
+# Environment variables (contains secrets)
+.env
+.env.local
+.env.*.local
+
+# RENDERED backend.yaml - CONTAINS PLAINTEXT SECRETS!
+# The .tmpl template IS committed, but the rendered file is NOT
+backend.yaml
+
+# Any rendered secret files
+*.rendered
+*secrets*.yaml
+*secrets*.json
+
+# =============================================================================
+# Terraform State and Lock Files
+# =============================================================================
+
+# Local state files (shouldn't exist with S3 backend, but just in case)
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Terraform lock files (if using local locking)
+*.tflock
+
+# Terraform plan files
+*.tfplan
+
+# =============================================================================
+# Generated Files
+# =============================================================================
+
+# Plan output directory
+plan-output/
+
+# Generated configurations
+*.generated.json
+*.generated.yaml
+
+# =============================================================================
+# KCL Specific
+# =============================================================================
+
+# KCL module cache (if any)
+.kcl/
+
+# =============================================================================
+# IDE and Editor Files
+# =============================================================================
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# IntelliJ / JetBrains
+.idea/
+*.iml
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+.#*
+
+# =============================================================================
+# OS Generated Files
+# =============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+.nfs*
+
+# =============================================================================
+# Security - Additional Patterns
+# =============================================================================
+
+# Any credential files
+credentials.json
+*credential*
+*secret*
+*password*
+*token*
+
+# Backup files (often contain secrets)
+*.bak
+*.backup
+*~
+
+# Log files (may contain sensitive data)
+*.log
+logs/

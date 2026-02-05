@@ -1,0 +1,74 @@
+# Production Backend Configuration Template
+#
+# This file is a TEMPLATE for vals secret injection.
+# DO NOT commit the rendered backend.yaml file - it will contain secrets!
+#
+# Usage:
+#   1. Set up 1Password/vals (see SECRETS.md)
+#   2. Run: vals eval -f backend.yaml.tmpl > backend.yaml
+#   3. Run make deploy (which automatically cleans up backend.yaml)
+#
+# Requirements:
+#   - vals installed: https://github.com/helmfile/vals
+#   - 1Password CLI configured (op signin)
+#   - S3 bucket and DynamoDB table created
+#
+# For other secret managers (Vault, AWS Secrets Manager), adapt the ref+ syntax.
+
+# =============================================================================
+# S3 Backend Configuration
+# =============================================================================
+
+bucket: ref+op://Infrastructure/terraform-state/bucket
+key: unifi-cloudflare-glue/production/terraform.tfstate
+region: ref+op://Infrastructure/terraform-state/region
+encrypt: true
+
+# =============================================================================
+# State Locking (DynamoDB)
+# =============================================================================
+#
+# Production environments should use DynamoDB for robust state locking.
+# This prevents concurrent modifications even with multiple team members.
+
+dynamodb_table: ref+op://Infrastructure/terraform-state/dynamodb-table
+
+# =============================================================================
+# Alternative: S3 Native Lockfile (Terraform 1.9+)
+# =============================================================================
+#
+# Uncomment below and comment out dynamodb_table to use S3 native locking
+# instead of DynamoDB. This reduces costs but requires Terraform 1.9+.
+#
+# use_lockfile: true
+
+# =============================================================================
+# Access Credentials (Optional)
+# =============================================================================
+#
+# If not using IAM roles or environment variables, you can inject AWS
+# credentials via vals. This is NOT recommended - use IAM roles instead.
+#
+# access_key: ref+op://Infrastructure/aws-credentials/access-key-id
+# secret_key: ref+op://Infrastructure/aws-credentials/secret-access-key
+#
+# Better: Use IAM roles for EC2/ECS/Lambda, or set AWS_* env vars locally
+
+# =============================================================================
+# Security Notes
+# =============================================================================
+#
+# 1. The rendered backend.yaml contains plaintext secrets - never commit it
+# 2. The Makefile automatically removes backend.yaml after deployment
+# 3. Use 'make clean' to ensure all secret files are removed
+# 4. Rotate 1Password credentials regularly
+# 5. Use least-privilege IAM policies for state access
+
+# =============================================================================
+# Cost Estimate (AWS us-east-1)
+# =============================================================================
+#
+# S3 Standard: ~$0.023/GB/month (state files are small, typically < 1 MB)
+# DynamoDB On-Demand: ~$1.25/million write requests, $0.25/million read
+#   - Typical usage: $0-1/month for small teams
+# Total: ~$1-5/month depending on usage
