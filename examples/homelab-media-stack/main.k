@@ -32,12 +32,10 @@ import unifi_cloudflare_glue.generators.cloudflare as cf_gen
 #   - Acceptable formats: "aa:bb:cc:dd:ee:ff", "aa-bb-cc-dd-ee-ff", "aabbccddeeff"
 #   - All formats are automatically normalized to lowercase colon format
 #   - MAC addresses are used as dictionary keys for tunnel mapping
-
 media_server = unifi.UniFiEntity {
     friendly_hostname = "media-server"
     domain = "internal.lan"
     unifi_site = "default"
-
     # Endpoints (network interfaces)
     endpoints = [
         # Management NIC - for SSH, admin panels, internal-only services
@@ -47,23 +45,22 @@ media_server = unifi.UniFiEntity {
             mac_address = "aa:bb:cc:dd:ee:01"
             nic_name = "eth0"
             service_cnames = [
-                "admin.internal.lan",
-                "ssh.internal.lan",
+                "admin.internal.lan"
+                "ssh.internal.lan"
             ]
             query_unifi = True
-        },
+        }
         # Media NIC (10GbE) - for high-bandwidth media streaming
         unifi.UniFiEndpoint {
             # REPLACE: aa:bb:cc:dd:ee:02 with your media/10GbE NIC MAC address
             mac_address = "aa:bb:cc:dd:ee:02"
             nic_name = "eth1-10gbe"
             service_cnames = [
-                "media.internal.lan",
+                "media.internal.lan"
             ]
             query_unifi = True
-        },
+        }
     ]
-
     # ============================================================================
     # SERVICES: UniFi-Only (Internal Automation Stack)
     # ============================================================================
@@ -75,7 +72,6 @@ media_server = unifi.UniFiEntity {
     #   - These are automation tools that don't need external access
     #   - Security: *arr apps have no built-in authentication
     #   - Bandwidth: Large media files stay on local network
-
     services = [
         # Sonarr - TV show management and organization
         unifi.Service {
@@ -85,8 +81,7 @@ media_server = unifi.UniFiEntity {
             distribution = "unifi_only"
             # Internal DNS name format: servicename.internal.lan
             internal_hostname = "sonarr.internal.lan"
-        },
-
+        }
         # Radarr - Movie management and organization
         unifi.Service {
             name = "radarr"
@@ -94,8 +89,7 @@ media_server = unifi.UniFiEntity {
             protocol = "http"
             distribution = "unifi_only"
             internal_hostname = "radarr.internal.lan"
-        },
-
+        }
         # Prowlarr - Indexer management for Sonarr/Radarr
         unifi.Service {
             name = "prowlarr"
@@ -103,8 +97,7 @@ media_server = unifi.UniFiEntity {
             protocol = "http"
             distribution = "unifi_only"
             internal_hostname = "prowlarr.internal.lan"
-        },
-
+        }
         # Lidarr - Music management (optional but included for completeness)
         unifi.Service {
             name = "lidarr"
@@ -112,8 +105,7 @@ media_server = unifi.UniFiEntity {
             protocol = "http"
             distribution = "unifi_only"
             internal_hostname = "lidarr.internal.lan"
-        },
-
+        }
         # Readarr - Book/ebook management (optional)
         unifi.Service {
             name = "readarr"
@@ -121,8 +113,7 @@ media_server = unifi.UniFiEntity {
             protocol = "http"
             distribution = "unifi_only"
             internal_hostname = "readarr.internal.lan"
-        },
-
+        }
         # ============================================================================
         # SERVICES: Cloudflare-Only (External Access Only)
         # ============================================================================
@@ -135,7 +126,7 @@ media_server = unifi.UniFiEntity {
         #   - These services need external access for mobile apps, sharing
         #   - Paperless-ngx: Access documents on the go
         #   - Immich: Photo backup from mobile devices
-
+        
         # Paperless-ngx - Document management system
         unifi.Service {
             name = "paperless"
@@ -146,8 +137,7 @@ media_server = unifi.UniFiEntity {
             internal_hostname = "paperless.internal.lan"
             # REPLACE: example.com with your actual Cloudflare zone
             public_hostname = "paperless.example.com"
-        },
-
+        }
         # Immich - Self-hosted photo/video backup solution
         unifi.Service {
             name = "immich"
@@ -157,8 +147,7 @@ media_server = unifi.UniFiEntity {
             internal_hostname = "immich.internal.lan"
             # REPLACE: example.com with your actual Cloudflare zone
             public_hostname = "photos.example.com"
-        },
-
+        }
         # ============================================================================
         # SERVICES: Both (Dual Exposure - Internal + External)
         # ============================================================================
@@ -171,7 +160,7 @@ media_server = unifi.UniFiEntity {
         #   - Jellyfin: Stream at home (direct) and away (via Cloudflare)
         #   - Jellyseerr: Request media from inside and outside the network
         #   - Local access avoids Cloudflare bandwidth limits for high-bitrate streaming
-
+        
         # Jellyfin - Media server for streaming movies/TV/music
         unifi.Service {
             name = "jellyfin"
@@ -181,8 +170,7 @@ media_server = unifi.UniFiEntity {
             internal_hostname = "jellyfin.internal.lan"
             # REPLACE: example.com with your actual Cloudflare zone
             public_hostname = "media.example.com"
-        },
-
+        }
         # Jellyseerr - Media request management for Jellyfin
         unifi.Service {
             name = "jellyseerr"
@@ -192,7 +180,7 @@ media_server = unifi.UniFiEntity {
             internal_hostname = "requests.internal.lan"
             # REPLACE: example.com with your actual Cloudflare zone
             public_hostname = "requests.example.com"
-        },
+        }
     ]
 }
 
@@ -204,7 +192,6 @@ media_server = unifi.UniFiEntity {
 # It generates DNS records for:
 #   - Device hostnames (from endpoints)
 #   - Service CNAMEs (from services with distribution = "unifi_only" or "both")
-
 unifi_config = unifi.UniFiConfig {
     devices = [media_server]
     default_domain = "internal.lan"
@@ -235,8 +222,7 @@ unifi_config = unifi.UniFiConfig {
 #   Example: For Jellyfin with protocol=http, internal_hostname=jellyfin.internal.lan, port=8096
 #   Result: "http://jellyfin.internal.lan:8096"
 #
-#   This MUST use internal domains to prevent DNS resolution loops.
-
+#   This can use any valid domain (internal .internal.lan, .local, .home or public like .com)
 cloudflare_config = cloudflare.CloudflareConfig {
     # REPLACE: example.com with your actual Cloudflare zone
     zone_name = "example.com"
@@ -244,7 +230,6 @@ cloudflare_config = cloudflare.CloudflareConfig {
     # Found in Cloudflare dashboard: Right sidebar -> Account ID
     account_id = "a1b2c3d4e5f6789012345678901234ab"
     default_no_tls_verify = False
-
     # Tunnels are keyed by MAC address (normalized to lowercase colon format)
     # Each physical device gets one tunnel
     tunnels = {
@@ -255,7 +240,6 @@ cloudflare_config = cloudflare.CloudflareConfig {
             # REPLACE: aa:bb:cc:dd:ee:01 with your management NIC MAC
             mac_address = "aa:bb:cc:dd:ee:01"
             credentials_path = "/etc/cloudflared/media-server.json"
-
             # Services are automatically filtered to include only:
             #   - distribution = "cloudflare_only"
             #   - distribution = "both"
@@ -265,20 +249,20 @@ cloudflare_config = cloudflare.CloudflareConfig {
                 cloudflare.TunnelService {
                     public_hostname = "paperless.example.com"
                     local_service_url = "http://paperless.internal.lan:8000"
-                },
+                }
                 cloudflare.TunnelService {
                     public_hostname = "photos.example.com"
                     local_service_url = "http://immich.internal.lan:2283"
-                },
+                }
                 # Dual-exposure services
                 cloudflare.TunnelService {
                     public_hostname = "media.example.com"
                     local_service_url = "http://jellyfin.internal.lan:8096"
-                },
+                }
                 cloudflare.TunnelService {
                     public_hostname = "requests.example.com"
                     local_service_url = "http://requests.internal.lan:5055"
-                },
+                }
             ]
         }
     }

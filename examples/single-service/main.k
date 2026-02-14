@@ -109,7 +109,7 @@ cloudflare_config = cloudflare.CloudflareConfig {
                     # Public hostname users will access
                     public_hostname = "media.example.com"
                     # Internal URL where the service is accessible
-                    # MUST use internal domain to prevent DNS loops
+                    # Can use any valid domain (internal .internal.lan, .local, .home or public like .com)
                     local_service_url = "http://jellyfin.internal.lan:8096"
                     no_tls_verify = False
                 }
