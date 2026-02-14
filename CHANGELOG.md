@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fixed yq YAML-to-JSON parsing bug in KCL configuration generation:**
+  - Fixed `generate_unifi_config` function (line 142) and `generate_cloudflare_config` function (line 1678)
+  - Changed yq command from `yq -o=json '.result'` to `yq eval -o=json '.'`
+  - Resolves "mapping values are not allowed in this context" YAML parsing error
+  - Both functions now successfully convert KCL YAML output to valid JSON
+  - Generated JSON files are properly formatted and usable by Terraform modules
+
 ### Added
 
 - **Architecture Diagrams:**

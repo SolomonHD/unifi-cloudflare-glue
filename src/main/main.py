@@ -135,11 +135,11 @@ class UnifiCloudflareGlue:
         # Mount source directory
         ctr = ctr.with_directory("/src", source).with_workdir("/src")
 
-        # Run KCL generator and convert YAML output to JSON, extracting just the 'result' key
+        # Run KCL generator and convert YAML output to JSON
         try:
             result = await ctr.with_exec([
                 "sh", "-c",
-                "kcl run generators/unifi.k | yq -o=json '.result'"
+                "kcl run generators/unifi.k | yq eval -o=json '.'"
             ]).stdout()
         except dagger.ExecError as e:
             raise KCLGenerationError(
@@ -1671,11 +1671,11 @@ Notes
         # Mount source directory
         ctr = ctr.with_directory("/src", source).with_workdir("/src")
 
-        # Run KCL generator and convert YAML output to JSON, extracting just the 'result' key
+        # Run KCL generator and convert YAML output to JSON
         try:
             result = await ctr.with_exec([
                 "sh", "-c",
-                "kcl run generators/cloudflare.k | yq -o=json '.result'"
+                "kcl run generators/cloudflare.k | yq eval -o=json '.'"
             ]).stdout()
         except dagger.ExecError as e:
             raise KCLGenerationError(
