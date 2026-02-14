@@ -5,4 +5,4 @@ version = "0.1.0"
 description = "Development environment example with ephemeral state"
 
 [dependencies]
-unifi_cloudflare_glue = { git = "https://github.com/SolomonHD/unifi-cloudflare-glue", tag = "v0.7.0" }
+unifi_cloudflare_glue = { git = "https://github.com/SolomonHD/unifi-cloudflare-glue", tag = "v0.7.1" }

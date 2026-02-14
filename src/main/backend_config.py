@@ -39,7 +39,7 @@ def _yaml_to_hcl_value(value, indent_level: int = 0) -> str:
         indent = "  " * indent_level
         inner_indent = "  " * (indent_level + 1)
         items = [f'{inner_indent}{k} = {_yaml_to_hcl_value(v, indent_level + 1)}' for k, v in value.items()]
-        return f"{{\n{',\n'.join(items)}\n{indent}}}"
+        return f"{{\n" + ",\n".join(items) + "\n{indent}}}"
     else:
         # For unknown types, convert to string with quotes
         return f'"{str(value)}"'
