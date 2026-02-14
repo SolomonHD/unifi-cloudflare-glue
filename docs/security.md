@@ -25,6 +25,8 @@ dagger call deploy-unifi \
     --unifi-url=https://unifi.local:8443
 ```
 
+> **See [Troubleshooting](troubleshooting.md#dagger-module-errors)** for help with secret parameter errors.
+
 ### Required Environment Variables
 
 | Variable | Description | Used By |
@@ -173,6 +175,8 @@ dagger call deploy-unifi \
 ```
 
 > **Warning**: Only use `--unifi-insecure` in development/trusted network environments.
+
+> **See [Troubleshooting](troubleshooting.md#tls-certificate-verify-failed)** for help with certificate errors.
 
 ## Backend Configuration Security
 

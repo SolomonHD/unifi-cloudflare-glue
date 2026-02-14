@@ -20,6 +20,8 @@ Complete reference for all Dagger functions in the `unifi-cloudflare-glue` modul
 dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.3.2
 ```
 
+> **See [Troubleshooting](troubleshooting.md#dagger-module-errors)** if you encounter module installation or calling issues.
+
 ### Version Selection
 
 **Production environments should always pin to specific versions:**

@@ -75,19 +75,12 @@ schema UnifiedConfig:
 
 # Extract all MAC addresses from UniFi devices
 get_all_unifi_macs = lambda cfg: UnifiedConfig -> [str] {
-    [
-        base.normalize_mac(ep.mac_address)
-        for device in cfg.unifi.devices
-        for ep in device.endpoints
-    ]
+    [base.normalize_mac(ep.mac_address) for device in cfg.unifi.devices for ep in device.endpoints]
 }
 
 # Extract all MAC addresses from Cloudflare tunnels
 get_all_cloudflare_macs = lambda cfg: UnifiedConfig -> [str] {
-    [
-        base.normalize_mac(tunnel.mac_address)
-        for _, tunnel in cfg.cloudflare.tunnels
-    ]
+    [base.normalize_mac(tunnel.mac_address) for _, tunnel in cfg.cloudflare.tunnels]
 }
 
 # Find MAC addresses in Cloudflare that don't exist in UniFi
@@ -95,11 +88,7 @@ find_missing_macs = lambda cfg: UnifiedConfig -> [str] {
     unifi_macs = get_all_unifi_macs(cfg)
     cloudflare_macs = get_all_cloudflare_macs(cfg)
 
-    [
-        mac
-        for mac in cloudflare_macs
-        if mac not in unifi_macs
-    ]
+    [mac for mac in cloudflare_macs if mac not in unifi_macs]
 }
 
 # Validate that all Cloudflare MACs exist in UniFi devices
@@ -120,21 +109,14 @@ validate_mac_consistency = lambda cfg: UnifiedConfig -> {str:str} {
 
 # Extract all friendly hostnames from UniFi devices
 get_all_friendly_hostnames = lambda cfg: UnifiedConfig -> [str] {
-    [
-        device.friendly_hostname
-        for device in cfg.unifi.devices
-    ]
+    [device.friendly_hostname for device in cfg.unifi.devices]
 }
 
 # Count occurrences of hostnames and return duplicates
 find_duplicate_hostnames = lambda cfg: UnifiedConfig -> {str:int} {
     hostnames = get_all_friendly_hostnames(cfg)
 
-    {
-        hostname: sum([1 for h in hostnames if h == hostname])
-        for hostname in hostnames
-        if sum([1 for h in hostnames if h == hostname]) > 1
-    }
+    {hostname: sum([1 for h in hostnames if h == hostname]) for hostname in hostnames if sum([1 for h in hostnames if h == hostname]) > 1}
 }
 
 # Validate that all device hostnames are unique
@@ -142,14 +124,7 @@ validate_hostname_uniqueness = lambda cfg: UnifiedConfig -> {str:str} {
     duplicates = find_duplicate_hostnames(cfg)
 
     # Build conflicts list using comprehension
-    conflicts = [
-        "${hostname}: [" + ", ".join([
-            device.friendly_hostname
-            for device in cfg.unifi.devices
-            if device.friendly_hostname == hostname
-        ]) + "]"
-        for hostname, _ in duplicates
-    ]
+    conflicts = ["${hostname}: [" + ", ".join([device.friendly_hostname for device in cfg.unifi.devices if device.friendly_hostname == hostname]) + "]" for hostname, _ in duplicates]
 
     # Use conditional expression
     {
@@ -163,22 +138,14 @@ validate_hostname_uniqueness = lambda cfg: UnifiedConfig -> {str:str} {
 
 # Extract all public hostnames from Cloudflare tunnel services
 get_all_public_hostnames = lambda cfg: UnifiedConfig -> [str] {
-    [
-        svc.public_hostname
-        for _, tunnel in cfg.cloudflare.tunnels
-        for svc in tunnel.services
-    ]
+    [svc.public_hostname for _, tunnel in cfg.cloudflare.tunnels for svc in tunnel.services]
 }
 
 # Find duplicate public hostnames
 find_duplicate_public_hostnames = lambda cfg: UnifiedConfig -> {str:int} {
     public_hostnames = get_all_public_hostnames(cfg)
 
-    {
-        hostname: sum([1 for h in public_hostnames if h == hostname])
-        for hostname in public_hostnames
-        if sum([1 for h in public_hostnames if h == hostname]) > 1
-    }
+    {hostname: sum([1 for h in public_hostnames if h == hostname]) for hostname in public_hostnames if sum([1 for h in public_hostnames if h == hostname]) > 1}
 }
 
 # Validate that all public hostnames are unique across tunnels
@@ -186,15 +153,7 @@ validate_public_hostname_uniqueness = lambda cfg: UnifiedConfig -> {str:str} {
     duplicates = find_duplicate_public_hostnames(cfg)
 
     # Build conflicts list
-    conflicts = [
-        "${hostname}: [" + ", ".join([
-            tunnel.tunnel_name
-            for _, tunnel in cfg.cloudflare.tunnels
-            for svc in tunnel.services
-            if svc.public_hostname == hostname
-        ]) + "]"
-        for hostname, _ in duplicates
-    ]
+    conflicts = ["${hostname}: [" + ", ".join([tunnel.tunnel_name for _, tunnel in cfg.cloudflare.tunnels for svc in tunnel.services if svc.public_hostname == hostname]) + "]" for hostname, _ in duplicates]
 
     # Use conditional expression
     {
@@ -208,12 +167,7 @@ validate_public_hostname_uniqueness = lambda cfg: UnifiedConfig -> {str:str} {
 
 # Find services with external domains (violating internal domain requirement)
 find_external_domain_services = lambda cfg: UnifiedConfig -> [str] {
-    [
-        "${tunnel.tunnel_name}: ${svc.public_hostname} -> ${svc.local_service_url}"
-        for _, tunnel in cfg.cloudflare.tunnels
-        for svc in tunnel.services
-        if not cloudflare.is_internal_domain(svc.local_service_url)
-    ]
+    ["${tunnel.tunnel_name}: ${svc.public_hostname} -> ${svc.local_service_url}" for _, tunnel in cfg.cloudflare.tunnels for svc in tunnel.services if not cloudflare.is_valid_domain(svc.local_service_url)]
 }
 
 # Validate that all local_service_url values use internal domains
@@ -232,16 +186,12 @@ validate_internal_domains = lambda cfg: UnifiedConfig -> {str:str} {
 
 # Run all validations and collect errors
 validate_all = lambda cfg: UnifiedConfig -> [{str:str}] {
-    [
-        result
-        for result in [
-            validate_mac_consistency(cfg),
-            validate_hostname_uniqueness(cfg),
-            validate_public_hostname_uniqueness(cfg),
-            validate_internal_domains(cfg)
-        ]
-        if len(result) > 0
-    ]
+    [result for result in [
+        validate_mac_consistency(cfg)
+        validate_hostname_uniqueness(cfg)
+        validate_public_hostname_uniqueness(cfg)
+        validate_internal_domains(cfg)
+    ] if len(result) > 0]
 }
 
 # =============================================================================
@@ -358,7 +308,6 @@ sample_cloudflare_config = cloudflare.CloudflareConfig {
     zone_name = "example.com"
     account_id = "1234567890abcdef1234567890abcdef"
     default_no_tls_verify = False
-
     tunnels = {
         "aa:bb:cc:dd:ee:01": cloudflare.CloudflareTunnel {
             tunnel_name = "media-server"

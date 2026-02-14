@@ -16,7 +16,7 @@ Welcome to the `unifi-cloudflare-glue` documentation. This directory contains co
 | **[Security](security.md)** | Security best practices and credential handling |
 | **[vals Integration](vals-integration.md)** | Secret injection with vals for backend configurations |
 | **[Backend Configuration](backend-configuration.md)** | Comprehensive backend and state locking guide |
-| **[Troubleshooting](troubleshooting.md)** | Common issues and solutions *(coming soon)* |
+| **[Troubleshooting](troubleshooting.md)** | Common issues, error references, decision trees, and solutions |
 
 ## Getting Started
 

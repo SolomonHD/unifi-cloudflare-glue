@@ -90,7 +90,7 @@ Extends base schemas for Cloudflare Tunnel:
 - `CloudflareTunnel`: Tunnel configuration linked to a physical device by MAC address
 - `TunnelService`: Ingress rule mapping public hostname to internal service URL
 - `CloudflareConfig`: Complete Cloudflare configuration with zone and account settings
-- `is_internal_domain()`: Validates that URLs use internal domains (DNS loop prevention)
+- `is_valid_domain()`: Validates domain syntax per RFC 1123 (DNS loop prevention)
 - `hostname_in_zone()`: Validates that hostnames belong to the configured zone
 
 ## Generators
@@ -189,7 +189,7 @@ Services are filtered based on their `distribution` field:
 
 #### DNS Loop Prevention
 
-The generator enforces that `local_service_url` uses internal domains only to prevent DNS resolution loops. Valid internal domain suffixes include:
+The generator validates that `local_service_url` uses valid domain syntax per RFC 1123. Any valid domain name is accepted - users are responsible for ensuring DNS resolution is correct.
 - `.internal.lan`
 - `.local`
 - `.home`
@@ -267,14 +267,14 @@ The `main.k` module implements comprehensive cross-provider validation that runs
 | MAC Consistency | All Cloudflare tunnel MACs must exist in UniFi devices | `MAC_CONSISTENCY_ERROR` |
 | Hostname Uniqueness | No two devices can share the same `friendly_hostname` | `DUPLICATE_HOSTNAME_ERROR` |
 | Public Hostname Uniqueness | No two tunnel services can share the same `public_hostname` | `DUPLICATE_PUBLIC_HOSTNAME_ERROR` |
-| Internal Domain | All `local_service_url` values must use internal domains | `EXTERNAL_DOMAIN_ERROR` |
+| Domain Syntax | All `local_service_url` values must use valid RFC 1123 domain syntax | `DOMAIN_SYNTAX_ERROR` |
 
 ### Validation Functions
 
 - `validate_mac_consistency(cfg)`: Checks all Cloudflare MACs exist in UniFi
 - `validate_hostname_uniqueness(cfg)`: Checks for duplicate device hostnames
 - `validate_public_hostname_uniqueness(cfg)`: Checks for duplicate public hostnames
-- `validate_internal_domains(cfg)`: Ensures local_service_url uses internal domains
+- `validate_domain_syntax(cfg)`: Ensures local_service_url uses valid domain syntax per RFC 1123
 - `validate_all(cfg)`: Runs all validations and returns error list
 
 ### Error Message Format
