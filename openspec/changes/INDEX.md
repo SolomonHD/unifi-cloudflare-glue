@@ -22,6 +22,7 @@ This index maps the sequence of changes needed to implement the `unifi-cloudflar
 
 | Change ID | Description | Status |
 |-----------|-------------|--------|
+| [fix-yq-parsing-bug](./fix-yq-parsing-bug/) | Fix yq parsing bug in KCL configuration generation functions | Proposed |
 | [add-terraform-plan-function](./add-terraform-plan-function/) | Add Terraform plan function for plan → review → apply workflow | In Progress |
 | [add-remote-dagger-module-docs](./add-remote-dagger-module-docs/) | Add documentation for remote Dagger module consumption | Proposed |
 
