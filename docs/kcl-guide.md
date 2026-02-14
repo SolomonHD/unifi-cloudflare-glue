@@ -1521,8 +1521,8 @@ Each example includes:
 | File | Description |
 |------|-------------|
 | [`kcl/README.md`](../kcl/README.md) | KCL module overview and quick reference |
-| [`kcl/schemas/`](../kcl/schemas/) | Schema source code |
-| [`kcl/generators/`](../kcl/generators/) | Generator source code |
+| [`schemas/`](../schemas/) | Schema source code |
+| [`generators/`](../generators/) | Generator source code |
 | [`examples/`](../examples/) | Working configuration examples |
 
 ### External Resources
