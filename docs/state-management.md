@@ -112,6 +112,8 @@ When using persistent local state:
 - **No state locking** - avoid concurrent operations from different machines
 - Use filesystem permissions to restrict access to the state directory
 
+> **See [Troubleshooting](troubleshooting.md#state-management-issues-decision-tree)** for help with state locking and migration issues.
+
 Example `.gitignore` entries:
 ```gitignore
 # Terraform state files (if using persistent local state)
@@ -137,6 +139,8 @@ dagger call deploy \
 ```
 
 > **Important:** When using remote backends, you must use the **same backend configuration** for both `deploy` and `destroy` operations.
+
+> **See [Troubleshooting](troubleshooting.md#terraform-errors)** for help with backend initialization and authentication issues.
 
 ### Supported Backend Types
 

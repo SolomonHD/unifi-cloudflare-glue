@@ -28,24 +28,22 @@
 # MACAddress type alias for tunnel identification
 MACAddress = str
 
-# is_internal_domain checks if a URL uses an internal domain suffix
-# Returns True if the hostname ends with a valid internal domain
-is_internal_domain = lambda url: str -> bool {
-    # Extract hostname from URL (remove protocol and port)
-    without_protocol = url.replace("http://", "").replace("https://", "")
-    # Split on '/' to get just the host:port part
-    parts = without_protocol.split("/")
-    host_part = parts[0] if len(parts) > 0 else without_protocol
-    # Split on ':' to remove port if present
-    host_parts = host_part.split(":")
-    hostname = host_parts[0] if len(host_parts) > 0 else host_part
-    
-    # Check if hostname ends with any internal domain suffix
-    hostname.endswith(".internal.lan") or \
-    hostname.endswith(".local") or \
-    hostname.endswith(".home") or \
-    hostname.endswith(".home.arpa") or \
-    hostname.endswith(".localdomain")
+# is_valid_domain checks if a URL contains a valid domain per RFC 1123
+# Returns True if the hostname has valid syntax
+# Validation rules:
+# - Valid characters: alphanumeric, hyphens, dots only
+# - No consecutive dots
+# - No leading/trailing dots
+# - Each label: 1-63 characters
+# - Labels must start and end with alphanumeric
+# - TLD: minimum 2 characters
+# - At least one dot separator required
+is_valid_domain = lambda url: str -> bool {
+    hostname = url.replace("http://", "").replace("https://", "").split("/")[0].split(":")[0]
+    labels = hostname.split(".")
+    tld = labels[-1]
+    validLabels = [l for l in labels if len(l) > 0 and len(l) <= 63 and l[0].isalnum() and l[-1].isalnum()]
+    len(hostname) > 0 and not hostname.startswith(".") and not hostname.endswith(".") and ".." not in hostname and "." in hostname and len(validLabels) == len(labels) and len(tld) >= 2
 }
 
 # hostname_in_zone checks if a hostname belongs to the configured zone
@@ -68,8 +66,7 @@ schema TunnelService:
         public_hostname: The public-facing FQDN (e.g., "media.example.com")
                          Must be a subdomain of the zone configured in CloudflareConfig
         local_service_url: The internal URL where the service is accessible
-                           MUST use an internal domain (.internal.lan, .local, etc.)
-                           to prevent DNS resolution loops
+                           Must use a valid domain name (RFC 1123 syntax)
         no_tls_verify: Skip TLS certificate verification for the local service
                        WARNING: Only use for self-signed certificates in development
         path_prefix: Optional path prefix for request routing (e.g., "/api")
@@ -89,13 +86,10 @@ schema TunnelService:
     check:
         # public_hostname must not be empty
         len(public_hostname) > 0, "public_hostname cannot be empty"
-        
         # local_service_url must not be empty
         len(local_service_url) > 0, "local_service_url cannot be empty"
-        
-        # local_service_url must use internal domain to prevent DNS loops
-        is_internal_domain(local_service_url), \
-        "local_service_url must use an internal domain (.internal.lan, .local, .home, etc.) to prevent DNS resolution loops"
+        # local_service_url must use valid domain syntax to prevent DNS loops
+        is_valid_domain(local_service_url), "local_service_url has invalid domain syntax"
 
 # CloudflareTunnel represents a single tunnel connected to a physical device
 # Each tunnel is uniquely associated with one MAC address
@@ -142,7 +136,6 @@ schema CloudflareTunnel:
     check:
         # tunnel_name must not be empty
         len(tunnel_name) > 0, "tunnel_name cannot be empty"
-        
         # mac_address must be valid format (17 chars for colon-separated)
         len(mac_address) == 17, "mac_address must be 17 characters in aa:bb:cc:dd:ee:ff format"
 
@@ -202,6 +195,6 @@ schema CloudflareConfig:
     check:
         # zone_name must not be empty
         len(zone_name) > 0, "zone_name cannot be empty"
-        
         # account_id must not be empty
         len(account_id) > 0, "account_id cannot be empty"
+

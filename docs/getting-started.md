@@ -11,6 +11,8 @@ Before you begin, ensure you have the following:
 - Access to a **UniFi controller**
 - A **Cloudflare account** with Tunnel credentials
 
+> **See [Troubleshooting](troubleshooting.md)** if you encounter issues during setup.
+
 ## Installation
 
 ### 1. Clone the Repository

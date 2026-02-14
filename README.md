@@ -10,7 +10,7 @@ A hybrid DNS infrastructure tool that bridges UniFi network DNS with Cloudflare 
 
 ```bash
 # 1. Install the Dagger module
-dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.4.0
+dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.5.0
 
 # 2. Deploy both UniFi DNS and Cloudflare Tunnel
 dagger call -m unifi-cloudflare-glue deploy \
@@ -38,7 +38,7 @@ See the [examples/homelab-media-stack/](examples/homelab-media-stack/) directory
 | **[Security](docs/security.md)** | Security best practices and credential handling |
 | **[vals Integration](docs/vals-integration.md)** | Secret injection with vals for backend configs |
 | **[Backend Configuration](docs/backend-configuration.md)** | Comprehensive backend and state locking guide |
-| **[Troubleshooting](docs/troubleshooting.md)** | Common issues and solutions *(coming soon)* |
+| **[Troubleshooting](docs/troubleshooting.md)** | Error references, decision trees, and solutions |
 
 ## Architecture
 
@@ -165,7 +165,7 @@ Always pin to specific versions in production:
 
 ```bash
 # ✅ Recommended - pinned version
-dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.4.0
+dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.5.0
 
 # ⚠️ Not recommended - latest main
 dagger install github.com/SolomonHD/unifi-cloudflare-glue@main
@@ -200,7 +200,7 @@ See [docs/security.md](docs/security.md) for comprehensive security guidance.
 # GitHub Actions example
 - name: Deploy infrastructure
   run: |
-    dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.4.0 \
+    dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.5.0 \
       unifi-cloudflare-glue deploy \
       --kcl-source=./kcl \
       --unifi-url=${{ secrets.UNIFI_URL }} \
