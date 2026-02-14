@@ -16,6 +16,22 @@ type MACAddress = str
 # Hostname validates DNS labels according to RFC 1123.
 type Hostname = str
 
+# is_valid_domain_suffix checks if a domain suffix has valid syntax (RFC 1123)
+# Returns True if the domain has valid syntax
+# Validation rules:
+# - Valid characters: alphanumeric, hyphens, dots only
+# - No consecutive dots
+# - No leading/trailing dots
+# - Each label: 1-63 characters
+# - Labels must start and end with alphanumeric
+# - TLD: minimum 2 characters
+is_valid_domain_suffix = lambda domain: str -> bool {
+    labels = domain.split(".")
+    tld = labels[-1]
+    validLabels = [l for l in labels if len(l) > 0 and len(l) <= 63 and l[0].isalnum() and l[-1].isalnum()]
+    len(domain) > 0 and not domain.startswith(".") and not domain.endswith(".") and ".." not in domain and "." in domain and len(validLabels) == len(labels) and len(tld) >= 2
+}
+
 # Distribution controls where service DNS records are published.
 type Distribution = "unifi_only" | "cloudflare_only" | "both"
 
@@ -45,7 +61,7 @@ schema UniFiEndpoint:
     mac_address: MACAddress
     nic_name?: str
     service_cnames: [str] = []
-    
+
     # UniFi-specific fields
     query_unifi: bool = True
     static_ip?: str
@@ -53,10 +69,8 @@ schema UniFiEndpoint:
     check:
         # Validate MAC address length (must be 17 for colon/hyphen format or 12 for no separator)
         len(mac_address) in [12, 17], "MAC address must be 12 chars (aabbccddeeff) or 17 chars (aa:bb:cc:dd:ee:ff or aa-bb-cc-dd-ee-ff)"
-        
         # Each endpoint must have MAC address or static_ip
-        (mac_address != "") or (static_ip != None), \
-            "Each endpoint must have a MAC address or static_ip configured"
+        (mac_address != "") or (static_ip != None), "Each endpoint must have a MAC address or static_ip configured"
 
 # Service represents an application running on an entity.
 schema Service:
@@ -102,8 +116,8 @@ schema UniFiEntity:
         friendly_hostname: DNS-compatible hostname for the device (e.g., "nas-01", "server-prod")
                            Must be 1-63 characters, start/end with letter/digit,
                            and contain only letters, digits, and hyphens.
-        domain: Base domain for DNS records (e.g., "internal.lan", "home.local")
-                Must end in .lan, .local, or .home for safety.
+        domain: Base domain for DNS records (e.g., "internal.lan", "mycompany.com")
+                Can be any valid domain (internal like .internal.lan, .local, .home or public like .com, .net)
         endpoints: List of UniFiEndpoint objects representing network interfaces
         services: List of Service objects representing applications on this device
         unifi_site: UniFi site name where this device is managed (default: "default")
@@ -113,7 +127,7 @@ schema UniFiEntity:
     domain: str
     endpoints: [UniFiEndpoint] = []
     services: [Service] = []
-    
+
     # UniFi-specific fields
     unifi_site: str = "default"
     service_cnames: [str] = []
@@ -121,19 +135,12 @@ schema UniFiEntity:
     check:
         # Each device must have at least one endpoint
         len(endpoints) >= 1, "Each device must have at least one endpoint"
-        
-        # Domain must end in .lan, .local, or .home for safety
-        domain.endswith(".lan") or domain.endswith(".local") or domain.endswith(".home"), \
-            "Domain must end in .lan, .local, or .home for internal DNS safety"
-        
+        # Domain must have valid syntax (RFC 1123)
+        is_valid_domain_suffix(domain), "Domain must have valid syntax (e.g., internal.lan, mycompany.com)"
         # Validate hostname length (RFC 1123: 1-63 characters)
-        len(friendly_hostname) >= 1 and len(friendly_hostname) <= 63, \
-            "Hostname must be 1-63 characters"
-        
+        len(friendly_hostname) >= 1 and len(friendly_hostname) <= 63, "Hostname must be 1-63 characters"
         # Validate hostname contains only valid characters (letters, digits, hyphens)
-        # Basic check: no underscores, spaces, or special characters
-        not ("_" in friendly_hostname or " " in friendly_hostname or "." in friendly_hostname or "@" in friendly_hostname), \
-            "Hostname must not contain underscores, spaces, dots, or special characters"
+        not ("_" in friendly_hostname or " " in friendly_hostname or "." in friendly_hostname or "@" in friendly_hostname), "Hostname must not contain underscores, spaces, dots, or special characters"
 
 # UniFiController holds connection details for the UniFi Controller.
 #
@@ -166,7 +173,6 @@ schema UniFiController:
     check:
         # Port must be in valid range
         port >= 1 and port <= 65535, "Port must be between 1 and 65535"
-        
         # Host should not be empty
         len(host) > 0, "Host must not be empty"
 
@@ -189,7 +195,7 @@ schema UniFiConfig:
 
     Attributes:
         devices: List of UniFiEntity objects representing physical devices
-        default_domain: Default domain for internal DNS records (e.g., "internal.lan")
+        default_domain: Default domain for DNS records (e.g., "internal.lan", "mycompany.com")
         unifi_controller: Connection details for the UniFi Controller
     """
     devices: [UniFiEntity] = []
@@ -197,6 +203,8 @@ schema UniFiConfig:
     unifi_controller: UniFiController = UniFiController {}
 
     check:
-        # Default domain must end in .lan, .local, or .home for safety
-        default_domain.endswith(".lan") or default_domain.endswith(".local") or default_domain.endswith(".home"), \
-            "default_domain must end in .lan, .local, or .home for internal DNS safety"
+        # Default domain must have valid syntax (RFC 1123)
+        is_valid_domain_suffix(default_domain), "default_domain must have valid syntax (e.g., internal.lan, mycompany.com)"
+
+# Export validation function for cross-validation in main.k
+__all__ = ["UniFiConfig", "UniFiEntity", "UniFiEndpoint", "Service", "UniFiController", "is_valid_domain_suffix"]

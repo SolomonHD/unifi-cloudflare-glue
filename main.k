@@ -165,23 +165,23 @@ validate_public_hostname_uniqueness = lambda cfg: UnifiedConfig -> {str:str} {
     } if len(duplicates) > 0 else {}
 }
 
-# Find services with external domains (violating internal domain requirement)
-find_external_domain_services = lambda cfg: UnifiedConfig -> [str] {
+# Find services with invalid domain syntax
+find_invalid_domain_services = lambda cfg: UnifiedConfig -> [str] {
     ["${tunnel.tunnel_name}: ${svc.public_hostname} -> ${svc.local_service_url}" for _, tunnel in cfg.cloudflare.tunnels for svc in tunnel.services if not cloudflare.is_valid_domain(svc.local_service_url)]
 }
 
-# Validate that all local_service_url values use internal domains
-validate_internal_domains = lambda cfg: UnifiedConfig -> {str:str} {
-    external_services = find_external_domain_services(cfg)
+# Validate that all local_service_url values use valid domain syntax
+validate_domain_syntax = lambda cfg: UnifiedConfig -> {str:str} {
+    invalid_services = find_invalid_domain_services(cfg)
 
     # Use conditional expression
     {
-        "error" = "EXTERNAL_DOMAIN_ERROR"
-        "message" = "local_service_url values must use internal domains to prevent DNS loops"
-        "violations" = str(external_services)
-        "valid_domains" = "internal domains: .internal.lan, .local, .home, .home.arpa, .localdomain"
-        "suggestion" = "Change local_service_url to use internal domain suffixes"
-    } if len(external_services) > 0 else {}
+        "error" = "DOMAIN_SYNTAX_ERROR"
+        "message" = "local_service_url values must use valid domain syntax (RFC 1123)"
+        "violations" = str(invalid_services)
+        "valid_domains" = "Any valid domain: internal (.internal.lan, .local, .home) or public (e.g., .com, .net, .io)"
+        "suggestion" = "Ensure local_service_url uses a valid domain format (e.g., http://service.internal.lan:8080 or http://service.mycompany.com:8080)"
+    } if len(invalid_services) > 0 else {}
 }
 
 # Run all validations and collect errors
@@ -190,7 +190,7 @@ validate_all = lambda cfg: UnifiedConfig -> [{str:str}] {
         validate_mac_consistency(cfg)
         validate_hostname_uniqueness(cfg)
         validate_public_hostname_uniqueness(cfg)
-        validate_internal_domains(cfg)
+        validate_domain_syntax(cfg)
     ] if len(result) > 0]
 }
 

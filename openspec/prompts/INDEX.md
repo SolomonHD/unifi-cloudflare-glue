@@ -13,6 +13,8 @@ The following prompts should be executed in order:
 5. **[05-environment-examples.md](05-environment-examples.md)** - Add environment-specific deployment examples
 6. **[06-architecture-diagrams.md](06-architecture-diagrams.md)** - Create Mermaid architecture diagrams
 7. **[07-troubleshooting-guide.md](07-troubleshooting-guide.md)** - Write systematic troubleshooting documentation
+8. **[08-add-version-update-checklist.md](08-add-version-update-checklist.md)** - Add unified version update checklist
+8. **[08-add-version-update-checklist.md](08-add-version-update-checklist.md)** - Add unified version update checklist to CONTRIBUTING.md
 
 ## Overview
 
@@ -59,10 +61,11 @@ Each prompt follows the standard OpenSpec workflow:
 - [ ] Architecture diagrams created using Mermaid
 - [ ] Environment-specific examples in examples/ directory
 - [ ] Troubleshooting guide with decision trees
+- [ ] Version update checklist for all components
 
 ## Status
 
 - **Status**: Not Started
 - **Created**: 2026-02-05
 - **Priority**: High
-- **Estimated Completion**: 2-3 weeks (7 prompts)
+- **Estimated Completion**: 2-3 weeks (8 prompts)

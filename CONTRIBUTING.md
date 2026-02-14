@@ -83,70 +83,146 @@ Examples of breaking changes:
 
 ## Release Process
 
-Follow these steps to create a new release:
+Follow these steps to create a new release. Use the comprehensive checklist below to ensure all version files are updated.
 
-### 1. Prepare the Release
+### Release Checklist
 
-1. Ensure all changes are merged to the main branch
-2. Update the `CHANGELOG.md` with the new version section
-3. Run tests to ensure everything works:
-   ```bash
-   dagger call test-integration \
-       --source=. \
-       --cloudflare-zone=test.example.com \
-       --cloudflare-token=env:CF_TOKEN \
-       --cloudflare-account-id=xxx \
-       --unifi-url=https://unifi.local:8443 \
-       --api-url=https://unifi.local:8443 \
-       --unifi-api-key=env:UNIFI_API_KEY
-   ```
+- [ ] 1.1 Prepare the Release
+  - [ ] Ensure all changes are merged to the main branch
+  - [ ] Update the `CHANGELOG.md` with the new version section
+  - [ ] Run tests to ensure everything works:
+    ```bash
+    dagger call test-integration \
+        --source=. \
+        --cloudflare-zone=test.example.com \
+        --cloudflare-token=env:CF_TOKEN \
+        --cloudflare-account-id=xxx \
+        --unifi-url=https://unifi.local:8443 \
+        --api-url=https://unifi.local:8443 \
+        --unifi-api-key=env:UNIFI_API_KEY
+    ```
 
-### 2. Update Version Files
+- [ ] 1.2 Update Version Files
 
-Update the version in the following files:
+  Update the version in the following files. **Note: Use plain version without `v` prefix (e.g., `0.6.0`)**:
 
-1. **`VERSION`** - Root version file (e.g., `0.1.0`)
-2. **`pyproject.toml`** - Python package version
-3. **`kcl/kcl.mod`** - KCL module version
-4. **`terraform/modules/unifi-dns/versions.tf`** - Module version comment
-5. **`terraform/modules/cloudflare-tunnel/versions.tf`** - Module version comment
+  - [ ] `VERSION` - Root version file (e.g., `0.6.0`)
+    ```bash
+    echo "0.6.0" > VERSION
+    ```
 
-### 3. Create a Git Tag
+  - [ ] `kcl.mod` - `[package].version` field
+    ```bash
+    # Update version field in kcl.mod
+    ```
 
-Git tags use the `v` prefix (per Dagger conventions):
+  - [ ] `pyproject.toml` - `[project].version` field
+    ```bash
+    # Update version field in pyproject.toml
+    ```
 
-```bash
-# Create an annotated tag
-git tag -a v0.1.0 -m "Release version 0.1.0"
+  - [ ] `terraform/modules/unifi-dns/versions.tf` - Module version comment
+    ```hcl
+    # Version: 0.6.0
+    ```
 
-# Push the tag
-git push origin v0.1.0
-```
+  - [ ] `terraform/modules/cloudflare-tunnel/versions.tf` - Module version comment
+    ```hcl
+    # Version: 0.6.0
+    ```
 
-### 4. Verify the Release
+  - [ ] `dagger.json` - `engineVersion` field (if applicable)
+    ```json
+    {
+      "engineVersion": "v0.19.7"
+    }
+    ```
 
-1. Verify the version function works:
-   ```bash
-   dagger call version --source=.
-   ```
+  - [ ] `examples/*/kcl.mod` - Git tag dependencies in examples
 
-2. Verify the tag exists:
-   ```bash
-   git tag | grep v0.1.0
-   ```
+    Update git tag references in all example kcl.mod files:
+    ```bash
+    # Find all examples with git tag dependencies
+    grep -r 'tag = "v' examples/
 
-3. Check that all version references are consistent:
-   ```bash
-   cat VERSION
-   grep "version" pyproject.toml
-   grep "version" kcl/kcl.mod
-   ```
+    # Update each to new version (e.g., v0.6.0 -> v0.7.0)
+    ```
 
-### 5. Document the Release
+- [ ] 1.3 Version Format Conventions
 
-1. Ensure `CHANGELOG.md` has an entry for the new version
-2. Update `README.md` if needed with new version references
-3. Create a GitHub release (if using GitHub) with release notes
+  **Important: Version format varies by location:**
+
+  | Location | Format | Example |
+  |----------|--------|---------|
+  | VERSION file | Plain (no v prefix) | `0.6.0` |
+  | kcl.mod `[package].version` | Plain (no v prefix) | `0.6.0` |
+  | pyproject.toml `[project].version` | Plain (no v prefix) | `0.6.0` |
+  | Git tags | With v prefix | `v0.6.0` |
+  | kcl.mod dependencies (git tag) | With v prefix | `tag = "v0.6.0"` |
+  | dagger.json engineVersion | With v prefix | `v0.19.7` |
+
+- [ ] 1.4 Version Override Capability (Future)
+
+  > **Note:** Version override capability is planned for future automation. When implemented, you will be able to specify different versions for specific components:
+  >
+  > ```bash
+  > # Example (not yet implemented)
+  > dagger call release --version=0.6.0 --kcl-version=0.5.0 --terraform-version=0.6.0
+  > ```
+  >
+  > Default behavior: All components use the same version.
+
+- [ ] 1.5 Create Git Tag
+
+  Git tags use the `v` prefix (per Dagger conventions):
+
+  ```bash
+  # Create an annotated tag
+  git tag -a v0.6.0 -m "Release version 0.6.0"
+
+  # Push the tag
+  git push origin v0.6.0
+  ```
+
+- [ ] 1.6 Verify the Release
+
+  - [ ] Verify the version function works:
+    ```bash
+    dagger call version --source=.
+    ```
+
+  - [ ] Verify the tag exists:
+    ```bash
+    git tag | grep v0.6.0
+    ```
+
+  - [ ] Verify all version references are consistent (see verification commands below)
+
+- [ ] 1.7 Search Verification
+
+  Run these commands to ensure no old version references remain:
+
+  ```bash
+  # Replace 0.5.0 with the OLD version number
+  OLD_VERSION="0.5.0"
+
+  # Search for old version in all files
+  grep -r "$OLD_VERSION" --include="*.tf" --include="*.md" --include="*.toml" --include="*.json" --include="*.k" --include="VERSION" .
+
+  # Check specific files
+  grep "version" pyproject.toml
+  grep "version" kcl.mod
+  cat VERSION
+
+  # Check example kcl.mod files
+  grep -r 'tag = "v' examples/
+  ```
+
+- [ ] 1.8 Document the Release
+
+  - [ ] Ensure `CHANGELOG.md` has an entry for the new version
+  - [ ] Update `README.md` if needed with new version references
+  - [ ] Create a GitHub release (if using GitHub) with release notes
 
 ## Testing
 
