@@ -3,27 +3,21 @@
 ### Requirement: Backend config file paths are consistent
 All Dagger module functions that mount and reference backend configuration files SHALL use consistent file paths and extensions.
 
-#### Scenario: plan() function with remote backend
-- **WHEN** the `plan()` function is called with a remote backend type and backend config file
-- **THEN** the backend config file SHALL be mounted at `/root/.terraform/backend.tfbackend`
-- **AND** the terraform init command SHALL reference `/root/.terraform/backend.tfbackend`
+**Note**: This requirement was previously documented in the base spec but incorrectly implemented in `plan()` and `get_tunnel_secrets()` functions. This change fixes the implementation to match the spec.
 
-#### Scenario: get_tunnel_secrets() function with remote backend
-- **WHEN** the `get_tunnel_secrets()` function is called with a remote backend type and backend config file
-- **THEN** the backend config file SHALL be mounted at `/root/.terraform/backend.tfbackend`
-- **AND** the terraform init command SHALL reference `/root/.terraform/backend.tfbackend`
+#### Scenario: plan() function mounts backend config correctly
+- **WHEN** the `plan()` function mounts a backend config file for the UniFi module (line 1106)
+- **THEN** the file SHALL be mounted at `/root/.terraform/backend.tfbackend`
+- **AND** when mounting for the Cloudflare module (line 1201), the file SHALL also be mounted at `/root/.terraform/backend.tfbackend`
+- **AND** both mount paths SHALL match the path used in the terraform init command
 
-#### Scenario: deploy_unifi() function with remote backend
-- **WHEN** the `deploy_unifi()` function is called with a remote backend type and backend config file
-- **THEN** the backend config file SHALL be mounted at `/root/.terraform/backend.tfbackend`
-- **AND** the terraform init command SHALL reference `/root/.terraform/backend.tfbackend`
+#### Scenario: get_tunnel_secrets() function mounts backend config correctly
+- **WHEN** the `get_tunnel_secrets()` function mounts a backend config file (line 2821)
+- **THEN** the file SHALL be mounted at `/root/.terraform/backend.tfbackend`
+- **AND** the mount path SHALL match the path used in the terraform init command (`-backend-config=/root/.terraform/backend.tfbackend`)
 
-#### Scenario: deploy_cloudflare() function with remote backend
-- **WHEN** the `deploy_cloudflare()` function is called with a remote backend type and backend config file
-- **THEN** the backend config file SHALL be mounted at `/root/.terraform/backend.tfbackend`
-- **AND** the terraform init command SHALL reference `/root/.terraform/backend.tfbackend`
-
-#### Scenario: Consumer repository uses remote S3 backend
-- **WHEN** a consumer repository calls the module with `--backend-type=s3` and `--backend-config-file=./s3-backend.hcl`
-- **THEN** terraform init SHALL successfully read the backend configuration
-- **AND** the deployment SHALL proceed without file not found errors
+#### Scenario: All functions use consistent tfbackend extension
+- **WHEN** any function mounts a backend config file
+- **THEN** the mount path SHALL use the `.tfbackend` extension
+- **AND** the init command reference SHALL use the same `.tfbackend` extension
+- **AND** no function SHALL use the `.hcl` extension for mounted backend config files

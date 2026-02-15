@@ -1101,9 +1101,12 @@ class UnifiCloudflareGlue:
                 backend_hcl = self._generate_backend_block(backend_type)
                 unifi_ctr = unifi_ctr.with_new_file("/module/backend.tf", backend_hcl)
 
-            # Mount backend config file if provided
+            # Process and mount backend config file if provided
             if backend_config_file is not None:
-                unifi_ctr = unifi_ctr.with_file("/root/.terraform/backend.tfbackend", backend_config_file)
+                # Convert YAML to HCL if necessary
+                config_content, _ = await _process_backend_config(backend_config_file)
+                # Mount the processed content as a .tfbackend file
+                unifi_ctr = unifi_ctr.with_new_file("/root/.terraform/backend.tfbackend", config_content)
 
             # Set up environment variables
             unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
@@ -1196,9 +1199,12 @@ class UnifiCloudflareGlue:
                 backend_hcl = self._generate_backend_block(backend_type)
                 cf_ctr = cf_ctr.with_new_file("/module/backend.tf", backend_hcl)
 
-            # Mount backend config file if provided
+            # Process and mount backend config file if provided
             if backend_config_file is not None:
-                cf_ctr = cf_ctr.with_file("/root/.terraform/backend.tfbackend", backend_config_file)
+                # Convert YAML to HCL if necessary
+                config_content, _ = await _process_backend_config(backend_config_file)
+                # Mount the processed content as a .tfbackend file
+                cf_ctr = cf_ctr.with_new_file("/root/.terraform/backend.tfbackend", config_content)
 
             # Set up environment variables
             cf_ctr = cf_ctr.with_env_variable("TF_VAR_cloudflare_account_id", cloudflare_account_id)
@@ -2815,12 +2821,15 @@ Notes
                 except Exception as e:
                     return f"✗ Failed: Could not generate backend configuration\n{str(e)}"
 
-            # Mount backend config file if provided
+            # Process and mount backend config file if provided
             if backend_config_file is not None:
                 try:
-                    tf_ctr = tf_ctr.with_file("/root/.terraform/backend.tfbackend", backend_config_file)
+                    # Convert YAML to HCL if necessary
+                    config_content, _ = await _process_backend_config(backend_config_file)
+                    # Mount the processed content as a .tfbackend file
+                    tf_ctr = tf_ctr.with_new_file("/root/.terraform/backend.tfbackend", config_content)
                 except Exception as e:
-                    return f"✗ Failed: Could not mount backend config file\n{str(e)}"
+                    return f"✗ Failed: Could not process backend config file\n{str(e)}"
 
             # Set up environment variables for Cloudflare provider
             tf_ctr = tf_ctr.with_env_variable("TF_VAR_cloudflare_account_id", cloudflare_account_id)

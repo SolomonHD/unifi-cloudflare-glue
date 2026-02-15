@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Fixed backend config file processing in `plan()` and `get_tunnel_secrets()` functions:**
+  - Updated `plan()` function (UniFi section) to use `_process_backend_config()` and `with_new_file()` instead of direct `with_file()` mounting
+  - Updated `plan()` function (Cloudflare section) to use `_process_backend_config()` and `with_new_file()` instead of direct `with_file()` mounting
+  - Updated `get_tunnel_secrets()` function to use `_process_backend_config()` and `with_new_file()` instead of direct `with_file()` mounting
+  - All three functions now correctly process YAML backend config files (converting to HCL) before mounting
+  - Ensures consistency with `deploy_unifi()` and `deploy_cloudflare()` which already used the correct pattern
+  - Backend config files are now mounted at `/root/.terraform/backend.tfbackend` with proper content processing
+  - Fixes bug where YAML backend config files would fail to work with `plan` and `get-tunnel-secrets` commands
+
 - **Fixed Terraform module loading for external project calls:**
   - Changed `dagger.dag.directory().directory("terraform/modules/...")` to `dagger.dag.current_module().source().directory("terraform/modules/...")`
   - Fixed in all 8+ locations across: `deploy_unifi()`, `deploy_cloudflare()`, `plan()`, `destroy()`, `test_integration()`, `get_tunnel_secrets()`
