@@ -45,8 +45,8 @@ See the [examples/homelab-media-stack/](examples/homelab-media-stack/) directory
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   KCL Config    │────▶│   Generators    │────▶│  JSON Output    │
-│  (services.k)   │     │ (unifi/cloudflare)│    │ (unifi.json)    │
+│   KCL Config    │────▶│     main.k      │────▶│  JSON Output    │
+│  (services.k)   │     │  (entry point)  │     │ (unifi.json)    │
 └─────────────────┘     └─────────────────┘     └────────┬────────┘
                                                          │
                               ┌──────────────────────────┘
@@ -83,9 +83,9 @@ unifi-cloudflare-glue/
 ├── terraform/modules/          # Terraform modules
 │   ├── unifi-dns/              # UniFi DNS management
 │   └── cloudflare-tunnel/      # Cloudflare Tunnel management
-├── kcl/                        # KCL schemas and generators
-│   ├── schemas/                # Schema definitions
-│   └── generators/             # Configuration generators
+├── main.k                      # KCL entry point (exports unifi_output and cf_output)
+├── schemas/                    # KCL schema definitions
+├── generators/                 # KCL output generators (imported by main.k)
 ├── examples/                   # Example configurations
 │   └── homelab-media-stack/    # Complete working example
 └── src/                        # Dagger module source
@@ -255,7 +255,13 @@ pytest tests/unit/test_generator_output.py --cov=tests.unit.test_generator_outpu
 
 ### Expected Generator Output Format
 
-**UniFi Generator Output** (`generators/unifi.k`):
+**Consumer Contract:** Your [`main.k`](main.k) **MUST** export these public variables:
+- `unifi_output`: UniFi DNS configuration (dict/object)
+- `cf_output`: Cloudflare Tunnel configuration (dict/object)
+
+The Dagger module runs `kcl run main.k`, writes the output to a file, then extracts each section using `yq` (e.g., `yq eval '.unifi_output'`). If either variable is missing, you'll get a clear error message.
+
+**UniFi Output** (extracted from `main.k` as `unifi_output`):
 ```json
 {
   "devices": [
@@ -277,7 +283,7 @@ pytest tests/unit/test_generator_output.py --cov=tests.unit.test_generator_outpu
 }
 ```
 
-**Cloudflare Generator Output** (`generators/cloudflare.k`):
+**Cloudflare Output** (extracted from `main.k` as `cf_output`):
 ```json
 {
   "zone_name": "example.com",

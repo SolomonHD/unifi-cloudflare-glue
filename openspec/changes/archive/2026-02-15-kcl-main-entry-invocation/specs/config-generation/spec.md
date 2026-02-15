@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: Method Rename and Signature Update
 
@@ -25,8 +25,6 @@ Then: The call site uses the new name `_generate_test_configs()`
 And: The call passes `cloudflare_account_id` parameter
 And: The call handles the dict return value
 
----
-
 ### Requirement: Cloudflare JSON Structure
 
 The Cloudflare config JSON SHALL match the variable structure defined in `terraform/modules/cloudflare-tunnel/variables.tf`.
@@ -35,7 +33,7 @@ The Cloudflare config JSON SHALL match the variable structure defined in `terraf
 
 #### Scenario: Cloudflare config top-level structure
 Given: The Cloudflare tunnel module at `terraform/modules/cloudflare-tunnel/variables.tf`
-When: The Cloudflare config JSON is generated
+When: The Cloudflare config JSON is generated via `main.k` + `yq` extraction
 Then: The JSON contains `zone_name` field with value from `cloudflare_zone` parameter
 And: The JSON contains `account_id` field with value from `cloudflare_account_id` parameter
 And: The JSON contains `tunnels` field as a map/dict
@@ -61,8 +59,6 @@ When: The `local_service_url` is set
 Then: The URL uses an internal domain (e.g., IP address or `.local` domain)
 And: The URL does NOT contain the `cloudflare_zone` value to prevent DNS loops
 
----
-
 ### Requirement: UniFi JSON Structure
 
 The UniFi config JSON SHALL match the variable structure defined in `terraform/modules/unifi-dns/variables.tf`.
@@ -71,7 +67,7 @@ The UniFi config JSON SHALL match the variable structure defined in `terraform/m
 
 #### Scenario: UniFi config top-level structure
 Given: The UniFi DNS module at `terraform/modules/unifi-dns/variables.tf`
-When: The UniFi config JSON is generated
+When: The UniFi config JSON is generated via `main.k` + `yq` extraction
 Then: The JSON contains `devices` field as a list
 And: The JSON contains `default_domain` field set to `"local"`
 And: The JSON contains `site` field set to `"default"`
@@ -88,8 +84,6 @@ Given: A device entry is being created
 When: The NICs list is populated
 Then: Each NIC contains `mac_address` set to the same MAC used in Cloudflare config
 And: Each NIC contains `nic_name` set to `"eth0"`
-
----
 
 ### Requirement: MAC Address Format and Consistency
 
@@ -113,8 +107,6 @@ Given: A test configuration needs a MAC address
 When: The MAC is selected
 Then: Use `aa:bb:cc:dd:ee:ff` as the default test MAC address
 
----
-
 ### Requirement: Test ID Usage
 
 The test_id SHALL be used consistently across all generated identifiers.
@@ -125,8 +117,6 @@ When: Hostnames and tunnel names are generated
 Then: The test hostname is `f"{test_id}.{cloudflare_zone}"` (e.g., "test-abc12.test.example.com")
 And: The tunnel name is `f"tunnel-{test_id}"` (e.g., "tunnel-test-abc12")
 And: The `friendly_hostname` in UniFi device uses the same `test_id`
-
----
 
 ### Requirement: JSON Serialization
 
@@ -144,8 +134,6 @@ When: The JSON strings are compared
 Then: Both use the same indentation (2 spaces)
 And: Both use standard JSON formatting (no trailing commas)
 
----
-
 ### Requirement: Method Documentation
 
 The method SHALL have comprehensive documentation.
@@ -156,79 +144,3 @@ When: Documentation is reviewed
 Then: The docstring describes all parameters (`test_id`, `cloudflare_zone`, `cloudflare_account_id`)
 And: The docstring describes the return value structure (dict with "cloudflare" and "unifi" keys)
 And: The docstring includes an example return value
-
----
-
-## REMOVED Requirements
-
-None - this change adds new functionality while maintaining backward compatibility of the test flow.
-
----
-
-## MODIFIED Requirements
-
-None - this is a replacement of an existing internal method.
-
----
-
-## Cross-References
-
-### Terraform Variable Definitions
-
-#### Cloudflare Module (`terraform/modules/cloudflare-tunnel/variables.tf`)
-```hcl
-variable "config" {
-  type = object({
-    zone_name  = string
-    account_id = string
-    tunnels = map(object({
-      tunnel_name = string
-      mac_address = string
-      services = list(object({
-        public_hostname   = string
-        local_service_url = string
-        no_tls_verify     = optional(bool, false)
-      }))
-    }))
-  })
-}
-```
-
-#### UniFi Module (`terraform/modules/unifi-dns/variables.tf`)
-```hcl
-variable "config" {
-  type = object({
-    devices = list(object({
-      friendly_hostname = string
-      domain            = optional(string, null)
-      service_cnames    = optional(list(string), [])
-      nics = list(object({
-        mac_address    = string
-        nic_name       = optional(string, null)
-        service_cnames = optional(list(string), [])
-      }))
-    }))
-    default_domain = string
-    site           = optional(string, "default")
-  })
-}
-```
-
----
-
-## Validation Checklist
-
-- [ ] Method renamed from `_generate_test_kcl_config` to `_generate_test_configs`
-- [ ] Method accepts `test_id`, `cloudflare_zone`, and `cloudflare_account_id` parameters
-- [ ] Method returns dict with "cloudflare" and "unifi" keys
-- [ ] Cloudflare JSON contains: `zone_name`, `account_id`, `tunnels`
-- [ ] Cloudflare tunnel entry contains: `tunnel_name`, `mac_address`, `services`
-- [ ] Cloudflare service entry contains: `public_hostname`, `local_service_url`, `no_tls_verify`
-- [ ] UniFi JSON contains: `devices`, `default_domain`, `site`
-- [ ] UniFi device entry contains: `friendly_hostname`, `domain`, `nics`
-- [ ] UniFi NIC entry contains: `mac_address`, `nic_name`
-- [ ] Both configs use the same MAC address in lowercase colon format
-- [ ] MAC address matches validation regex
-- [ ] `test_id` used consistently in tunnel names and hostnames
-- [ ] JSON output is valid and properly formatted
-- [ ] Method has comprehensive docstring with examples
