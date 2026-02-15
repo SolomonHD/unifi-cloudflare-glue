@@ -8,7 +8,7 @@
 output "dns_records" {
   description = "Map of device hostname to DNS record FQDN"
   value = {
-    for name, record in unifi_dns_record.dns_record : name => "${record.name}.${local.dns_records[name].domain}"
+    for name, record in unifi_dns_record.dns_record : name => record.name
   }
 }
 
