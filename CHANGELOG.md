@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Fixed KCL dependency download contamination in configuration generation:**
+  - Modified `generate_unifi_config()` and `generate_cloudflare_config()` to run `kcl mod update` before `kcl run`
+  - Git dependency download messages (e.g., "cloning 'https://github.com/...'") are now captured during `kcl mod update`
+  - Prevents git clone output from contaminating YAML/JSON output stream
+  - Ensures valid JSON generation for KCL modules with git dependencies
+  - Fixes Terraform errors: "Can't access attributes on a primitive-typed value (string)"
+  - Added comprehensive error handling for `kcl mod update` failures with clear remediation hints
+  - Container references properly preserved after dependency download step
+  - Backward compatible - modules without git dependencies continue to work normally
+
 - **Fixed backend config file processing in `plan()` and `get_tunnel_secrets()` functions:**
   - Updated `plan()` function (UniFi section) to use `_process_backend_config()` and `with_new_file()` instead of direct `with_file()` mounting
   - Updated `plan()` function (Cloudflare section) to use `_process_backend_config()` and `with_new_file()` instead of direct `with_file()` mounting
