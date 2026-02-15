@@ -68,20 +68,17 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "this" {
 resource "cloudflare_dns_record" "tunnel" {
   # Create a unique key for each MAC + service combination
   for_each = {
-    for pair in setproduct(
-      keys(local.effective_config.tunnels),
-      flatten([
-        for mac, tunnel in local.effective_config.tunnels : [
-          for idx, svc in tunnel.services : {
-            mac      = mac
-            index    = idx
-            hostname = svc.public_hostname
-          }
-        ]
-      ])
-      ) : "${pair[0]}-${pair[1].index}" => {
-      mac      = pair[0]
-      hostname = pair[1].hostname
+    for item in flatten([
+      for mac, tunnel in local.effective_config.tunnels : [
+        for idx, svc in tunnel.services : {
+          key      = "${mac}-${idx}"
+          mac      = mac
+          hostname = svc.public_hostname
+        }
+      ]
+      ]) : item.key => {
+      mac      = item.mac
+      hostname = item.hostname
     }
   }
 
