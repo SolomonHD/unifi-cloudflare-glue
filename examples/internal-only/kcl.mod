@@ -5,4 +5,4 @@ version = "0.1.0"
 description = "Example internal-only services configuration using unifi-cloudflare-glue"
 
 [dependencies]
-unifi_cloudflare_glue = { git = "https://github.com/SolomonHD/unifi-cloudflare-glue", tag = "v0.9.3" }
+unifi_cloudflare_glue = { git = "https://github.com/SolomonHD/unifi-cloudflare-glue", tag = "v0.10.0" }

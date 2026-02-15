@@ -1,0 +1,67 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  generator-validation:
+    name: Generator Validation Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install KCL
+        run: |
+          curl -sSL https://kcl-lang.io/script/install-cli.sh | bash
+          echo "$HOME/.kcl/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov
+
+      - name: Run generator validation tests
+        run: |
+          pytest tests/unit/test_generator_output.py -v --cov=tests.unit.test_generator_output
+
+      - name: Run all unit tests
+        run: |
+          pytest tests/unit/ -v --cov=tests.unit --cov-append
+
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
+  kcl-validation:
+    name: KCL Module Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install KCL
+        run: |
+          curl -sSL https://kcl-lang.io/script/install-cli.sh | bash
+          echo "$HOME/.kcl/bin" >> $GITHUB_PATH
+
+      - name: Validate KCL syntax
+        run: |
+          kcl run main.k
+
+      - name: Validate generators
+        run: |
+          kcl run generators/unifi.k
+          kcl run generators/cloudflare.k

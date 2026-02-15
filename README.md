@@ -30,6 +30,7 @@ See the [examples/homelab-media-stack/](examples/homelab-media-stack/) directory
 |----------|-------------|
 | **[Architecture](docs/architecture.md)** | Visual diagrams of system components and data flow |
 | **[KCL Configuration Guide](docs/kcl-guide.md)** | Complete KCL schema reference, validation rules, and examples |
+| **[Validation Errors](docs/validation-errors.md)** | Validation error types and how to fix them |
 | **[Deployment Patterns](docs/deployment-patterns.md)** | Environment-specific patterns (dev, staging, production) |
 | **[Getting Started](docs/getting-started.md)** | Installation, prerequisites, and first deployment |
 | **[Dagger Reference](docs/dagger-reference.md)** | Complete function reference with examples |
@@ -223,6 +224,97 @@ Three modes supported:
 | **Remote Backend** | Production | `--backend-type=s3 --backend-config-file=./backend.hcl` |
 
 See [docs/state-management.md](docs/state-management.md) for detailed configuration.
+
+## Testing
+
+### Generator Validation Tests
+
+The project includes comprehensive validation tests for KCL generator output to ensure compatibility with Terraform modules.
+
+**Run all generator tests:**
+```bash
+pytest tests/unit/test_generator_output.py -v
+```
+
+**Run specific test classes:**
+```bash
+# UniFi generator tests only
+pytest tests/unit/test_generator_output.py::TestUniFiGeneratorOutput -v
+
+# Cloudflare generator tests only
+pytest tests/unit/test_generator_output.py::TestCloudflareGeneratorOutput -v
+
+# Edge case tests
+pytest tests/unit/test_generator_output.py::TestEdgeCases -v
+```
+
+**Run with coverage:**
+```bash
+pytest tests/unit/test_generator_output.py --cov=tests.unit.test_generator_output
+```
+
+### Expected Generator Output Format
+
+**UniFi Generator Output** (`generators/unifi.k`):
+```json
+{
+  "devices": [
+    {
+      "friendly_hostname": "media-server",
+      "domain": "internal.lan",
+      "service_cnames": ["jellyfin.internal.lan"],
+      "nics": [
+        {
+          "mac_address": "aa:bb:cc:dd:ee:ff",
+          "nic_name": "eth0",
+          "service_cnames": ["nas.internal.lan"]
+        }
+      ]
+    }
+  ],
+  "default_domain": "internal.lan",
+  "site": "default"
+}
+```
+
+**Cloudflare Generator Output** (`generators/cloudflare.k`):
+```json
+{
+  "zone_name": "example.com",
+  "account_id": "1234567890abcdef1234567890abcdef",
+  "tunnels": {
+    "aa:bb:cc:dd:ee:ff": {
+      "tunnel_name": "media-server",
+      "mac_address": "aa:bb:cc:dd:ee:ff",
+      "services": [
+        {
+          "public_hostname": "jellyfin.example.com",
+          "local_service_url": "http://jellyfin.internal.lan:8096",
+          "no_tls_verify": false
+        }
+      ]
+    }
+  }
+}
+```
+
+### Example Test Failure Output
+
+When a test fails, you'll see detailed error messages like:
+
+```
+✗ Generator Output Validation Failed
+
+Field:      devices[0].nics[0].mac_address
+Expected:   string matching pattern "^[0-9a-f]{2}:[0-9a-f]{2}:..."
+Found:      "AA-BB-CC-DD-EE-FF" (wrong format: uppercase with dashes)
+Hint:       MAC addresses should be normalized to lowercase colon format (aa:bb:cc:dd:ee:ff)
+```
+
+This helps identify issues quickly, such as:
+- Missing required fields (e.g., the `site` field was previously missing)
+- Type mismatches (e.g., `devices` being a string instead of array)
+- Invalid MAC address formats (e.g., uppercase or dashes instead of lowercase colons)
 
 ## Contributing
 

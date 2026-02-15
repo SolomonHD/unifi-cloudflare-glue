@@ -228,6 +228,17 @@ local_service_url = "http://jellyfin.internal.lan:8096"
 
 ### Validation Errors
 
+If you see validation errors like:
+```
+✗ VALIDATION FAILED
+Found 1 validation error(s):
+✗ MAC_CONSISTENCY_ERROR
+```
+
+This means your configuration has issues that must be fixed before deployment. See:
+- [Validation Errors Documentation](../../docs/validation-errors.md) - Detailed error reference
+- [Validation Testing Example](../validation-testing/) - Learn how validation works
+
 Run `kcl run main.k` to see detailed error messages with line numbers.
 
 ## Next Steps
@@ -235,6 +246,7 @@ Run `kcl run main.k` to see detailed error messages with line numbers.
 - **Add more services**: See [multiple-services](../multiple-services/)
 - **Internal-only setup**: See [internal-only](../internal-only/)
 - **External-only setup**: See [external-only](../external-only/)
+- **Learn about validation**: See [validation-testing](../validation-testing/)
 - **Full documentation**: See [KCL Guide](../../docs/kcl-guide.md)
 
 ## License

@@ -195,7 +195,47 @@ validate_all = lambda cfg: UnifiedConfig -> [{str:str}] {
 }
 
 # =============================================================================
-# Section 3: Main Entrypoint and Generation
+# Section 3: Error Formatting and Reporting
+# =============================================================================
+
+# Format MAC_CONSISTENCY_ERROR
+format_mac_error = lambda error: {str:str} -> str {
+    "✗ ${error['error']}\n  Message: ${error['message']}\n  Missing MACs: ${error['missing_macs']}\n  Available UniFi MACs: ${error['available_unifi_macs']}\n  Suggestion: ${error['suggestion']}\n"
+}
+
+# Format DUPLICATE_HOSTNAME_ERROR
+format_hostname_error = lambda error: {str:str} -> str {
+    "✗ ${error['error']}\n  Message: ${error['message']}\n  Duplicate Hostnames: ${error['duplicate_hostnames']}\n  Conflicts: ${error['conflicts']}\n  Suggestion: ${error['suggestion']}\n"
+}
+
+# Format DUPLICATE_PUBLIC_HOSTNAME_ERROR
+format_public_hostname_error = lambda error: {str:str} -> str {
+    "✗ ${error['error']}\n  Message: ${error['message']}\n  Duplicate Public Hostnames: ${error['duplicate_public_hostnames']}\n  Conflicts: ${error['conflicts']}\n  Suggestion: ${error['suggestion']}\n"
+}
+
+# Format DOMAIN_SYNTAX_ERROR
+format_domain_error = lambda error: {str:str} -> str {
+    "✗ ${error['error']}\n  Message: ${error['message']}\n  Violations: ${error['violations']}\n  Valid Examples: ${error['valid_domains']}\n  Suggestion: ${error['suggestion']}\n"
+}
+
+# Format a single validation error using dict field access
+format_single_error = lambda error: {str:str} -> str {
+    format_mac_error(error) if 'missing_macs' in error else (format_hostname_error(error) if 'duplicate_hostnames' in error else (format_public_hostname_error(error) if 'duplicate_public_hostnames' in error else (format_domain_error(error) if 'violations' in error else "✗ UNKNOWN_ERROR\n")))
+}
+
+# Format validation errors for human-readable output
+format_validation_errors = lambda errors: [{str:str}] -> str {
+    header = "✗ VALIDATION FAILED\n\n"
+    error_count = "Found ${str(len(errors))} validation error(s):\n\n"
+
+    # Format each error and join with blank line separator
+    formatted_errors = [format_single_error(err) for err in errors]
+
+    header + error_count + "\n".join(formatted_errors)
+}
+
+# =============================================================================
+# Section 4: Main Entrypoint and Generation
 # =============================================================================
 
 # GenerateResult is the output of the generate() function
@@ -242,8 +282,32 @@ generate = lambda cfg: UnifiedConfig -> GenerateResult {
     build_error_result(errors) if len(errors) > 0 else build_success_result(cfg)
 }
 
+# generate_with_output validates configuration and produces JSON outputs
+# This variant prints validation results and only outputs JSON when valid
+generate_with_output = lambda cfg: UnifiedConfig -> any {
+    errors = validate_all(cfg)
+    result = generate(cfg)
+
+    # When validation fails: print errors, return error result
+    # When validation passes: print success, return result
+    # Use print() + result pattern: print returns None, so we evaluate both and return result
+    print(format_validation_errors(errors)) or result if len(errors) > 0 else print("✓ VALIDATION PASSED\n") or result
+}
+
+# validate_only runs validation without generation
+# Returns validation summary for pre-deployment checks
+validate_only = lambda cfg: UnifiedConfig -> {str:any} {
+    errors = validate_all(cfg)
+
+    {
+        "valid" = len(errors) == 0
+        "error_count" = len(errors)
+        "errors" = errors
+    }
+}
+
 # =============================================================================
-# Section 4: Sample Configuration for Testing
+# Section 5: Sample Configuration for Testing
 # =============================================================================
 
 # Sample UniFi configuration

@@ -53,6 +53,7 @@ generate_unifi_config = lambda config: unifi.UniFiConfig {
     {
         devices = [transform_entity(device) for device in config.devices]
         default_domain = config.default_domain
+        site = config.unifi_controller.site
     }
 }
 
