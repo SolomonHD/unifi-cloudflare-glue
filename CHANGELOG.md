@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Fixed yq YAML-to-JSON parsing bug in KCL generator files:**
+  - Modified `generators/unifi.k` and `generators/cloudflare.k` to output single YAML document
+  - Removed dual-document output (sample_config + result) that caused yq parsing failures
+  - Changed internal `sample_config` to `_sample_config` (private) and output only `result`
+  - Generators now produce single-document YAML compatible with `yq eval -o=json '.'`
+  - Dagger functions `generate-unifi-config` and `generate-cloudflare-config` work correctly
+  - Resolves "mapping values are not allowed in this context" YAML parsing error
+
 - **Fixed yq YAML-to-JSON parsing bug in KCL configuration generation:**
   - Fixed `generate_unifi_config` function (line 142) and `generate_cloudflare_config` function (line 1678)
   - Changed yq command from `yq -o=json '.result'` to `yq eval -o=json '.'`
