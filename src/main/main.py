@@ -403,7 +403,7 @@ class UnifiCloudflareGlue:
 
         # Mount the UniFi DNS Terraform module
         try:
-            tf_module = dagger.dag.directory().directory("terraform/modules/unifi-dns")
+            tf_module = dagger.dag.current_module().source().directory("terraform/modules/unifi-dns")
             ctr = ctr.with_directory("/module", tf_module)
         except Exception:
             pass
@@ -562,7 +562,7 @@ class UnifiCloudflareGlue:
 
         # Mount the Cloudflare Tunnel Terraform module
         try:
-            tf_module = dagger.dag.directory().directory("terraform/modules/cloudflare-tunnel")
+            tf_module = dagger.dag.current_module().source().directory("terraform/modules/cloudflare-tunnel")
             ctr = ctr.with_directory("/module", tf_module)
         except Exception:
             pass
@@ -1091,7 +1091,7 @@ class UnifiCloudflareGlue:
 
             # Mount the UniFi DNS Terraform module
             try:
-                tf_module = dagger.dag.directory().directory("terraform/modules/unifi-dns")
+                tf_module = dagger.dag.current_module().source().directory("terraform/modules/unifi-dns")
                 unifi_ctr = unifi_ctr.with_directory("/module", tf_module)
             except Exception:
                 pass
@@ -1186,7 +1186,7 @@ class UnifiCloudflareGlue:
 
             # Mount the Cloudflare Tunnel Terraform module
             try:
-                tf_module = dagger.dag.directory().directory("terraform/modules/cloudflare-tunnel")
+                tf_module = dagger.dag.current_module().source().directory("terraform/modules/cloudflare-tunnel")
                 cf_ctr = cf_ctr.with_directory("/module", tf_module)
             except Exception:
                 pass
@@ -1470,7 +1470,7 @@ Notes
         ctr = ctr.with_directory("/workspace", cloudflare_dir)
 
         try:
-            tf_module = dagger.dag.directory().directory("terraform/modules/cloudflare-tunnel")
+            tf_module = dagger.dag.current_module().source().directory("terraform/modules/cloudflare-tunnel")
             ctr = ctr.with_directory("/module", tf_module)
         except Exception:
             pass
@@ -1564,7 +1564,7 @@ Notes
         ctr = ctr.with_directory("/workspace", unifi_dir)
 
         try:
-            tf_module = dagger.dag.directory().directory("terraform/modules/unifi-dns")
+            tf_module = dagger.dag.current_module().source().directory("terraform/modules/unifi-dns")
             ctr = ctr.with_directory("/module", tf_module)
         except Exception:
             pass
@@ -2126,7 +2126,7 @@ Notes
             except Exception:
                 # If module not in source, try project root
                 try:
-                    tf_module = dagger.dag.directory().directory("terraform/modules/cloudflare-tunnel")
+                    tf_module = dagger.dag.current_module().source().directory("terraform/modules/cloudflare-tunnel")
                     cf_ctr = cf_ctr.with_directory("/module", tf_module)
                 except Exception:
                     raise RuntimeError("Cloudflare Tunnel Terraform module not found at terraform/modules/cloudflare-tunnel")
@@ -2201,7 +2201,7 @@ Notes
             except Exception:
                 # If module not in source, try project root
                 try:
-                    tf_module = dagger.dag.directory().directory("terraform/modules/unifi-dns")
+                    tf_module = dagger.dag.current_module().source().directory("terraform/modules/unifi-dns")
                     unifi_ctr = unifi_ctr.with_directory("/module", tf_module)
                 except Exception:
                     raise RuntimeError("UniFi DNS Terraform module not found at terraform/modules/unifi-dns")
@@ -2479,7 +2479,7 @@ Notes
                     except Exception:
                         # If module not in source, try project root
                         try:
-                            tf_module = dagger.dag.directory().directory("terraform/modules/cloudflare-tunnel")
+                            tf_module = dagger.dag.current_module().source().directory("terraform/modules/cloudflare-tunnel")
                             cf_cleanup_ctr = cf_cleanup_ctr.with_directory("/module", tf_module)
                         except Exception:
                             raise RuntimeError("Cloudflare Tunnel Terraform module not found at terraform/modules/cloudflare-tunnel")
@@ -2575,7 +2575,7 @@ Notes
                     except Exception:
                         # If module not in source, try project root
                         try:
-                            tf_module = dagger.dag.directory().directory("terraform/modules/unifi-dns")
+                            tf_module = dagger.dag.current_module().source().directory("terraform/modules/unifi-dns")
                             unifi_cleanup_ctr = unifi_cleanup_ctr.with_directory("/module", tf_module)
                         except Exception:
                             raise RuntimeError("UniFi DNS Terraform module not found at terraform/modules/unifi-dns")
@@ -2802,7 +2802,7 @@ Notes
             except Exception:
                 # If module not in source, try project root
                 try:
-                    tf_module = dagger.dag.directory().directory("terraform/modules/cloudflare-tunnel")
+                    tf_module = dagger.dag.current_module().source().directory("terraform/modules/cloudflare-tunnel")
                     tf_ctr = tf_ctr.with_directory("/module", tf_module)
                 except Exception:
                     return "✗ Failed: Cloudflare Tunnel Terraform module not found at terraform/modules/cloudflare-tunnel"
