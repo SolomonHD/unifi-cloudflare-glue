@@ -140,13 +140,14 @@ resource "unifi_dns_record" "dns_record" {
 # We create CNAMEs pointing to the primary hostname for each device
 locals {
   # Flatten all service_cnames from devices and NICs
+  # KCL now provides fully-qualified CNAMEs, so we use them as-is
   cname_records = flatten([
     for device in local.effective_config.devices : concat(
       # Device-level CNAMEs
       [
         for cname in coalesce(device.service_cnames, []) : {
           key      = "${device.friendly_hostname}-${cname}"
-          name     = trimsuffix(cname, ".${coalesce(device.domain, local.effective_config.default_domain)}")
+          name     = cname
           hostname = device.friendly_hostname
           domain   = coalesce(device.domain, local.effective_config.default_domain)
         }
@@ -157,7 +158,7 @@ locals {
         for nic in device.nics : [
           for cname in coalesce(nic.service_cnames, []) : {
             key      = "${device.friendly_hostname}-${nic.nic_name}-${cname}"
-            name     = trimsuffix(cname, ".${coalesce(device.domain, local.effective_config.default_domain)}")
+            name     = cname
             hostname = device.friendly_hostname
             domain   = coalesce(device.domain, local.effective_config.default_domain)
           }

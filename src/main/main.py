@@ -366,6 +366,8 @@ class UnifiCloudflareGlue:
         backend_type: Annotated[str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")] = "local",
         backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
         state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
+        no_cache: Annotated[bool, Doc("Bypass Dagger cache, force fresh execution")] = False,
+        cache_buster: Annotated[str, Doc("Custom cache key (advanced use)")] = "",
     ) -> str:
         """
         Deploy UniFi DNS configuration using Terraform.
@@ -394,6 +396,8 @@ class UnifiCloudflareGlue:
             backend_type: Terraform backend type (local, s3, azurerm, gcs, remote, etc.)
             backend_config_file: Backend configuration HCL file (required for remote backends)
             state_dir: Directory for persistent Terraform state (mutually exclusive with remote backend)
+            no_cache: Bypass Dagger cache by auto-generating an epoch timestamp
+            cache_buster: Custom cache key for advanced use cases (cannot use with --no-cache)
 
         Returns:
             Status message indicating success or failure of deployment
@@ -417,7 +421,30 @@ class UnifiCloudflareGlue:
                 --unifi-url=https://unifi.local:8443 \\
                 --unifi-api-key=env:UNIFI_API_KEY \\
                 --state-dir=./terraform-state
+
+            # Force fresh execution (bypass Dagger cache)
+            dagger call deploy-unifi \\
+                --source=. \\
+                --unifi-url=https://unifi.local:8443 \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --no-cache
+
+            # With custom cache buster (advanced use)
+            dagger call deploy-unifi \\
+                --source=. \\
+                --unifi-url=https://unifi.local:8443 \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --cache-buster=custom-key-123
         """
+        # Validate cache control options
+        if no_cache and cache_buster:
+            return "✗ Failed: Cannot use both --no-cache and --cache-buster"
+
+        # Determine effective cache buster value
+        effective_cache_buster = cache_buster
+        if no_cache:
+            effective_cache_buster = str(int(time.time()))
+
         # Validate authentication - either API key OR username/password, not both
         using_api_key = unifi_api_key is not None
         using_password = unifi_username is not None and unifi_password is not None
@@ -492,18 +519,35 @@ class UnifiCloudflareGlue:
             ctr = ctr.with_secret_variable("TF_VAR_unifi_username", unifi_username)
             ctr = ctr.with_secret_variable("TF_VAR_unifi_password", unifi_password)
 
+        # Add cache buster if provided
+        if effective_cache_buster:
+            ctr = ctr.with_env_variable("CACHE_BUSTER", effective_cache_buster)
+
         # Handle state directory mounting and setup (persistent local state)
         using_persistent_state = state_dir is not None
         if using_persistent_state:
             # Mount state directory
             ctr = ctr.with_directory("/state", state_dir)
+            # Clean up any existing .terraform directory to prevent provider conflicts
+            # This is critical when state_dir is reused between deployments
+            ctr = ctr.with_exec(["sh", "-c", "rm -rf /state/.terraform && echo 'Cleaned .terraform directory'"])
+            _ = await ctr.stdout()
             # Copy module files to state directory
             ctr = ctr.with_exec(["sh", "-c", "cp -r /module/* /state/ && ls -la /state"])
+            _ = await ctr.stdout()  # Ensure copy completes before changing workdir
             # Set working directory to state directory
             ctr = ctr.with_workdir("/state")
         else:
-            # Set working directory to the module (ephemeral or remote backend)
-            ctr = ctr.with_workdir("/module" if "/module" in str(ctr) else "/workspace")
+            # Set working directory to the module (ephemeral) or workspace (remote backend with no module)
+            # Check if /module was mounted by attempting to use it, otherwise fallback to /workspace
+            try:
+                # Test if /module exists by listing it - this is more reliable than string checks
+                test_ctr = ctr.with_exec(["ls", "/module"])
+                _ = await test_ctr.stdout()
+                ctr = ctr.with_workdir("/module")
+            except dagger.ExecError:
+                # /module doesn't exist, use /workspace
+                ctr = ctr.with_workdir("/workspace")
 
         # Run terraform init (with backend config if provided)
         init_cmd = ["terraform", "init"]
@@ -511,7 +555,8 @@ class UnifiCloudflareGlue:
             init_cmd.extend(["-backend-config=/root/.terraform/backend.tfbackend"])
         
         try:
-            init_result = await ctr.with_exec(init_cmd).stdout()
+            ctr = ctr.with_exec(init_cmd)
+            _ = await ctr.stdout()  # Preserve container reference after init
         except dagger.ExecError as e:
             error_msg = f"✗ Failed: Terraform init failed\n{str(e)}"
             if backend_type != "local":
@@ -525,10 +570,9 @@ class UnifiCloudflareGlue:
 
         # Run terraform apply
         try:
-            apply_result = await ctr.with_exec([
-                "terraform", "apply", "-auto-approve"
-            ]).stdout()
-            
+            ctr = ctr.with_exec(["terraform", "apply", "-auto-approve"])
+            apply_result = await ctr.stdout()  # Preserve container reference after apply
+
             result_msg = "✓ Success: UniFi DNS deployment completed"
             if backend_type != "local":
                 result_msg += f"\n  Backend: {backend_type}"
@@ -537,7 +581,10 @@ class UnifiCloudflareGlue:
             result_msg += f"\n\n{apply_result}"
             return result_msg
         except dagger.ExecError as e:
-            return f"✗ Failed: Terraform apply failed\n{str(e)}"
+            error_details = f"Exit code: {e.exit_code}\n"
+            error_details += f"Stdout:\n{e.stdout or 'N/A'}\n"
+            error_details += f"Stderr:\n{e.stderr or 'N/A'}"
+            return f"✗ Failed: Terraform apply failed\n{error_details}"
 
     @function
     async def deploy_cloudflare(
@@ -550,6 +597,8 @@ class UnifiCloudflareGlue:
         backend_type: Annotated[str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")] = "local",
         backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
         state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
+        no_cache: Annotated[bool, Doc("Bypass Dagger cache, force fresh execution")] = False,
+        cache_buster: Annotated[str, Doc("Custom cache key (advanced use)")] = "",
     ) -> str:
         """
         Deploy Cloudflare Tunnel configuration using Terraform.
@@ -571,6 +620,8 @@ class UnifiCloudflareGlue:
             backend_type: Terraform backend type (local, s3, azurerm, gcs, remote, etc.)
             backend_config_file: Backend configuration HCL file (required for remote backends)
             state_dir: Directory for persistent Terraform state (mutually exclusive with remote backend)
+            no_cache: Bypass Dagger cache by auto-generating an epoch timestamp
+            cache_buster: Custom cache key for advanced use cases (cannot use with --no-cache)
 
         Returns:
             Status message indicating success or failure of deployment
@@ -589,7 +640,32 @@ class UnifiCloudflareGlue:
                 --cloudflare-account-id=xxx \\
                 --zone-name=example.com \\
                 --state-dir=./terraform-state
+
+            # Force fresh execution (bypass Dagger cache)
+            dagger call deploy-cloudflare \\
+                --source=. \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --no-cache
+
+            # With custom cache buster (advanced use)
+            dagger call deploy-cloudflare \\
+                --source=. \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --cache-buster=custom-key-123
         """
+        # Validate cache control options
+        if no_cache and cache_buster:
+            return "✗ Failed: Cannot use both --no-cache and --cache-buster"
+
+        # Determine effective cache buster value
+        effective_cache_buster = cache_buster
+        if no_cache:
+            effective_cache_buster = str(int(time.time()))
+
         # Validate backend configuration
         is_valid, error_msg = self._validate_backend_config(backend_type, backend_config_file)
         if not is_valid:
@@ -647,18 +723,35 @@ class UnifiCloudflareGlue:
         ctr = ctr.with_secret_variable("TF_VAR_cloudflare_token", cloudflare_token)
         ctr = ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
 
+        # Add cache buster if provided
+        if effective_cache_buster:
+            ctr = ctr.with_env_variable("CACHE_BUSTER", effective_cache_buster)
+
         # Handle state directory mounting and setup (persistent local state)
         using_persistent_state = state_dir is not None
         if using_persistent_state:
             # Mount state directory
             ctr = ctr.with_directory("/state", state_dir)
+            # Clean up any existing .terraform directory to prevent provider conflicts
+            # This is critical when state_dir is reused between UniFi and Cloudflare deployments
+            ctr = ctr.with_exec(["sh", "-c", "rm -rf /state/.terraform && echo 'Cleaned .terraform directory'"])
+            _ = await ctr.stdout()
             # Copy module files to state directory
             ctr = ctr.with_exec(["sh", "-c", "cp -r /module/* /state/ && ls -la /state"])
+            _ = await ctr.stdout()  # Ensure copy completes before changing workdir
             # Set working directory to state directory
             ctr = ctr.with_workdir("/state")
         else:
-            # Set working directory to the module (ephemeral or remote backend)
-            ctr = ctr.with_workdir("/module" if "/module" in str(ctr) else "/workspace")
+            # Set working directory to the module (ephemeral) or workspace (remote backend with no module)
+            # Check if /module was mounted by attempting to use it, otherwise fallback to /workspace
+            try:
+                # Test if /module exists by listing it - this is more reliable than string checks
+                test_ctr = ctr.with_exec(["ls", "/module"])
+                _ = await test_ctr.stdout()
+                ctr = ctr.with_workdir("/module")
+            except dagger.ExecError:
+                # /module doesn't exist, use /workspace
+                ctr = ctr.with_workdir("/workspace")
 
         # Run terraform init (with backend config if provided)
         init_cmd = ["terraform", "init"]
@@ -666,7 +759,8 @@ class UnifiCloudflareGlue:
             init_cmd.extend(["-backend-config=/root/.terraform/backend.tfbackend"])
         
         try:
-            init_result = await ctr.with_exec(init_cmd).stdout()
+            ctr = ctr.with_exec(init_cmd)
+            _ = await ctr.stdout()  # Preserve container reference after init
         except dagger.ExecError as e:
             error_msg = f"✗ Failed: Terraform init failed\n{str(e)}"
             if backend_type != "local":
@@ -680,9 +774,8 @@ class UnifiCloudflareGlue:
 
         # Run terraform apply
         try:
-            apply_result = await ctr.with_exec([
-                "terraform", "apply", "-auto-approve"
-            ]).stdout()
+            ctr = ctr.with_exec(["terraform", "apply", "-auto-approve"])
+            apply_result = await ctr.stdout()  # Preserve container reference after apply
 
             result_msg = "✓ Success: Cloudflare Tunnel deployment completed"
             if backend_type != "local":
@@ -741,7 +834,10 @@ class UnifiCloudflareGlue:
             result_msg += f"\n\n{apply_result}"
             return result_msg
         except dagger.ExecError as e:
-            return f"✗ Failed: Terraform apply failed\n{str(e)}"
+            error_details = f"Exit code: {e.exit_code}\n"
+            error_details += f"Stdout:\n{e.stdout or 'N/A'}\n"
+            error_details += f"Stderr:\n{e.stderr or 'N/A'}"
+            return f"✗ Failed: Terraform apply failed\n{error_details}"
 
     @function
     async def deploy(
@@ -761,6 +857,8 @@ class UnifiCloudflareGlue:
         backend_type: Annotated[str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")] = "local",
         backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
         state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
+        no_cache: Annotated[bool, Doc("Bypass Dagger cache, force fresh execution")] = False,
+        cache_buster: Annotated[str, Doc("Custom cache key (advanced use)")] = "",
     ) -> str:
         """
         Orchestrate full deployment: UniFi DNS first, then Cloudflare Tunnels.
@@ -793,6 +891,8 @@ class UnifiCloudflareGlue:
             backend_type: Terraform backend type (local, s3, azurerm, gcs, remote, etc.)
             backend_config_file: Backend configuration HCL file (required for remote backends)
             state_dir: Directory for persistent Terraform state (mutually exclusive with remote backend)
+            no_cache: Bypass Dagger cache by auto-generating an epoch timestamp
+            cache_buster: Custom cache key for advanced use cases (cannot use with --no-cache)
 
         Returns:
             Combined status message for both deployments
@@ -837,10 +937,39 @@ class UnifiCloudflareGlue:
                 --backend-type=s3 \\
                 --backend-config-file=./s3-backend.yaml
 
+            # Force fresh execution (bypass Dagger cache)
+            dagger call deploy \\
+                --kcl-source=./kcl \\
+                --unifi-url=https://unifi.local:8443 \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --no-cache
+
+            # With custom cache buster (advanced use)
+            dagger call deploy \\
+                --kcl-source=./kcl \\
+                --unifi-url=https://unifi.local:8443 \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --cache-buster=custom-key-123
+
             # Using vals for secret injection into YAML backend config:
             #   vals eval -f backend.yaml.tmpl > backend.yaml
             #   dagger call deploy ... --backend-config-file=./backend.yaml
         """
+        # Validate cache control options
+        if no_cache and cache_buster:
+            return "✗ Failed: Cannot use both --no-cache and --cache-buster"
+
+        # Determine effective cache buster value
+        effective_cache_buster = cache_buster
+        if no_cache:
+            effective_cache_buster = str(int(time.time()))
+
         results = []
 
         # Phase 1: Generate KCL configurations
@@ -880,6 +1009,8 @@ class UnifiCloudflareGlue:
             backend_type=backend_type,
             backend_config_file=backend_config_file,
             state_dir=state_dir,
+            no_cache=False,  # Already converted to effective_cache_buster
+            cache_buster=effective_cache_buster,
         )
 
         if "✗ Failed" in unifi_result:
@@ -908,6 +1039,8 @@ class UnifiCloudflareGlue:
             backend_type=backend_type,
             backend_config_file=backend_config_file,
             state_dir=state_dir,
+            no_cache=False,  # Already converted to effective_cache_buster
+            cache_buster=effective_cache_buster,
         )
 
         results.append(cloudflare_result)
@@ -1181,6 +1314,9 @@ class UnifiCloudflareGlue:
             # Handle state directory mounting and setup
             if using_persistent_state:
                 unifi_ctr = unifi_ctr.with_directory("/state", state_dir)
+                # Clean up any existing .terraform directory to prevent provider conflicts
+                unifi_ctr = unifi_ctr.with_exec(["sh", "-c", "rm -rf /state/.terraform && echo 'Cleaned .terraform directory'"])
+                _ = await unifi_ctr.stdout()
                 unifi_ctr = unifi_ctr.with_exec(["sh", "-c", "cp -r /module/* /state/ && ls -la /state"])
                 unifi_ctr = unifi_ctr.with_workdir("/state")
             else:
@@ -1275,6 +1411,9 @@ class UnifiCloudflareGlue:
             # Handle state directory mounting and setup
             if using_persistent_state:
                 cf_ctr = cf_ctr.with_directory("/state", state_dir)
+                # Clean up any existing .terraform directory to prevent provider conflicts
+                cf_ctr = cf_ctr.with_exec(["sh", "-c", "rm -rf /state/.terraform && echo 'Cleaned .terraform directory'"])
+                _ = await cf_ctr.stdout()
                 cf_ctr = cf_ctr.with_exec(["sh", "-c", "cp -r /module/* /state/ && ls -la /state"])
                 cf_ctr = cf_ctr.with_workdir("/state")
             else:
@@ -1400,6 +1539,8 @@ Notes
         backend_type: Annotated[str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")] = "local",
         backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
         state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
+        no_cache: Annotated[bool, Doc("Bypass Dagger cache, force fresh execution")] = False,
+        cache_buster: Annotated[str, Doc("Custom cache key (advanced use)")] = "",
     ) -> str:
         """
         Destroy all resources in reverse order: Cloudflare first, then UniFi.
@@ -1431,6 +1572,8 @@ Notes
             backend_type: Terraform backend type (local, s3, azurerm, gcs, remote, etc.)
             backend_config_file: Backend configuration HCL file (required for remote backends)
             state_dir: Directory for persistent Terraform state (mutually exclusive with remote backend)
+            no_cache: Bypass Dagger cache by auto-generating an epoch timestamp
+            cache_buster: Custom cache key for advanced use cases (cannot use with --no-cache)
 
         Returns:
             Combined status message for destruction
@@ -1474,7 +1617,36 @@ Notes
                 --unifi-api-key=env:UNIFI_API_KEY \\
                 --backend-type=s3 \\
                 --backend-config-file=./s3-backend.yaml
+
+            # Force fresh execution (bypass Dagger cache)
+            dagger call destroy \\
+                --kcl-source=./kcl \\
+                --unifi-url=https://unifi.local:8443 \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --no-cache
+
+            # With custom cache buster (advanced use)
+            dagger call destroy \\
+                --kcl-source=./kcl \\
+                --unifi-url=https://unifi.local:8443 \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --cache-buster=custom-key-123
         """
+        # Validate cache control options
+        if no_cache and cache_buster:
+            return "✗ Failed: Cannot use both --no-cache and --cache-buster"
+
+        # Determine effective cache buster value
+        effective_cache_buster = cache_buster
+        if no_cache:
+            effective_cache_buster = str(int(time.time()))
+
         results = []
 
         # Generate configurations first (needed for destroy)
@@ -1558,17 +1730,33 @@ Notes
         ctr = ctr.with_secret_variable("TF_VAR_cloudflare_token", cloudflare_token)
         ctr = ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
 
+        # Add cache buster if provided
+        if effective_cache_buster:
+            ctr = ctr.with_env_variable("CACHE_BUSTER", effective_cache_buster)
+
         # Handle state directory mounting and setup (persistent local state)
         if using_persistent_state:
             # Mount state directory
             ctr = ctr.with_directory("/state", state_dir)
+            # Clean up any existing .terraform directory to prevent provider conflicts
+            ctr = ctr.with_exec(["sh", "-c", "rm -rf /state/.terraform && echo 'Cleaned .terraform directory'"])
+            _ = await ctr.stdout()
             # Copy module files to state directory
             ctr = ctr.with_exec(["sh", "-c", "cp -r /module/* /state/ && ls -la /state"])
+            _ = await ctr.stdout()  # Ensure copy completes before changing workdir
             # Set working directory to state directory
             ctr = ctr.with_workdir("/state")
         else:
-            # Set working directory to the module (ephemeral or remote backend)
-            ctr = ctr.with_workdir("/module" if "/module" in str(ctr) else "/workspace")
+            # Set working directory to the module (ephemeral) or workspace (remote backend with no module)
+            # Check if /module was mounted by attempting to use it, otherwise fallback to /workspace
+            try:
+                # Test if /module exists by listing it - this is more reliable than string checks
+                test_ctr = ctr.with_exec(["ls", "/module"])
+                _ = await test_ctr.stdout()
+                ctr = ctr.with_workdir("/module")
+            except dagger.ExecError:
+                # /module doesn't exist, use /workspace
+                ctr = ctr.with_workdir("/workspace")
 
         # Run terraform init (with backend config if provided)
         init_cmd = ["terraform", "init"]
@@ -1576,7 +1764,8 @@ Notes
             init_cmd.extend(["-backend-config=/root/.terraform/backend.tfbackend"])
 
         try:
-            await ctr.with_exec(init_cmd).stdout()
+            ctr = ctr.with_exec(init_cmd)
+            _ = await ctr.stdout()  # Preserve container reference after init
         except dagger.ExecError as e:
             error_msg = f"✗ Terraform init failed: {str(e)}"
             if backend_type != "local":
@@ -1590,9 +1779,8 @@ Notes
             return "\n".join(results)
 
         try:
-            destroy_result = await ctr.with_exec([
-                "terraform", "destroy", "-auto-approve"
-            ]).stdout()
+            ctr = ctr.with_exec(["terraform", "destroy", "-auto-approve"])
+            destroy_result = await ctr.stdout()  # Preserve container reference after destroy
             results.append("✓ Cloudflare resources destroyed")
             cloudflare_success = True
         except dagger.ExecError as e:
@@ -1657,17 +1845,33 @@ Notes
             ctr = ctr.with_secret_variable("TF_VAR_unifi_username", unifi_username)
             ctr = ctr.with_secret_variable("TF_VAR_unifi_password", unifi_password)
 
+        # Add cache buster if provided
+        if effective_cache_buster:
+            ctr = ctr.with_env_variable("CACHE_BUSTER", effective_cache_buster)
+
         # Handle state directory mounting and setup (persistent local state)
         if using_persistent_state:
             # Mount state directory
             ctr = ctr.with_directory("/state", state_dir)
+            # Clean up any existing .terraform directory to prevent provider conflicts
+            ctr = ctr.with_exec(["sh", "-c", "rm -rf /state/.terraform && echo 'Cleaned .terraform directory'"])
+            _ = await ctr.stdout()
             # Copy module files to state directory
             ctr = ctr.with_exec(["sh", "-c", "cp -r /module/* /state/ && ls -la /state"])
+            _ = await ctr.stdout()  # Ensure copy completes before changing workdir
             # Set working directory to state directory
             ctr = ctr.with_workdir("/state")
         else:
-            # Set working directory to the module (ephemeral or remote backend)
-            ctr = ctr.with_workdir("/module" if "/module" in str(ctr) else "/workspace")
+            # Set working directory to the module (ephemeral) or workspace (remote backend with no module)
+            # Check if /module was mounted by attempting to use it, otherwise fallback to /workspace
+            try:
+                # Test if /module exists by listing it - this is more reliable than string checks
+                test_ctr = ctr.with_exec(["ls", "/module"])
+                _ = await test_ctr.stdout()
+                ctr = ctr.with_workdir("/module")
+            except dagger.ExecError:
+                # /module doesn't exist, use /workspace
+                ctr = ctr.with_workdir("/workspace")
 
         # Run terraform init (with backend config if provided)
         init_cmd = ["terraform", "init"]
@@ -1675,7 +1879,8 @@ Notes
             init_cmd.extend(["-backend-config=/root/.terraform/backend.tfbackend"])
 
         try:
-            await ctr.with_exec(init_cmd).stdout()
+            ctr = ctr.with_exec(init_cmd)
+            _ = await ctr.stdout()  # Preserve container reference after init
         except dagger.ExecError as e:
             error_msg = f"✗ Terraform init failed: {str(e)}"
             if backend_type != "local":
@@ -1689,9 +1894,8 @@ Notes
             return "\n".join(results)
 
         try:
-            destroy_result = await ctr.with_exec([
-                "terraform", "destroy", "-auto-approve"
-            ]).stdout()
+            ctr = ctr.with_exec(["terraform", "destroy", "-auto-approve"])
+            destroy_result = await ctr.stdout()  # Preserve container reference after destroy
             results.append("✓ UniFi resources destroyed")
             unifi_success = True
         except dagger.ExecError as e:
@@ -2948,6 +3152,9 @@ Notes
             if using_persistent_state:
                 # Mount state directory
                 tf_ctr = tf_ctr.with_directory("/state", state_dir)
+                # Clean up any existing .terraform directory to prevent provider conflicts
+                tf_ctr = tf_ctr.with_exec(["sh", "-c", "rm -rf /state/.terraform && echo 'Cleaned .terraform directory'"])
+                _ = await tf_ctr.stdout()
                 # Copy module files to state directory
                 tf_ctr = tf_ctr.with_exec(["sh", "-c", "cp -r /module/* /state/ && ls -la /state"])
                 # Set working directory to state directory
