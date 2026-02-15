@@ -1432,6 +1432,7 @@ kcl run generators/cloudflare.k > cloudflare.json
 # Check UniFi output
 jq '.devices' unifi.json
 jq '.default_domain' unifi.json
+jq '.site' unifi.json  # UniFi site name (default: "default")
 
 # Check Cloudflare output
 jq '.zone_name' cloudflare.json

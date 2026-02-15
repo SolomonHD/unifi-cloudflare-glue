@@ -6,7 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Generator Output Validation Tests:**
+  - Created comprehensive test suite in `tests/unit/test_generator_output.py`
+  - Tests validate KCL generator output matches Terraform module expectations
+  - **UniFi Generator Tests (12 tests):**
+    - Validates required top-level fields: `devices`, `default_domain`, `site`
+    - Validates device structure: `friendly_hostname`, `domain`, `service_cnames`, `nics`
+    - Validates NIC structure: `mac_address` (normalized format), `nic_name` (optional), `service_cnames`
+    - MAC address format validation (lowercase colon format: `aa:bb:cc:dd:ee:ff`)
+  - **Cloudflare Generator Tests (11 tests):**
+    - Validates required top-level fields: `zone_name`, `account_id`, `tunnels`
+    - Validates tunnel structure: `tunnel_name`, `mac_address`, `services`
+    - Validates service structure: `public_hostname`, `local_service_url`, `no_tls_verify`
+    - MAC address normalization verification
+  - **Edge Case Tests (7 tests):**
+    - Empty arrays and objects handling
+    - Multiple NICs per device
+    - MAC normalization for various input formats (AA:BB:CC, aa-bb-cc, AABBCC)
+    - Service distribution filtering (unifi_only, cloudflare_only, both)
+  - **Error Message Tests (4 tests):**
+    - Clear error messages for missing fields
+    - Type mismatch error messages
+    - Invalid MAC format error messages
+    - Field path inclusion in validation errors
+  - pytest fixtures for loading KCL generator output via subprocess
+  - Helper functions for running KCL generators in test mode
+  - `@pytest.mark.generator` marker for selective test execution
+  - CI/CD integration with GitHub Actions (`.github/workflows/test.yml`)
+  - Status check workflow for branch protection (`.github/workflows/status-check.yml`)
+  - Documentation in README for running tests and expected output format
+
 ### Fixed
+
+- **Fixed missing `site` field in UniFi generator output:**
+  - Modified `generate_unifi_config()` in `generators/unifi.k` to include `site` field in generated JSON
+  - Site value sourced from `config.unifi_controller.site` (schema default: `"default"`)
+  - Fixes Terraform "Unsupported attribute" error when referencing `local.effective_config.site`
+  - UniFi Terraform module can now correctly read the site field for DNS record management
+  - Backward compatible - existing configurations with `unifi_controller.site` work immediately
 
 - **Fixed KCL dependency download contamination in configuration generation:**
   - Modified `generate_unifi_config()` and `generate_cloudflare_config()` to run `kcl mod update` before `kcl run`

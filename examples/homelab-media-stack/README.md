@@ -671,6 +671,52 @@ cloudflare_config = cloudflare.CloudflareConfig {
 }
 ```
 
+## Validation
+
+Before deploying, validate your configuration to catch errors early:
+
+### KCL Validation
+
+The KCL module includes built-in validation that checks for common configuration errors:
+
+```bash
+# Run KCL to see validation output
+kcl run main.k
+```
+
+If validation fails, you'll see detailed error messages:
+```
+✗ VALIDATION FAILED
+
+Found 1 validation error(s):
+
+✗ MAC_CONSISTENCY_ERROR
+  Message: Cloudflare tunnels reference MAC addresses not found in UniFi devices
+  Missing MACs: [aa:bb:cc:dd:ee:99]
+  Available UniFi MACs: [aa:bb:cc:dd:ee:01, aa:bb:cc:dd:ee:02]
+  Suggestion: Add UniFi devices with these MAC addresses or update tunnel configurations
+```
+
+### Common Validation Errors
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `MAC_CONSISTENCY_ERROR` | Cloudflare MAC not in UniFi | Ensure tunnel MACs match UniFi device MACs |
+| `DUPLICATE_HOSTNAME_ERROR` | Same hostname used twice | Use unique friendly_hostnames |
+| `DUPLICATE_PUBLIC_HOSTNAME_ERROR` | Same public hostname twice | Use unique public_hostnames |
+| `DOMAIN_SYNTAX_ERROR` | Invalid local_service_url | Use valid domains (e.g., `.internal.lan`) |
+
+### Validation-Only Mode
+
+For CI/CD pipelines or quick checks:
+
+```bash
+# Create a validation script
+kcl run validate.k
+```
+
+See [Validation Testing Example](../validation-testing/) for detailed validation examples.
+
 ## Troubleshooting
 
 ### KCL Issues

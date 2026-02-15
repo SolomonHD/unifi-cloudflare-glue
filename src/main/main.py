@@ -168,7 +168,16 @@ class UnifiCloudflareGlue:
                 f"\nHint: Check your KCL syntax with 'kcl run generators/unifi.k' locally."
             )
 
-        # Step 3: Validate empty output
+        # Step 3: Check for validation errors in output
+        # When KCL validation fails, generate_with_output() prints errors and returns no JSON
+        if "✗" in kcl_output or "VALIDATION" in kcl_output:
+            raise KCLGenerationError(
+                f"✗ KCL validation failed:\n\n{kcl_output}\n"
+                f"\nThe KCL configuration has validation errors that must be fixed.\n"
+                f"See the error messages above for details on what needs to be corrected."
+            )
+
+        # Step 4: Validate empty output
         if not kcl_output or not kcl_output.strip():
             raise KCLGenerationError(
                 "✗ KCL produced empty output:\n"
@@ -1773,7 +1782,16 @@ Notes
                 f"\nHint: Check your KCL syntax with 'kcl run generators/cloudflare.k' locally."
             )
 
-        # Step 3: Validate empty output
+        # Step 3: Check for validation errors in output
+        # When KCL validation fails, generate_with_output() prints errors and returns no JSON
+        if "✗" in kcl_output or "VALIDATION" in kcl_output:
+            raise KCLGenerationError(
+                f"✗ KCL validation failed:\n\n{kcl_output}\n"
+                f"\nThe KCL configuration has validation errors that must be fixed.\n"
+                f"See the error messages above for details on what needs to be corrected."
+            )
+
+        # Step 4: Validate empty output
         if not kcl_output or not kcl_output.strip():
             raise KCLGenerationError(
                 "✗ KCL produced empty output:\n"

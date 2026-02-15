@@ -1,5 +1,7 @@
 [dependencies]
   [dependencies.unifi_cloudflare_glue]
     name = "unifi_cloudflare_glue"
-    full_name = "unifi_cloudflare_glue_0.1.0"
-    version = "0.1.0"
+    full_name = "unifi_cloudflare_glue_0.9.3"
+    version = "0.9.3"
+    url = "https://github.com/SolomonHD/unifi-cloudflare-glue"
+    git_tag = "v0.9.3"

@@ -5,4 +5,4 @@ version = "0.1.0"
 description = "Production environment example with vals secret management"
 
 [dependencies]
-unifi_cloudflare_glue = { git = "https://github.com/SolomonHD/unifi-cloudflare-glue", tag = "v0.9.3" }
+unifi_cloudflare_glue = { git = "https://github.com/SolomonHD/unifi-cloudflare-glue", tag = "v0.10.0" }

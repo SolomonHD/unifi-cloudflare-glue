@@ -89,6 +89,7 @@ generate_cloudflare_config = lambda config: cloudflare.CloudflareConfig {
         account_id = config.account_id
         tunnels = {normalize_mac(mac): {
             tunnel_name = tunnel.tunnel_name
+            mac_address = normalize_mac(tunnel.mac_address)
             # Already TunnelService objects, just pass through
             services = tunnel.services
         } for mac, tunnel in config.tunnels}

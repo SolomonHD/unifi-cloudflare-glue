@@ -1,46 +1,48 @@
 {
-  "zone_name": "example.com",
-  "account_id": "1234567890abcdef1234567890abcdef",
-  "tunnels": {
-    "aa:bb:cc:dd:ee:01": {
-      "tunnel_name": "media-server",
-      "services": [
-        {
-          "public_hostname": "jellyfin.example.com",
-          "local_service_url": "http://jellyfin.internal.lan:8096",
-          "no_tls_verify": false
-        },
-        {
-          "public_hostname": "plex.example.com",
-          "local_service_url": "http://plex.internal.lan:32400",
-          "no_tls_verify": true
-        }
-      ]
-    },
-    "aa:bb:cc:dd:ee:02": {
-      "tunnel_name": "nas-server",
-      "services": [
-        {
-          "public_hostname": "files.example.com",
-          "local_service_url": "https://nas.internal.lan:443",
-          "no_tls_verify": true
-        },
-        {
-          "public_hostname": "sync.example.com",
-          "local_service_url": "http://syncthing.internal.lan:8384",
-          "no_tls_verify": false
-        }
-      ]
-    },
-    "aa:bb:cc:dd:ee:03": {
-      "tunnel_name": "iot-hub",
-      "services": [
-        {
-          "public_hostname": "homeassistant.example.com",
-          "local_service_url": "http://hass.internal.lan:8123",
-          "no_tls_verify": false
-        }
-      ]
+  "result": {
+    "zone_name": "example.com",
+    "account_id": "1234567890abcdef1234567890abcdef",
+    "tunnels": {
+      "aa:bb:cc:dd:ee:01": {
+        "tunnel_name": "media-server",
+        "services": [
+          {
+            "public_hostname": "jellyfin.example.com",
+            "local_service_url": "http://jellyfin.internal.lan:8096",
+            "no_tls_verify": false
+          },
+          {
+            "public_hostname": "plex.example.com",
+            "local_service_url": "http://plex.internal.lan:32400",
+            "no_tls_verify": true
+          }
+        ]
+      },
+      "aa:bb:cc:dd:ee:02": {
+        "tunnel_name": "nas-server",
+        "services": [
+          {
+            "public_hostname": "files.example.com",
+            "local_service_url": "https://nas.internal.lan:443",
+            "no_tls_verify": true
+          },
+          {
+            "public_hostname": "sync.example.com",
+            "local_service_url": "http://syncthing.internal.lan:8384",
+            "no_tls_verify": false
+          }
+        ]
+      },
+      "aa:bb:cc:dd:ee:03": {
+        "tunnel_name": "iot-hub",
+        "services": [
+          {
+            "public_hostname": "homeassistant.example.com",
+            "local_service_url": "http://hass.internal.lan:8123",
+            "no_tls_verify": false
+          }
+        ]
+      }
     }
   }
 }
