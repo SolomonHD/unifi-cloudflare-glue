@@ -20,9 +20,9 @@ output "cname_records" {
   description = "Map of CNAME record name to target FQDN"
   value = {
     for key, record in unifi_dns_record.cname_record : key => {
-      name    = record.name
-      type    = record.type
-      content = record.content
+      name   = record.name
+      type   = record.type
+      target = record.record
     }
   }
 }

@@ -10,7 +10,7 @@ A hybrid DNS infrastructure tool that bridges UniFi network DNS with Cloudflare 
 
 ```bash
 # 1. Install the Dagger module
-dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.9.2
+dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.11.2
 
 # 2. Deploy both UniFi DNS and Cloudflare Tunnel
 dagger call -m unifi-cloudflare-glue deploy \
@@ -166,7 +166,7 @@ Always pin to specific versions in production:
 
 ```bash
 # ✅ Recommended - pinned version
-dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.9.2
+dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.11.2
 
 # ⚠️ Not recommended - latest main
 dagger install github.com/SolomonHD/unifi-cloudflare-glue@main
@@ -201,7 +201,7 @@ See [docs/security.md](docs/security.md) for comprehensive security guidance.
 # GitHub Actions example
 - name: Deploy infrastructure
   run: |
-    dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.9.2 \
+    dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.11.2 \
       unifi-cloudflare-glue deploy \
       --kcl-source=./kcl \
       --unifi-url=${{ secrets.UNIFI_URL }} \
