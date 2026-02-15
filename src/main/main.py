@@ -135,7 +135,27 @@ class UnifiCloudflareGlue:
         # Mount source directory
         ctr = ctr.with_directory("/src", source).with_workdir("/src")
 
-        # Step 1: Run KCL and capture output separately from yq conversion
+        # Step 1: Download KCL dependencies to prevent git clone messages in output
+        # This must be done before 'kcl run' to ensure clean YAML output
+        try:
+            ctr = ctr.with_exec(["kcl", "mod", "update"])
+            await ctr.stdout()  # Wait for completion but don't capture output
+        except dagger.ExecError as e:
+            raise KCLGenerationError(
+                f"✗ Failed to download KCL dependencies:\n"
+                f"Exit code: {e.exit_code}\n"
+                f"Stderr: {e.stderr}\n"
+                f"\nPossible causes:\n"
+                f"  - Network connectivity issues\n"
+                f"  - Invalid kcl.mod syntax\n"
+                f"  - Git repository not accessible\n"
+                f"\nSuggested fixes:\n"
+                f"  - Check your network connection\n"
+                f"  - Validate kcl.mod syntax with 'kcl mod graph' locally\n"
+                f"  - Ensure git dependencies are accessible from this environment"
+            )
+
+        # Step 2: Run KCL and capture output separately from yq conversion
         try:
             ctr = ctr.with_exec(["kcl", "run", "generators/unifi.k"])
             kcl_output = await ctr.stdout()
@@ -148,7 +168,7 @@ class UnifiCloudflareGlue:
                 f"\nHint: Check your KCL syntax with 'kcl run generators/unifi.k' locally."
             )
 
-        # Step 2: Validate empty output
+        # Step 3: Validate empty output
         if not kcl_output or not kcl_output.strip():
             raise KCLGenerationError(
                 "✗ KCL produced empty output:\n"
@@ -159,10 +179,10 @@ class UnifiCloudflareGlue:
                 "\nHint: Run 'kcl run generators/unifi.k' locally to see the raw output."
             )
 
-        # Step 3: Write KCL output to temporary file for yq conversion
+        # Step 4: Write KCL output to temporary file for yq conversion
         ctr = ctr.with_new_file("/tmp/kcl-output.yaml", kcl_output)
 
-        # Step 4: Run yq conversion separately with error handling
+        # Step 5: Run yq conversion separately with error handling
         try:
             ctr = ctr.with_exec(["yq", "eval", "-o=json", "/tmp/kcl-output.yaml"])
             json_result = await ctr.stdout()
@@ -184,7 +204,7 @@ class UnifiCloudflareGlue:
                 f"\nHint: Run 'kcl run generators/unifi.k' locally to see the raw output."
             )
 
-        # Step 5: Validate JSON output
+        # Step 6: Validate JSON output
         try:
             json.loads(json_result)
         except json.JSONDecodeError as je:
@@ -201,7 +221,7 @@ class UnifiCloudflareGlue:
                 f"\nHint: This may indicate a bug in yq or unexpected KCL output format."
             )
 
-        # Step 6: Return as file
+        # Step 7: Return as file
         return dagger.dag.directory().with_new_file("unifi.json", json_result).file("unifi.json")
 
     def _validate_backend_config(
@@ -1720,7 +1740,27 @@ Notes
         # Mount source directory
         ctr = ctr.with_directory("/src", source).with_workdir("/src")
 
-        # Step 1: Run KCL and capture output separately from yq conversion
+        # Step 1: Download KCL dependencies to prevent git clone messages in output
+        # This must be done before 'kcl run' to ensure clean YAML output
+        try:
+            ctr = ctr.with_exec(["kcl", "mod", "update"])
+            await ctr.stdout()  # Wait for completion but don't capture output
+        except dagger.ExecError as e:
+            raise KCLGenerationError(
+                f"✗ Failed to download KCL dependencies:\n"
+                f"Exit code: {e.exit_code}\n"
+                f"Stderr: {e.stderr}\n"
+                f"\nPossible causes:\n"
+                f"  - Network connectivity issues\n"
+                f"  - Invalid kcl.mod syntax\n"
+                f"  - Git repository not accessible\n"
+                f"\nSuggested fixes:\n"
+                f"  - Check your network connection\n"
+                f"  - Validate kcl.mod syntax with 'kcl mod graph' locally\n"
+                f"  - Ensure git dependencies are accessible from this environment"
+            )
+
+        # Step 2: Run KCL and capture output separately from yq conversion
         try:
             ctr = ctr.with_exec(["kcl", "run", "generators/cloudflare.k"])
             kcl_output = await ctr.stdout()
@@ -1733,7 +1773,7 @@ Notes
                 f"\nHint: Check your KCL syntax with 'kcl run generators/cloudflare.k' locally."
             )
 
-        # Step 2: Validate empty output
+        # Step 3: Validate empty output
         if not kcl_output or not kcl_output.strip():
             raise KCLGenerationError(
                 "✗ KCL produced empty output:\n"
@@ -1744,10 +1784,10 @@ Notes
                 "\nHint: Run 'kcl run generators/cloudflare.k' locally to see the raw output."
             )
 
-        # Step 3: Write KCL output to temporary file for yq conversion
+        # Step 4: Write KCL output to temporary file for yq conversion
         ctr = ctr.with_new_file("/tmp/kcl-output.yaml", kcl_output)
 
-        # Step 4: Run yq conversion separately with error handling
+        # Step 5: Run yq conversion separately with error handling
         try:
             ctr = ctr.with_exec(["yq", "eval", "-o=json", "/tmp/kcl-output.yaml"])
             json_result = await ctr.stdout()
@@ -1769,7 +1809,7 @@ Notes
                 f"\nHint: Run 'kcl run generators/cloudflare.k' locally to see the raw output."
             )
 
-        # Step 5: Validate JSON output
+        # Step 6: Validate JSON output
         try:
             json.loads(json_result)
         except json.JSONDecodeError as je:
@@ -1786,7 +1826,7 @@ Notes
                 f"\nHint: This may indicate a bug in yq or unexpected KCL output format."
             )
 
-        # Step 6: Return as file
+        # Step 7: Return as file
         return dagger.dag.directory().with_new_file("cloudflare.json", json_result).file("cloudflare.json")
 
     def _generate_test_id(self) -> str:
