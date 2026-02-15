@@ -1418,11 +1418,11 @@ kcl run schemas/cloudflare.k
 **Generator Testing**:
 
 ```bash
-# Generate UniFi JSON
-kcl run generators/unifi.k > unifi.json
+# Run main.k (generates both unifi_output and cf_output)
+kcl run main.k
 
-# Generate Cloudflare JSON
-kcl run generators/cloudflare.k > cloudflare.json
+# The Dagger module extracts these sections using yq
+# Do NOT run generator files directly (SIGSEGV bug in KCL v0.12.x)
 ```
 
 ### Output Verification

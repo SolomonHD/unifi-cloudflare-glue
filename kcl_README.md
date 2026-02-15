@@ -33,31 +33,27 @@ kcl/
 
 ### Quick Start with Unified Configuration
 
-The recommended way to use this module is through the unified configuration entrypoint:
+The **only** supported way to run KCL for this project is through the main entry point:
 
 ```bash
 kcl run main.k
 ```
 
-This validates your configuration and generates both UniFi and Cloudflare JSON outputs in a single operation.
+This validates your configuration and generates unified output containing both `unifi_output` and `cf_output` sections.
+
+> **Important**: The Dagger module extracts specific sections using `yq`. You should NOT run individual generator files directly (e.g., `kcl run generators/unifi.k`) as this triggers a SIGSEGV bug in KCL v0.12.x when using git dependencies.
+
+Your `main.k` must export these public variables:
+- `unifi_output`: Configuration for UniFi DNS (extracted by Dagger)
+- `cf_output`: Configuration for Cloudflare Tunnel (extracted by Dagger)
 
 ### Validate Configuration
 
 ```bash
-kcl run schemas/base.k
+kcl run main.k
 ```
 
-### Generate UniFi Configuration
-
-```bash
-kcl run generators/unifi.k > unifi.json
-```
-
-### Generate Cloudflare Configuration
-
-```bash
-kcl run generators/cloudflare.k > cloudflare.json
-```
+Validation happens automatically when you run `main.k`. Check for validation errors in the output.
 
 ### Run Validation Tests
 
@@ -95,17 +91,23 @@ Extends base schemas for Cloudflare Tunnel:
 
 ## Generators
 
-Generators transform KCL configurations into provider-specific JSON formats that can be consumed by Terraform modules.
+Generators transform KCL configurations into provider-specific output sections. These are imported and called by [`main.k`](main.k); they should **NOT** be run directly due to a KCL v0.12.x bug with git dependencies.
 
 ### UniFi Generator (`generators/unifi.k`)
 
-The UniFi generator transforms `UniFiConfig` schemas into JSON format for the Terraform UniFi DNS module.
+The UniFi generator transforms `UniFiConfig` schemas into the `unifi_output` section.
 
 #### Usage
 
-```bash
-kcl run generators/unifi.k > unifi_output.json
+Generators are invoked via [`main.k`](main.k):
+
+```kcl
+import generators.unifi as unifi_gen
+
+unifi_output = unifi_gen.generate_unifi_config(config.unifi)
 ```
+
+The Dagger module then extracts `unifi_output` from the unified YAML.
 
 #### Functions
 
@@ -142,13 +144,19 @@ Services are filtered based on their `distribution` field:
 
 ### Cloudflare Generator (`generators/cloudflare.k`)
 
-The Cloudflare generator transforms `CloudflareConfig` schemas into JSON format for the Terraform Cloudflare Tunnel module.
+The Cloudflare generator transforms `CloudflareConfig` schemas into the `cf_output` section.
 
 #### Usage
 
-```bash
-kcl run generators/cloudflare.k > cloudflare_output.json
+Generators are invoked via [`main.k`](main.k):
+
+```kcl
+import generators.cloudflare as cf_gen
+
+cf_output = cf_gen.generate_cloudflare_config(config.cloudflare)
 ```
+
+The Dagger module then extracts `cf_output` from the unified YAML.
 
 #### Functions
 

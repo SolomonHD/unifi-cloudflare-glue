@@ -113,14 +113,15 @@ class UnifiCloudflareGlue:
                 "Hint: Run 'kcl mod init' in your KCL directory to create a module."
             )
 
-        # Check for generator file
+        # Check for main.k entry point
         try:
-            gen_file = source.file("generators/unifi.k")
-            _ = await gen_file.contents()
+            main_file = source.file("main.k")
+            _ = await main_file.contents()
         except Exception:
             raise KCLGenerationError(
-                "✗ Generator file not found: generators/unifi.k\n"
-                "Available generators should be in the 'generators/' subdirectory."
+                "✗ Entry point file not found: main.k\n"
+                "The module requires main.k as the entry point.\n"
+                "Hint: Ensure your KCL module has a main.k file that exports unifi_output."
             )
 
         # Create container with KCL and yq for YAML to JSON conversion
@@ -155,9 +156,9 @@ class UnifiCloudflareGlue:
                 f"  - Ensure git dependencies are accessible from this environment"
             )
 
-        # Step 2: Run KCL and capture output separately from yq conversion
+        # Step 2: Run KCL main.k and capture full output
         try:
-            ctr = ctr.with_exec(["kcl", "run", "generators/unifi.k"])
+            ctr = ctr.with_exec(["kcl", "run", "main.k"])
             kcl_output = await ctr.stdout()
         except dagger.ExecError as e:
             raise KCLGenerationError(
@@ -165,7 +166,7 @@ class UnifiCloudflareGlue:
                 f"Exit code: {e.exit_code}\n"
                 f"Stdout: {e.stdout}\n"
                 f"Stderr: {e.stderr}\n"
-                f"\nHint: Check your KCL syntax with 'kcl run generators/unifi.k' locally."
+                f"\nHint: Check your KCL syntax with 'kcl run main.k' locally."
             )
 
         # Step 3: Check for validation errors in output
@@ -182,38 +183,61 @@ class UnifiCloudflareGlue:
             raise KCLGenerationError(
                 "✗ KCL produced empty output:\n"
                 "Possible causes:\n"
-                "  - Generator file is empty (generators/unifi.k)\n"
+                "  - main.k is empty or has no output statements\n"
                 "  - KCL module has no output statements\n"
                 "  - All configurations are commented out\n"
-                "\nHint: Run 'kcl run generators/unifi.k' locally to see the raw output."
+                "\nHint: Run 'kcl run main.k' locally to see the raw output."
             )
 
-        # Step 4: Write KCL output to temporary file for yq conversion
+        # Step 5: Write KCL output to temporary file for yq extraction
         ctr = ctr.with_new_file("/tmp/kcl-output.yaml", kcl_output)
 
-        # Step 5: Run yq conversion separately with error handling
+        # Step 6: Extract unifi_output section using yq
         try:
-            ctr = ctr.with_exec(["yq", "eval", "-o=json", "/tmp/kcl-output.yaml"])
+            ctr = ctr.with_exec(["yq", "eval", ".unifi_output", "/tmp/kcl-output.yaml"])
+            unifi_yaml = await ctr.stdout()
+        except dagger.ExecError as e:
+            raise KCLGenerationError(
+                f"✗ Failed to extract unifi_output from YAML:\n"
+                f"yq error: {e.stderr}\n"
+                f"\nHint: Ensure your main.k exports 'unifi_output' as a public variable."
+            )
+
+        # Step 7: Check for null output (missing key)
+        if not unifi_yaml or unifi_yaml.strip() == "null" or not unifi_yaml.strip():
+            raise KCLGenerationError(
+                "✗ main.k does not export 'unifi_output':\n"
+                "The main.k file must export a public variable named 'unifi_output'.\n"
+                "\nExample:\n"
+                "  import unifi_cloudflare_glue.generators.unifi as unifi_gen\n"
+                "  unifi_output = unifi_gen.generate_with_output(config)\n"
+                "\nHint: Run 'kcl run main.k' locally to inspect the output structure."
+            )
+
+        # Step 8: Convert extracted YAML to JSON
+        ctr = ctr.with_new_file("/tmp/unifi-output.yaml", unifi_yaml)
+        try:
+            ctr = ctr.with_exec(["yq", "eval", "-o=json", "/tmp/unifi-output.yaml"])
             json_result = await ctr.stdout()
         except dagger.ExecError as e:
-            # Truncate KCL output to 1000 characters for error display
-            truncated_output = kcl_output[:1000] if len(kcl_output) > 1000 else kcl_output
-            ellipsis_indicator = "... (truncated)" if len(kcl_output) > 1000 else ""
+            # Truncate output to 1000 characters for error display
+            truncated_output = unifi_yaml[:1000] if len(unifi_yaml) > 1000 else unifi_yaml
+            ellipsis_indicator = "... (truncated)" if len(unifi_yaml) > 1000 else ""
             raise KCLGenerationError(
                 f"✗ YAML to JSON conversion failed:\n"
                 f"yq error: {e.stderr}\n"
-                f"\nKCL output that failed to parse:\n"
+                f"\nExtracted unifi_output that failed to parse:\n"
                 f"{'-' * 60}\n"
                 f"{truncated_output}{ellipsis_indicator}\n"
                 f"{'-' * 60}\n"
                 f"\nPossible causes:\n"
                 f"  - KCL validation warnings in output\n"
-                f"  - Invalid YAML structure generated by KCL\n"
+                f"  - Invalid YAML structure in unifi_output\n"
                 f"  - KCL syntax errors that produced partial output\n"
-                f"\nHint: Run 'kcl run generators/unifi.k' locally to see the raw output."
+                f"\nHint: Run 'kcl run main.k' locally to see the raw output."
             )
 
-        # Step 6: Validate JSON output
+        # Step 9: Validate JSON output
         try:
             json.loads(json_result)
         except json.JSONDecodeError as je:
@@ -230,7 +254,7 @@ class UnifiCloudflareGlue:
                 f"\nHint: This may indicate a bug in yq or unexpected KCL output format."
             )
 
-        # Step 7: Return as file
+        # Step 10: Return as file
         return dagger.dag.directory().with_new_file("unifi.json", json_result).file("unifi.json")
 
     def _validate_backend_config(
@@ -1727,14 +1751,15 @@ Notes
                 "Hint: Run 'kcl mod init' in your KCL directory to create a module."
             )
 
-        # Check for generator file
+        # Check for main.k entry point
         try:
-            gen_file = source.file("generators/cloudflare.k")
-            _ = await gen_file.contents()
+            main_file = source.file("main.k")
+            _ = await main_file.contents()
         except Exception:
             raise KCLGenerationError(
-                "✗ Generator file not found: generators/cloudflare.k\n"
-                "Available generators should be in the 'generators/' subdirectory."
+                "✗ Entry point file not found: main.k\n"
+                "The module requires main.k as the entry point.\n"
+                "Hint: Ensure your KCL module has a main.k file that exports cf_output."
             )
 
         # Create container with KCL and yq for YAML to JSON conversion
@@ -1769,9 +1794,9 @@ Notes
                 f"  - Ensure git dependencies are accessible from this environment"
             )
 
-        # Step 2: Run KCL and capture output separately from yq conversion
+        # Step 2: Run KCL main.k and capture full output
         try:
-            ctr = ctr.with_exec(["kcl", "run", "generators/cloudflare.k"])
+            ctr = ctr.with_exec(["kcl", "run", "main.k"])
             kcl_output = await ctr.stdout()
         except dagger.ExecError as e:
             raise KCLGenerationError(
@@ -1779,7 +1804,7 @@ Notes
                 f"Exit code: {e.exit_code}\n"
                 f"Stdout: {e.stdout}\n"
                 f"Stderr: {e.stderr}\n"
-                f"\nHint: Check your KCL syntax with 'kcl run generators/cloudflare.k' locally."
+                f"\nHint: Check your KCL syntax with 'kcl run main.k' locally."
             )
 
         # Step 3: Check for validation errors in output
@@ -1796,38 +1821,61 @@ Notes
             raise KCLGenerationError(
                 "✗ KCL produced empty output:\n"
                 "Possible causes:\n"
-                "  - Generator file is empty (generators/cloudflare.k)\n"
+                "  - main.k is empty or has no output statements\n"
                 "  - KCL module has no output statements\n"
                 "  - All configurations are commented out\n"
-                "\nHint: Run 'kcl run generators/cloudflare.k' locally to see the raw output."
+                "\nHint: Run 'kcl run main.k' locally to see the raw output."
             )
 
-        # Step 4: Write KCL output to temporary file for yq conversion
+        # Step 5: Write KCL output to temporary file for yq extraction
         ctr = ctr.with_new_file("/tmp/kcl-output.yaml", kcl_output)
 
-        # Step 5: Run yq conversion separately with error handling
+        # Step 6: Extract cf_output section using yq
         try:
-            ctr = ctr.with_exec(["yq", "eval", "-o=json", "/tmp/kcl-output.yaml"])
+            ctr = ctr.with_exec(["yq", "eval", ".cf_output", "/tmp/kcl-output.yaml"])
+            cf_yaml = await ctr.stdout()
+        except dagger.ExecError as e:
+            raise KCLGenerationError(
+                f"✗ Failed to extract cf_output from YAML:\n"
+                f"yq error: {e.stderr}\n"
+                f"\nHint: Ensure your main.k exports 'cf_output' as a public variable."
+            )
+
+        # Step 7: Check for null output (missing key)
+        if not cf_yaml or cf_yaml.strip() == "null" or not cf_yaml.strip():
+            raise KCLGenerationError(
+                "✗ main.k does not export 'cf_output':\n"
+                "The main.k file must export a public variable named 'cf_output'.\n"
+                "\nExample:\n"
+                "  import unifi_cloudflare_glue.generators.cloudflare as cf_gen\n"
+                "  cf_output = cf_gen.generate_with_output(config)\n"
+                "\nHint: Run 'kcl run main.k' locally to inspect the output structure."
+            )
+
+        # Step 8: Convert extracted YAML to JSON
+        ctr = ctr.with_new_file("/tmp/cf-output.yaml", cf_yaml)
+        try:
+            ctr = ctr.with_exec(["yq", "eval", "-o=json", "/tmp/cf-output.yaml"])
             json_result = await ctr.stdout()
         except dagger.ExecError as e:
-            # Truncate KCL output to 1000 characters for error display
-            truncated_output = kcl_output[:1000] if len(kcl_output) > 1000 else kcl_output
-            ellipsis_indicator = "... (truncated)" if len(kcl_output) > 1000 else ""
+            # Truncate output to 1000 characters for error display
+            truncated_output = cf_yaml[:1000] if len(cf_yaml) > 1000 else cf_yaml
+            ellipsis_indicator = "... (truncated)" if len(cf_yaml) > 1000 else ""
             raise KCLGenerationError(
                 f"✗ YAML to JSON conversion failed:\n"
                 f"yq error: {e.stderr}\n"
-                f"\nKCL output that failed to parse:\n"
+                f"\nExtracted cf_output that failed to parse:\n"
                 f"{'-' * 60}\n"
                 f"{truncated_output}{ellipsis_indicator}\n"
                 f"{'-' * 60}\n"
                 f"\nPossible causes:\n"
                 f"  - KCL validation warnings in output\n"
-                f"  - Invalid YAML structure generated by KCL\n"
+                f"  - Invalid YAML structure in cf_output\n"
                 f"  - KCL syntax errors that produced partial output\n"
-                f"\nHint: Run 'kcl run generators/cloudflare.k' locally to see the raw output."
+                f"\nHint: Run 'kcl run main.k' locally to see the raw output."
             )
 
-        # Step 6: Validate JSON output
+        # Step 9: Validate JSON output
         try:
             json.loads(json_result)
         except json.JSONDecodeError as je:
@@ -1844,7 +1892,7 @@ Notes
                 f"\nHint: This may indicate a bug in yq or unexpected KCL output format."
             )
 
-        # Step 7: Return as file
+        # Step 10: Return as file
         return dagger.dag.directory().with_new_file("cloudflare.json", json_result).file("cloudflare.json")
 
     def _generate_test_id(self) -> str:

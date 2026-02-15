@@ -51,12 +51,15 @@ dagger call generate-cloudflare-config --source=./kcl export --path=./cloudflare
 ### Option 2: Using Local KCL
 
 1. Define your services in KCL (see the [examples](../examples/) directory)
-2. Generate JSON configurations:
+2. Run [`main.k`](../main.k) to generate unified configuration:
     ```bash
-    cd kcl
-    kcl run generators/unifi.k > unifi.json
-    kcl run generators/cloudflare.k > cloudflare.json
+    kcl run main.k
     ```
+   
+   Your [`main.k`](../main.k) must export `unifi_output` and `cf_output` variables. The Dagger module extracts these sections using `yq`.
+
+   > **Note**: Do not run `kcl run generators/unifi.k` directly as it triggers a SIGSEGV bug in KCL v0.12.x with git dependencies. Always run via [`main.k`](../main.k).
+
 3. Apply Terraform configurations:
     ```bash
     cd terraform/modules/unifi-dns
