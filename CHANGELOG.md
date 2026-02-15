@@ -6,7 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Removed `deploy_unifi()` and `deploy_cloudflare()` functions:**
+  - These separate deployment functions have been consolidated into the unified `deploy()` function
+  - Use `--unifi-only` flag for UniFi-only deployments instead of `deploy-unifi`
+  - Use `--cloudflare-only` flag for Cloudflare-only deployments instead of `deploy-cloudflare`
+  - **Migration Guide:**
+    ```bash
+    # Old (removed):
+    dagger call deploy-unifi --source=. --unifi-url=... --unifi-api-key=...
+    
+    # New:
+    dagger call deploy --kcl-source=./kcl --unifi-url=... --unifi-api-key=... --unifi-only
+    
+    # Old (removed):
+    dagger call deploy-cloudflare --source=. --cloudflare-token=... --cloudflare-account-id=... --zone-name=...
+    
+    # New:
+    dagger call deploy --kcl-source=./kcl --cloudflare-token=... --cloudflare-account-id=... --zone-name=... --cloudflare-only
+    ```
+  - The `deploy()` function now uses the combined Terraform module at `terraform/modules/glue/`
+  - Single Terraform init/apply cycle for atomic deployments
+  - Eliminates state sharing issues between separate deployments
+
 ### Added
+
+- **Unified Deployment with Selective Component Flags:**
+  - Added `--unifi-only` flag to `deploy()` for UniFi-only deployments
+  - Added `--cloudflare-only` flag to `deploy()` for Cloudflare-only deployments
+  - Credentials are now optional based on deployment scope:
+    - UniFi-only: Requires UniFi credentials (URL + API key or username/password)
+    - Cloudflare-only: Requires Cloudflare credentials (token, account ID, zone name)
+    - Full deployment (default): Requires both UniFi and Cloudflare credentials
+  - Mutual exclusion validation prevents using both flags simultaneously
+  - Clear error messages indicate which credentials are required for each mode
+  - Conditional config generation skips unnecessary KCL processing based on flags
+  - Preserves container reference after Terraform execution for potential state export
 
 - **Generator Output Validation Tests:**
   - Created comprehensive test suite in `tests/unit/test_generator_output.py`
