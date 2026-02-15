@@ -1103,7 +1103,7 @@ class UnifiCloudflareGlue:
 
             # Mount backend config file if provided
             if backend_config_file is not None:
-                unifi_ctr = unifi_ctr.with_file("/root/.terraform/backend.hcl", backend_config_file)
+                unifi_ctr = unifi_ctr.with_file("/root/.terraform/backend.tfbackend", backend_config_file)
 
             # Set up environment variables
             unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
@@ -1198,7 +1198,7 @@ class UnifiCloudflareGlue:
 
             # Mount backend config file if provided
             if backend_config_file is not None:
-                cf_ctr = cf_ctr.with_file("/root/.terraform/backend.hcl", backend_config_file)
+                cf_ctr = cf_ctr.with_file("/root/.terraform/backend.tfbackend", backend_config_file)
 
             # Set up environment variables
             cf_ctr = cf_ctr.with_env_variable("TF_VAR_cloudflare_account_id", cloudflare_account_id)
@@ -2818,7 +2818,7 @@ Notes
             # Mount backend config file if provided
             if backend_config_file is not None:
                 try:
-                    tf_ctr = tf_ctr.with_file("/root/.terraform/backend.hcl", backend_config_file)
+                    tf_ctr = tf_ctr.with_file("/root/.terraform/backend.tfbackend", backend_config_file)
                 except Exception as e:
                     return f"✗ Failed: Could not mount backend config file\n{str(e)}"
 
