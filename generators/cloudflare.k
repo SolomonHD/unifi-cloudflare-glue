@@ -11,10 +11,7 @@ normalize_mac = base.normalize_mac
 # Filter services for Cloudflare Tunnel (exclude unifi_only)
 # Returns list of services that should be included in Cloudflare configuration
 filter_cloudflare_services = lambda services: [base.Service] {
-    [
-        svc for svc in services
-        if svc.distribution in ["cloudflare_only", "both"]
-    ]
+    [svc for svc in services if svc.distribution in ["cloudflare_only", "both"]]
 }
 
 # Check if a URL contains the public zone name (DNS loop prevention)
@@ -28,7 +25,7 @@ contains_zone_name = lambda url: str, zone: str -> bool {
     # Split on ':' to remove port if present
     host_parts = host_part.split(":")
     hostname = host_parts[0] if len(host_parts) > 0 else host_part
-    
+
     # Check if hostname contains or equals the zone name
     hostname == zone or hostname.endswith(".${zone}")
 }
@@ -63,10 +60,10 @@ resolve_public_hostname = lambda service: base.Service, zone_name: str -> str {
 transform_service = lambda service: base.Service, device_hostname: str, domain: str, zone_name: str, default_no_tls_verify: bool -> any {
     # Resolve internal hostname
     internal_hostname = resolve_internal_hostname(service, device_hostname, domain)
-    
+
     # Build local_service_url
     local_url = build_local_service_url(service.protocol, internal_hostname, service.port)
-    
+
     # Build the service record
     {
         public_hostname = resolve_public_hostname(service, zone_name)
@@ -79,10 +76,7 @@ transform_service = lambda service: base.Service, device_hostname: str, domain: 
 # Returns list of TunnelService records
 transform_tunnel_services = lambda services: [base.Service], device_hostname: str, domain: str, zone_name: str, default_no_tls_verify: bool -> [any] {
     filtered_services = filter_cloudflare_services(services)
-    [
-        transform_service(svc, device_hostname, domain, zone_name, default_no_tls_verify)
-        for svc in filtered_services
-    ]
+    [transform_service(svc, device_hostname, domain, zone_name, default_no_tls_verify) for svc in filtered_services]
 }
 
 # Generate Cloudflare configuration from CloudflareConfig
@@ -93,13 +87,11 @@ generate_cloudflare_config = lambda config: cloudflare.CloudflareConfig {
     {
         zone_name = config.zone_name
         account_id = config.account_id
-        tunnels = {
-            normalize_mac(mac): {
-                tunnel_name = tunnel.tunnel_name
-                services = tunnel.services  # Already TunnelService objects, just pass through
-            }
-            for mac, tunnel in config.tunnels
-        }
+        tunnels = {normalize_mac(mac): {
+            tunnel_name = tunnel.tunnel_name
+            # Already TunnelService objects, just pass through
+            services = tunnel.services
+        } for mac, tunnel in config.tunnels}
     }
 }
 
@@ -111,35 +103,23 @@ generate_cloudflare_from_entities = lambda entities: [base.Entity], zone_name: s
     {
         zone_name = zone_name
         account_id = account_id
-        tunnels = {
-            normalize_mac(entity.endpoints[0].mac_address): {
-                tunnel_name = entity.friendly_hostname
-                services = [
-                    {
-                        public_hostname = resolve_public_hostname(svc, zone_name)
-                        local_service_url = build_local_service_url(
-                            svc.protocol,
-                            resolve_internal_hostname(svc, entity.friendly_hostname, internal_domain),
-                            svc.port
-                        )
-                        no_tls_verify = default_no_tls_verify
-                    }
-                    for svc in filter_cloudflare_services(entity.services)
-                ]
-            }
-            for entity in entities
-            if len(entity.services) > 0 and len(filter_cloudflare_services(entity.services)) > 0 and len(entity.endpoints) > 0
-        }
+        tunnels = {normalize_mac(entity.endpoints[0].mac_address): {
+            tunnel_name = entity.friendly_hostname
+            services = [{
+                public_hostname = resolve_public_hostname(svc, zone_name)
+                local_service_url = build_local_service_url(svc.protocol, resolve_internal_hostname(svc, entity.friendly_hostname, internal_domain), svc.port)
+                no_tls_verify = default_no_tls_verify
+            } for svc in filter_cloudflare_services(entity.services)]
+        } for entity in entities if len(entity.services) > 0 and len(filter_cloudflare_services(entity.services)) > 0 and len(entity.endpoints) > 0}
     }
 }
 
-# Sample configuration for testing
-# This demonstrates the generator with realistic homelab devices
-sample_config = cloudflare.CloudflareConfig {
+# Internal sample configuration - used when running this file directly
+# Not exported as output (see 'result' below for the single output)
+_sample_config = cloudflare.CloudflareConfig {
     zone_name = "example.com"
     account_id = "1234567890abcdef1234567890abcdef"
     default_no_tls_verify = False
-    
     tunnels = {
         # Media server tunnel
         "aa:bb:cc:dd:ee:01": cloudflare.CloudflareTunnel {
@@ -149,15 +129,15 @@ sample_config = cloudflare.CloudflareConfig {
                 cloudflare.TunnelService {
                     public_hostname = "jellyfin.example.com"
                     local_service_url = "http://jellyfin.internal.lan:8096"
-                },
+                }
                 cloudflare.TunnelService {
                     public_hostname = "plex.example.com"
                     local_service_url = "http://plex.internal.lan:32400"
-                    no_tls_verify = True  # Self-signed cert
+                    # Self-signed cert
+                    no_tls_verify = True
                 }
             ]
         }
-        
         # NAS tunnel with multiple services
         "aa-bb-cc-dd-ee-02": cloudflare.CloudflareTunnel {
             tunnel_name = "nas-server"
@@ -167,14 +147,13 @@ sample_config = cloudflare.CloudflareConfig {
                     public_hostname = "files.example.com"
                     local_service_url = "https://nas.internal.lan:443"
                     no_tls_verify = True
-                },
+                }
                 cloudflare.TunnelService {
                     public_hostname = "sync.example.com"
                     local_service_url = "http://syncthing.internal.lan:8384"
                 }
             ]
         }
-        
         # IoT hub with mixed distribution services
         "aa:bb:cc:dd:ee:03": cloudflare.CloudflareTunnel {
             tunnel_name = "iot-hub"
@@ -189,5 +168,6 @@ sample_config = cloudflare.CloudflareConfig {
     }
 }
 
-# Generate and output the configuration
-result = generate_cloudflare_config(sample_config)
+# Single output: generated configuration from sample config
+# This ensures only one YAML document is output, fixing yq parsing issues
+result = generate_cloudflare_config(_sample_config)
