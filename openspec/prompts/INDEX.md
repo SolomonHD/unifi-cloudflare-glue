@@ -15,6 +15,7 @@ The following prompts should be executed in order:
 7. **[07-troubleshooting-guide.md](07-troubleshooting-guide.md)** - Write systematic troubleshooting documentation
 8. **[08-add-version-update-checklist.md](08-add-version-update-checklist.md)** - Add unified version update checklist
 8. **[08-add-version-update-checklist.md](08-add-version-update-checklist.md)** - Add unified version update checklist to CONTRIBUTING.md
+9. **[09-improve-kcl-error-handling.md](09-improve-kcl-error-handling.md)** - Improve KCL error messages in Dagger module
 
 ## Overview
 
@@ -35,6 +36,7 @@ Transform the monolithic 1355-line README into a modular documentation system th
 5. **Visual Documentation**: Add architecture diagrams using Mermaid
 6. **Environment Examples**: Provide dev/staging/prod deployment patterns
 7. **Troubleshooting**: Systematic problem-solving guide
+8. **KCL Error Handling**: Improved error messages for KCL generator failures
 
 ### Dependencies
 
@@ -62,10 +64,14 @@ Each prompt follows the standard OpenSpec workflow:
 - [ ] Environment-specific examples in examples/ directory
 - [ ] Troubleshooting guide with decision trees
 - [ ] Version update checklist for all components
+- [ ] KCL error messages show actual output when yq conversion fails
+- [ ] KCL execution errors include stdout/stderr details
+- [ ] Empty KCL output produces helpful error message with possible causes
 
 ## Status
 
-- **Status**: Not Started
+- **Status**: In Progress
 - **Created**: 2026-02-05
+- **Last Updated**: 2026-02-15
 - **Priority**: High
-- **Estimated Completion**: 2-3 weeks (8 prompts)
+- **Estimated Completion**: 2-3 weeks (9 prompts)

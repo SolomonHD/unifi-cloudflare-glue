@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Improved KCL Error Handling in Configuration Generation:**
+  - Refactored `generate_unifi_config()` and `generate_cloudflare_config()` to separate KCL execution from yq conversion
+  - KCL execution now runs as a separate step with detailed error capture (stdout, stderr, exit code)
+  - Added empty output validation to detect when KCL produces no output (empty generator file, no output statements, etc.)
+  - yq conversion runs separately on a temporary file, preserving KCL output for debugging
+  - When yq conversion fails, the actual KCL output is displayed (truncated to 1000 characters if large)
+  - All error messages include actionable hints for local debugging (e.g., `kcl run generators/unifi.k`)
+  - Container references are properly preserved after each operation step
+  - Leverages existing `KCLGenerationError` exception class for consistent error handling
+  - No breaking changes - function signatures and return types remain identical
+
 ### Fixed
 
 - **Fixed yq YAML-to-JSON parsing bug in KCL generator files:**
