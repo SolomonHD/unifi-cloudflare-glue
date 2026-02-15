@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fixed Terraform module loading for external project calls:**
+  - Changed `dagger.dag.directory().directory("terraform/modules/...")` to `dagger.dag.current_module().source().directory("terraform/modules/...")`
+  - Fixed in all 8+ locations across: `deploy_unifi()`, `deploy_cloudflare()`, `plan()`, `destroy()`, `test_integration()`, `get_tunnel_secrets()`
+  - This ensures Terraform modules are loaded from the Dagger module's source directory, not the caller's working directory
+  - Fixes bug where external projects calling the module would fail with "module not found" errors
+
 ### Added
 
 - **Improved KCL Error Handling in Configuration Generation:**
