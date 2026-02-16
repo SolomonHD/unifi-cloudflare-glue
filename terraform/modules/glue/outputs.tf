@@ -89,3 +89,27 @@ output "cloudflare_record_ids" {
   description = "Map of record keys to Cloudflare record IDs (empty if cloudflare not deployed)"
   value       = length(module.cloudflare_tunnel) > 0 ? module.cloudflare_tunnel[0].record_ids : {}
 }
+
+# ==============================================================================
+# Alias Outputs (for backward compatibility with standalone module naming)
+# ==============================================================================
+# These outputs provide the same values as the cloudflare_* outputs above
+# but with the standalone cloudflare-tunnel module naming convention.
+# This allows get_tunnel_secrets to work regardless of which module created the state.
+
+output "tunnel_ids" {
+  description = "Alias for cloudflare_tunnel_ids (standalone module naming)"
+  value       = length(module.cloudflare_tunnel) > 0 ? module.cloudflare_tunnel[0].tunnel_ids : {}
+}
+
+output "tunnel_tokens" {
+  description = "Alias for cloudflare_tunnel_tokens (standalone module naming)"
+  value       = length(module.cloudflare_tunnel) > 0 ? module.cloudflare_tunnel[0].tunnel_tokens : {}
+  sensitive   = true
+}
+
+output "credentials_json" {
+  description = "Alias for cloudflare_credentials_json (standalone module naming)"
+  value       = length(module.cloudflare_tunnel) > 0 ? module.cloudflare_tunnel[0].credentials_json : {}
+  sensitive   = true
+}
