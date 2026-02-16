@@ -352,8 +352,7 @@ Run integration tests with ephemeral resources against live APIs.
 | `--api-url` | ✅ | UniFi API URL |
 | `--unifi-api-key` | ✅ | UniFi API key |
 | `--test-mac-address` | ❌ | Real device MAC (default: "aa:bb:cc:dd:ee:ff") |
-| `--no-cache` | ❌ | Bypass Dagger cache |
-| `--cache-buster` | ❌ | Custom cache key |
+| `--cache-buster` | ❌ | Unique value to bypass cache (use `$(date +%s)`) |
 
 **Examples:**
 
@@ -377,7 +376,7 @@ dagger call -m unifi-cloudflare-glue test-integration \
     --unifi-url=https://unifi.local:8443 \
     --api-url=https://unifi.local:8443 \
     --unifi-api-key=env:UNIFI_API_KEY \
-    --no-cache
+    --cache-buster=$(date +%s)
 
 # With real MAC address
 dagger call -m unifi-cloudflare-glue test-integration \

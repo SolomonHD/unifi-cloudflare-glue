@@ -8,6 +8,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Breaking Changes
 
+- **Removed `--no-cache` flag from all Dagger functions:**
+  - The `no_cache` boolean parameter has been removed from: `deploy()`, `plan()`, `destroy()`, `test_integration()`
+  - **Why:** Dagger's function-level caching is extremely aggressive. The `no_cache` boolean flag became part of the cache key itself, meaning `no_cache=True` would still return cached results from previous runs with the same flag. This made the flag ineffective for its intended purpose.
+  - **Technical Rationale:** Dagger caches based on `(function_code_hash, param1, param2, ...)`. A static boolean value doesn't change between invocations, so Dagger returns the cached result. True cache busting requires a unique input value on every call.
+  - **Migration Guide:**
+    ```bash
+    # Old (removed - does NOT work):
+    dagger call deploy --no-cache --kcl-source=./kcl ...
+    dagger call plan --no-cache --kcl-source=./kcl ...
+    dagger call destroy --no-cache --kcl-source=./kcl ...
+    dagger call test-integration --no-cache ...
+    
+    # New (use cache-buster with timestamp):
+    dagger call deploy --cache-buster=$(date +%s) --kcl-source=./kcl ...
+    dagger call plan --cache-buster=$(date +%s) --kcl-source=./kcl ...
+    dagger call destroy --cache-buster=$(date +%s) --kcl-source=./kcl ...
+    dagger call test-integration --cache-buster=$(date +%s) ...
+    
+    # Alternative: Use a unique identifier
+    dagger call deploy --cache-buster=build-123 --kcl-source=./kcl ...
+    ```
+  - The `--cache-buster` parameter provides explicit cache control by changing the function input, forcing Dagger to execute fresh
+  - Use `--cache-buster=$(date +%s)` for timestamp-based cache busting on every invocation
+
 - **Removed `deploy_unifi()` and `deploy_cloudflare()` functions:**
   - These separate deployment functions have been consolidated into the unified `deploy()` function
   - Use `--unifi-only` flag for UniFi-only deployments instead of `deploy-unifi`
