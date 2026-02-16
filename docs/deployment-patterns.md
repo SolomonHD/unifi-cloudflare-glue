@@ -30,6 +30,117 @@ Choosing the right deployment pattern is crucial for balancing security, cost, a
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
+## Deployment Type Patterns
+
+Beyond environment-specific configurations (dev/staging/production), you can also choose what infrastructure components to deploy:
+
+| Pattern | Command | Use Case |
+|---------|---------|----------|
+| **Full Deployment** | `dagger call deploy` | Deploy both UniFi DNS and Cloudflare Tunnels |
+| **UniFi-Only** | `dagger call deploy --unifi-only` | Deploy only UniFi DNS records |
+| **Cloudflare-Only** | `dagger call deploy --cloudflare-only` | Deploy only Cloudflare Tunnels |
+
+These patterns are independent of the environment (dev/staging/production) and can be combined with any state management approach.
+
+### Full Deployment Pattern
+
+The default and recommended pattern for most use cases. Deploys both UniFi DNS and Cloudflare Tunnels in the correct order.
+
+**Command:**
+```bash
+dagger call -m unifi-cloudflare-glue deploy \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com
+```
+
+**When to Use:**
+- Services need both local (UniFi) and remote (Cloudflare) access
+- Standard homelab media server setup
+- Full hybrid DNS infrastructure
+
+**How It Works:**
+The unified Terraform module deploys both providers in a single operation:
+1. UniFi DNS records are created first (enables local resolution)
+2. Cloudflare Tunnels are created second (point to now-resolvable local hostnames)
+
+This combined approach simplifies the workflow and eliminates provider conflicts that existed with separate deployments.
+
+### UniFi-Only Deployment Pattern
+
+Deploy only UniFi DNS records without creating Cloudflare Tunnels.
+
+**Command:**
+```bash
+dagger call -m unifi-cloudflare-glue deploy \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --unifi-only
+```
+
+**Required Parameters:**
+- `--kcl-source` - Path to KCL configuration
+- `--unifi-url` - UniFi controller URL
+- `--unifi-api-key` - UniFi API key (or username/password)
+
+**When to Use:**
+- Internal-only services that don't need remote access
+- Local network services (NAS, internal dashboards)
+- Services behind VPN only
+- Testing UniFi DNS configuration before adding Cloudflare
+
+**Considerations:**
+- Services will only be accessible from the local network
+- No remote access via Cloudflare Tunnel
+- Simpler configuration with fewer credentials needed
+
+### Cloudflare-Only Deployment Pattern
+
+Deploy only Cloudflare Tunnels without modifying UniFi DNS.
+
+**Command:**
+```bash
+dagger call -m unifi-cloudflare-glue deploy \
+    --kcl-source=./kcl \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com \
+    --cloudflare-only
+```
+
+**Required Parameters:**
+- `--kcl-source` - Path to KCL configuration
+- `--cloudflare-token` - Cloudflare API token
+- `--cloudflare-account-id` - Cloudflare account ID
+- `--zone-name` - DNS zone name
+
+**When to Use:**
+- UniFi DNS is already configured manually or by another tool
+- Migrating existing services to Cloudflare Tunnels
+- Testing Cloudflare configuration separately
+
+> **⚠️ DNS Loop Prevention Warning:** When using Cloudflare-only deployment, ensure your `local_service_url` values in KCL use internal domain names that are already resolvable via UniFi DNS (or another DNS system). If UniFi DNS is not configured, Cloudflare Tunnel will fail to resolve local hostnames.
+>
+> **Example:**
+> - ✅ Good: `local_service_url: "http://jellyfin.internal.lan:8096"` (resolvable via existing UniFi DNS)
+> - ❌ Bad: `local_service_url: "http://192.168.1.50:8096"` (bypasses DNS, may cause issues)
+
+### Selective Deployment Comparison
+
+| Aspect | Full | UniFi-Only | Cloudflare-Only |
+|--------|------|------------|-----------------|
+| **UniFi DNS Created** | ✅ | ✅ | ❌ |
+| **Cloudflare Tunnels Created** | ✅ | ❌ | ✅ |
+| **Local Access** | ✅ | ✅ | ✅* |
+| **Remote Access** | ✅ | ❌ | ✅ |
+| **Credentials Needed** | Both | UniFi only | Cloudflare only |
+
+*Requires existing DNS resolution (UniFi or otherwise)
+
 ## Development Environment
 
 The development environment prioritizes speed and simplicity over persistence and collaboration.

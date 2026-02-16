@@ -15,14 +15,22 @@ Always pass secrets via environment variables using the `env:` prefix:
 
 ```bash
 # ✅ Correct - uses environment variable
-dagger call deploy-unifi \
+dagger call deploy \
+    --kcl-source=./kcl \
     --unifi-api-key=env:UNIFI_API_KEY \
-    --unifi-url=https://unifi.local:8443
+    --unifi-url=https://unifi.local:8443 \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com
 
 # ❌ Incorrect - never pass secrets directly on command line
-dagger call deploy-unifi \
+dagger call deploy \
+    --kcl-source=./kcl \
     --unifi-api-key="actual-secret-value" \
-    --unifi-url=https://unifi.local:8443
+    --unifi-url=https://unifi.local:8443 \
+    --cloudflare-token="actual-token" \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com
 ```
 
 > **See [Troubleshooting](troubleshooting.md#dagger-module-errors)** for help with secret parameter errors.
@@ -31,10 +39,10 @@ dagger call deploy-unifi \
 
 | Variable | Description | Used By |
 |----------|-------------|---------|
-| `UNIFI_API_KEY` | UniFi API key (recommended) | `deploy-unifi`, `deploy`, `destroy` |
-| `UNIFI_USER` | UniFi username (alternative) | `deploy-unifi`, `deploy`, `destroy` |
-| `UNIFI_PASS` | UniFi password (alternative) | `deploy-unifi`, `deploy`, `destroy` |
-| `CF_TOKEN` | Cloudflare API token | `deploy-cloudflare`, `deploy`, `destroy` |
+| `UNIFI_API_KEY` | UniFi API key (recommended) | `deploy`, `destroy` (with `--unifi-only` or full deployment) |
+| `UNIFI_USER` | UniFi username (alternative) | `deploy`, `destroy` (with `--unifi-only` or full deployment) |
+| `UNIFI_PASS` | UniFi password (alternative) | `deploy`, `destroy` (with `--unifi-only` or full deployment) |
+| `CF_TOKEN` | Cloudflare API token | `deploy`, `destroy` (with `--cloudflare-only` or full deployment) |
 
 ## Authentication Methods
 
@@ -46,7 +54,13 @@ More secure, single token authentication.
 
 ```bash
 export UNIFI_API_KEY="your-api-key"
-dagger call deploy-unifi --unifi-api-key=env:UNIFI_API_KEY ...
+dagger call deploy \
+    --kcl-source=./kcl \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --unifi-url=https://unifi.local:8443 \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com
 ```
 
 #### 2. Username/Password
@@ -56,9 +70,14 @@ Traditional authentication method.
 ```bash
 export UNIFI_USER="admin"
 export UNIFI_PASS="password"
-dagger call deploy-unifi \
+dagger call deploy \
+    --kcl-source=./kcl \
     --unifi-username=env:UNIFI_USER \
-    --unifi-password=env:UNIFI_PASS ...
+    --unifi-password=env:UNIFI_PASS \
+    --unifi-url=https://unifi.local:8443 \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com
 ```
 
 > **Note**: You cannot use both methods simultaneously. The module will reject ambiguous authentication configurations.

@@ -51,12 +51,13 @@ variable "cloudflare_config_file" {
 # ==============================================================================
 
 variable "unifi_url" {
-  description = "URL of the UniFi controller (e.g., https://unifi.local:8443)"
+  description = "URL of the UniFi controller (e.g., https://unifi.local:8443). Optional for cloudflare-only deployments."
   type        = string
+  default     = ""
 }
 
 variable "api_url" {
-  description = "URL of the UniFi API (defaults to unifi_url)"
+  description = "URL of the UniFi API (defaults to unifi_url). Optional for cloudflare-only deployments."
   type        = string
   default     = ""
 }
@@ -103,7 +104,20 @@ variable "strict_mode" {
 # ==============================================================================
 
 variable "cloudflare_token" {
-  description = "Cloudflare API token with permissions: Zone:Read, DNS:Edit, Cloudflare Tunnel:Edit"
+  description = "Cloudflare API token with permissions: Zone:Read, DNS:Edit, Cloudflare Tunnel:Edit. Can be provided via CLOUDFLARE_API_TOKEN environment variable instead."
   type        = string
   sensitive   = true
+  default     = ""
+}
+
+variable "cloudflare_account_id" {
+  description = "Cloudflare Account ID (can override value in config)"
+  type        = string
+  default     = ""
+}
+
+variable "zone_name" {
+  description = "DNS zone name (can override value in config)"
+  type        = string
+  default     = ""
 }

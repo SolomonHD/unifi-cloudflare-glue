@@ -3,7 +3,7 @@
 *.tfstate.*
 terraform-state/  # Persistent local state directory
 
-# Terraform plan files
+# Terraform plan files comment here
 *.tfplan
 
 # Terraform lock file (optional - uncomment if you don't want to commit this)
