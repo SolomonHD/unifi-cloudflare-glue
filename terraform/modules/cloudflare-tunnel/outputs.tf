@@ -46,3 +46,11 @@ output "record_ids" {
     for key, record in cloudflare_dns_record.tunnel : key => record.id
   }
 }
+
+output "tunnel_tokens" {
+  description = "Map of MAC address to tunnel token (base64-encoded tunnel_secret for cloudflared service install)"
+  value = {
+    for mac, tunnel in cloudflare_zero_trust_tunnel_cloudflared.this : mac => base64encode(random_password.tunnel_secret[mac].result)
+  }
+  sensitive = true
+}

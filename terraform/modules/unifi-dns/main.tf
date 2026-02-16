@@ -5,15 +5,10 @@
 # ==============================================================================
 # Provider Configuration
 # ==============================================================================
-
-# Configure the UniFi provider with credentials from variables
-provider "unifi" {
-  api_url        = var.api_url != "" ? var.api_url : var.unifi_url
-  api_key        = var.unifi_api_key != "" ? var.unifi_api_key : null
-  username       = var.unifi_username != "" ? var.unifi_username : null
-  password       = var.unifi_password != "" ? var.unifi_password : null
-  allow_insecure = var.unifi_insecure
-}
+# Provider configuration is inherited from parent module or configured locally
+# When called from glue module: provider is passed explicitly from parent
+# When used standalone: provider is configured via required_providers in versions.tf
+# No provider block here - allows both usage patterns
 
 # ==============================================================================
 # Locals

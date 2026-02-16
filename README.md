@@ -105,31 +105,79 @@ dagger call -m unifi-cloudflare-glue deploy \
     --cloudflare-account-id=xxx \
     --zone-name=example.com
 
-# Deploy only UniFi
-dagger call -m unifi-cloudflare-glue deploy-unifi \
-    --source=./kcl \
+# Deploy only UniFi DNS
+dagger call -m unifi-cloudflare-glue deploy \
+    --kcl-source=./kcl \
     --unifi-url=https://unifi.local:8443 \
-    --unifi-api-key=env:UNIFI_API_KEY
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --unifi-only
 
-# Deploy only Cloudflare
-dagger call -m unifi-cloudflare-glue deploy-cloudflare \
-    --source=./kcl \
+# Deploy only Cloudflare Tunnels
+dagger call -m unifi-cloudflare-glue deploy \
+    --kcl-source=./kcl \
     --cloudflare-token=env:CF_TOKEN \
     --cloudflare-account-id=xxx \
-    --zone-name=example.com
+    --zone-name=example.com \
+    --cloudflare-only
 ```
+
+> **Note:** The `--unifi-only` and `--cloudflare-only` flags are mutually exclusive. You cannot use both flags in the same command.
+
+> **API Simplification:** Previous versions had separate `deploy-unifi` and `deploy-cloudflare` functions. These have been unified into the single `deploy` command with selective flags. If you're following external guides or blog posts referencing the old functions, use the examples above instead.
 
 ### Plan and Destroy
 
 ```bash
-# Generate plans without applying
+# Generate plans without applying (full deployment)
 dagger call -m unifi-cloudflare-glue plan \
-    --kcl-source=./kcl ... \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=xxx \
+    --zone-name=example.com \
+    export --path=./plans
+
+# Plan UniFi-only deployment
+dagger call -m unifi-cloudflare-glue plan \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --unifi-only \
+    export --path=./plans
+
+# Plan Cloudflare-only deployment
+dagger call -m unifi-cloudflare-glue plan \
+    --kcl-source=./kcl \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=xxx \
+    --zone-name=example.com \
+    --cloudflare-only \
     export --path=./plans
 
 # Destroy all resources (Cloudflare first, then UniFi)
 dagger call -m unifi-cloudflare-glue destroy \
-    --kcl-source=./kcl ...
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=xxx \
+    --zone-name=example.com
+
+# Destroy only UniFi resources
+dagger call -m unifi-cloudflare-glue destroy \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --unifi-only
+
+# Destroy only Cloudflare resources
+dagger call -m unifi-cloudflare-glue destroy \
+    --kcl-source=./kcl \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=xxx \
+    --zone-name=example.com \
+    --cloudflare-only
 ```
 
 ### Generate Configurations

@@ -7,7 +7,10 @@ Complete reference for all Dagger functions in the `unifi-cloudflare-glue` modul
 - [Installation](#installation)
 - [Configuration Generation](#configuration-generation)
 - [Deployment Functions](#deployment-functions)
+  - [`deploy`](#deploy) - Unified deployment with selective flags
+  - [`destroy`](#destroy) - Resource destruction with selective flags
 - [Plan Generation](#plan-generation)
+  - [`plan`](#plan) - Generate execution plans with selective flags
 - [Testing](#testing)
 - [Module Calling Patterns](#module-calling-patterns)
 - [CI/CD Integration](#cicd-integration)
@@ -72,31 +75,43 @@ dagger call generate-cloudflare-config --source=./kcl export --path=./cloudflare
 
 ### `deploy`
 
-Full deployment orchestration (UniFi first, then Cloudflare).
+Unified deployment orchestration for both UniFi DNS and Cloudflare Tunnels.
 
-Deploys in the correct order: UniFi DNS first (creates local DNS), then Cloudflare Tunnels (point to now-resolvable hostnames).
+Deploys in the correct order: UniFi DNS first (creates local DNS), then Cloudflare Tunnels (point to now-resolvable hostnames). Use selective flags (`--unifi-only`, `--cloudflare-only`) to deploy individual components.
 
 **Parameters:**
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `--kcl-source` | ✅ | Path to your KCL configuration directory |
-| `--unifi-url` | ✅ | UniFi controller URL (e.g., `https://unifi.local:8443`) |
+| `--unifi-url` | ✅* | UniFi controller URL (e.g., `https://unifi.local:8443`) |
 | `--unifi-api-key` | ✅* | UniFi API key (or use username/password) |
-| `--cloudflare-token` | ✅ | Cloudflare API token |
-| `--cloudflare-account-id` | ✅ | Cloudflare account ID |
-| `--zone-name` | ✅ | DNS zone name (e.g., `example.com`) |
+| `--cloudflare-token` | ✅* | Cloudflare API token |
+| `--cloudflare-account-id` | ✅* | Cloudflare account ID |
+| `--zone-name` | ✅* | DNS zone name (e.g., `example.com`) |
+| `--unifi-only` | ❌ | Deploy only UniFi DNS resources |
+| `--cloudflare-only` | ❌ | Deploy only Cloudflare Tunnel resources |
 | `--unifi-insecure` | ❌ | Skip TLS verification (for self-signed certs) |
 | `--terraform-version` | ❌ | Terraform version (default: "latest") |
 | `--kcl-version` | ❌ | KCL version (default: "latest") |
 | `--state-dir` | ❌ | Path for persistent local state |
 
-*Use `--unifi-api-key` OR (`--unifi-username` AND `--unifi-password`)
+*Required for full deployment. When using `--unifi-only`, only UniFi parameters are required. When using `--cloudflare-only`, only Cloudflare parameters are required.
+
+**Selective Deployment Flags:**
+
+| Flag | Effect | Required Parameters |
+|------|--------|---------------------|
+| (none) | Deploy both UniFi and Cloudflare | All UniFi + Cloudflare params |
+| `--unifi-only` | Deploy only UniFi DNS | UniFi params only |
+| `--cloudflare-only` | Deploy only Cloudflare Tunnels | Cloudflare params only |
+
+> **⚠️ Mutual Exclusion:** `--unifi-only` and `--cloudflare-only` cannot be used together.
 
 **Examples:**
 
 ```bash
-# Basic deployment
+# Full deployment (UniFi + Cloudflare)
 dagger call -m unifi-cloudflare-glue deploy \
     --kcl-source=./kcl \
     --unifi-url=https://unifi.local:8443 \
@@ -105,7 +120,22 @@ dagger call -m unifi-cloudflare-glue deploy \
     --cloudflare-account-id=your-account-id \
     --zone-name=example.com
 
-# With self-signed certificates
+# UniFi-only deployment
+dagger call -m unifi-cloudflare-glue deploy \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --unifi-only
+
+# Cloudflare-only deployment
+dagger call -m unifi-cloudflare-glue deploy \
+    --kcl-source=./kcl \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com \
+    --cloudflare-only
+
+# With self-signed certificates (full deployment)
 dagger call -m unifi-cloudflare-glue deploy \
     --kcl-source=./kcl \
     --unifi-url=https://192.168.10.1 \
@@ -120,82 +150,6 @@ dagger call -m unifi-cloudflare-glue deploy \
     --kcl-source=./kcl \
     --unifi-url=https://unifi.local:8443 \
     --unifi-api-key=env:UNIFI_API_KEY \
-    --cloudflare-token=env:CF_TOKEN \
-    --cloudflare-account-id=your-account-id \
-    --zone-name=example.com \
-    --state-dir=./terraform-state
-
-# With pinned versions
-dagger call -m unifi-cloudflare-glue deploy \
-    --kcl-source=./kcl \
-    --unifi-url=https://unifi.local:8443 \
-    --unifi-api-key=env:UNIFI_API_KEY \
-    --cloudflare-token=env:CF_TOKEN \
-    --cloudflare-account-id=your-account-id \
-    --zone-name=example.com \
-    --terraform-version=1.10.0 \
-    --kcl-version=0.11.0
-```
-
-### `deploy-unifi`
-
-Deploy only UniFi DNS configuration.
-
-**Authentication options (pick one):**
-1. API Key (recommended): `--unifi-api-key`
-2. Username/Password: Both `--unifi-username` and `--unifi-password`
-
-**TLS options:**
-- `--unifi-insecure` - Skip TLS certificate verification
-
-**Examples:**
-
-```bash
-# Using API key (recommended)
-dagger call -m unifi-cloudflare-glue deploy-unifi \
-    --source=./kcl \
-    --unifi-url=https://unifi.local:8443 \
-    --unifi-api-key=env:UNIFI_API_KEY
-
-# Using username/password
-dagger call -m unifi-cloudflare-glue deploy-unifi \
-    --source=./kcl \
-    --unifi-url=https://unifi.local:8443 \
-    --unifi-username=env:UNIFI_USER \
-    --unifi-password=env:UNIFI_PASS
-
-# With self-signed certificates
-dagger call -m unifi-cloudflare-glue deploy-unifi \
-    --source=./kcl \
-    --unifi-url=https://192.168.10.1 \
-    --unifi-api-key=env:UNIFI_API_KEY \
-    --unifi-insecure
-
-# With persistent local state
-dagger call -m unifi-cloudflare-glue deploy-unifi \
-    --source=./kcl \
-    --unifi-url=https://unifi.local:8443 \
-    --unifi-api-key=env:UNIFI_API_KEY \
-    --state-dir=./terraform-state
-```
-
-### `deploy-cloudflare`
-
-Deploy only Cloudflare Tunnel configuration.
-
-**Examples:**
-
-```bash
-# Basic usage
-dagger call -m unifi-cloudflare-glue deploy-cloudflare \
-    --source=./kcl \
-    --cloudflare-token=env:CF_TOKEN \
-    --cloudflare-account-id=your-account-id \
-    --zone-name=example.com
-
-# With persistent local state
-dagger call -m unifi-cloudflare-glue deploy-cloudflare \
-    --source=./kcl \
     --cloudflare-token=env:CF_TOKEN \
     --cloudflare-account-id=your-account-id \
     --zone-name=example.com \
@@ -204,14 +158,40 @@ dagger call -m unifi-cloudflare-glue deploy-cloudflare \
 
 ### `destroy`
 
-Destroy all resources (Cloudflare first, then UniFi).
+Destroy resources (Cloudflare first, then UniFi).
 
-**⚠️ DESTRUCTIVE OPERATION:** Destroys in reverse order to avoid DNS loops.
+**⚠️ DESTRUCTIVE OPERATION:** Destroys in reverse order to avoid DNS loops. Use selective flags to destroy only specific components.
+
+**Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `--kcl-source` | ✅ | Path to your KCL configuration directory |
+| `--unifi-url` | ✅* | UniFi controller URL |
+| `--unifi-api-key` | ✅* | UniFi API key |
+| `--cloudflare-token` | ✅* | Cloudflare API token |
+| `--cloudflare-account-id` | ✅* | Cloudflare account ID |
+| `--zone-name` | ✅* | DNS zone name |
+| `--unifi-only` | ❌ | Destroy only UniFi DNS resources |
+| `--cloudflare-only` | ❌ | Destroy only Cloudflare Tunnel resources |
+| `--state-dir` | ❌ | Path for persistent local state |
+
+*Required parameters depend on selective flags used. See table below.
+
+**Selective Destruction:**
+
+| Flag | Effect | Required Parameters |
+|------|--------|---------------------|
+| (none) | Destroy both UniFi and Cloudflare | All UniFi + Cloudflare params |
+| `--unifi-only` | Destroy only UniFi DNS | UniFi params only |
+| `--cloudflare-only` | Destroy only Cloudflare Tunnels | Cloudflare params only |
+
+> **⚠️ Mutual Exclusion:** `--unifi-only` and `--cloudflare-only` cannot be used together.
 
 **Examples:**
 
 ```bash
-# Basic destruction
+# Destroy all resources (full destruction)
 dagger call -m unifi-cloudflare-glue destroy \
     --kcl-source=./kcl \
     --unifi-url=https://unifi.local:8443 \
@@ -219,6 +199,21 @@ dagger call -m unifi-cloudflare-glue destroy \
     --cloudflare-token=env:CF_TOKEN \
     --cloudflare-account-id=your-account-id \
     --zone-name=example.com
+
+# Destroy only UniFi resources
+dagger call -m unifi-cloudflare-glue destroy \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --unifi-only
+
+# Destroy only Cloudflare resources
+dagger call -m unifi-cloudflare-glue destroy \
+    --kcl-source=./kcl \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com \
+    --cloudflare-only
 
 # With persistent local state (must use same state-dir as deploy)
 dagger call -m unifi-cloudflare-glue destroy \
@@ -235,34 +230,79 @@ dagger call -m unifi-cloudflare-glue destroy \
 
 ### `plan`
 
-Generate Terraform plans without applying changes. Creates execution plans enabling the standard plan → review → apply workflow.
+Generate Terraform plans without applying changes. Creates execution plans enabling the standard plan → review → apply workflow. Use selective flags to plan individual components.
 
 **Output formats per module:**
 - Binary plan files (for `terraform apply`)
 - JSON (for automation)
 - Human-readable text (for review)
 
+**Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `--kcl-source` | ✅ | Path to your KCL configuration directory |
+| `--unifi-url` | ✅* | UniFi controller URL |
+| `--unifi-api-key` | ✅* | UniFi API key |
+| `--cloudflare-token` | ✅* | Cloudflare API token |
+| `--cloudflare-account-id` | ✅* | Cloudflare account ID |
+| `--zone-name` | ✅* | DNS zone name |
+| `--unifi-only` | ❌ | Plan only UniFi DNS changes |
+| `--cloudflare-only` | ❌ | Plan only Cloudflare Tunnel changes |
+| `--state-dir` | ❌ | Path for persistent local state |
+| `--backend-type` | ❌ | Backend type (s3, etc.) |
+| `--backend-config-file` | ❌ | Backend configuration file |
+
+*Required parameters depend on selective flags used.
+
+**Selective Planning:**
+
+| Flag | Effect | Required Parameters |
+|------|--------|---------------------|
+| (none) | Plan both UniFi and Cloudflare | All UniFi + Cloudflare params |
+| `--unifi-only` | Plan only UniFi DNS | UniFi params only |
+| `--cloudflare-only` | Plan only Cloudflare Tunnels | Cloudflare params only |
+
+> **⚠️ Mutual Exclusion:** `--unifi-only` and `--cloudflare-only` cannot be used together.
+
 **Examples:**
 
 ```bash
-# Basic usage - export plans to ./plans directory
+# Plan full deployment (UniFi + Cloudflare)
 dagger call -m unifi-cloudflare-glue plan \
     --kcl-source=./kcl \
     --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
     --cloudflare-token=env:CF_TOKEN \
     --cloudflare-account-id=your-account-id \
     --zone-name=example.com \
+    export --path=./plans
+
+# Plan UniFi-only deployment
+dagger call -m unifi-cloudflare-glue plan \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
     --unifi-api-key=env:UNIFI_API_KEY \
+    --unifi-only \
+    export --path=./plans
+
+# Plan Cloudflare-only deployment
+dagger call -m unifi-cloudflare-glue plan \
+    --kcl-source=./kcl \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --zone-name=example.com \
+    --cloudflare-only \
     export --path=./plans
 
 # With persistent local state
 dagger call -m unifi-cloudflare-glue plan \
     --kcl-source=./kcl \
     --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
     --cloudflare-token=env:CF_TOKEN \
     --cloudflare-account-id=your-account-id \
     --zone-name=example.com \
-    --unifi-api-key=env:UNIFI_API_KEY \
     --state-dir=./terraform-state \
     export --path=./plans
 
@@ -270,10 +310,10 @@ dagger call -m unifi-cloudflare-glue plan \
 dagger call -m unifi-cloudflare-glue plan \
     --kcl-source=./kcl \
     --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
     --cloudflare-token=env:CF_TOKEN \
     --cloudflare-account-id=your-account-id \
     --zone-name=example.com \
-    --unifi-api-key=env:UNIFI_API_KEY \
     --backend-type=s3 \
     --backend-config-file=./s3-backend.hcl \
     export --path=./plans
