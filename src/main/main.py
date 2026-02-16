@@ -353,6 +353,52 @@ class UnifiCloudflareGlue:
 }}
 '''
 
+    def _generate_unifi_provider_block(
+        self,
+        unifi_url: str,
+        api_url: str,
+        unifi_api_key: str = "",
+        unifi_username: str = "",
+        unifi_password: str = "",
+        unifi_insecure: bool = False,
+    ) -> str:
+        """
+        Generate provider.tf content for UniFi provider.
+        
+        This is used for standalone unifi-dns module deployments where the module
+        doesn't have its own provider block. The glue module has its own provider
+        configuration, so this is only needed for unifi-only deployments.
+        
+        Args:
+            unifi_url: UniFi Controller URL
+            api_url: UniFi API URL (defaults to unifi_url if empty)
+            unifi_api_key: UniFi API key (optional)
+            unifi_username: UniFi username (optional)
+            unifi_password: UniFi password (optional)
+            unifi_insecure: Skip TLS verification
+            
+        Returns:
+            HCL content for provider.tf file
+        """
+        actual_api_url = api_url if api_url else unifi_url
+        
+        # Build provider block with conditional authentication
+        # Use api_key if provided, otherwise use username/password
+        if unifi_api_key:
+            auth_config = f'''  api_key        = var.unifi_api_key'''
+        else:
+            auth_config = f'''  username       = var.unifi_username
+  password       = var.unifi_password'''
+        
+        return f'''# Provider configuration for standalone unifi-dns module
+# This file is dynamically generated for unifi-only deployments
+provider "unifi" {{
+  api_url        = var.unifi_url != "" ? (var.api_url != "" ? var.api_url : var.unifi_url) : "https://placeholder.local:8443"
+{auth_config}
+  allow_insecure = var.unifi_insecure
+}}
+'''
+
 
     @function
     async def deploy(
@@ -374,8 +420,7 @@ class UnifiCloudflareGlue:
         backend_type: Annotated[str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")] = "local",
         backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
         state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
-        no_cache: Annotated[bool, Doc("Bypass Dagger cache, force fresh execution")] = False,
-        cache_buster: Annotated[str, Doc("Custom cache key (advanced use)")] = "",
+        cache_buster: Annotated[str, Doc("Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))")] = "",
     ) -> str:
         """
         Deploy UniFi DNS and/or Cloudflare Tunnels using the combined Terraform module.
@@ -413,8 +458,7 @@ class UnifiCloudflareGlue:
             backend_type: Terraform backend type (local, s3, azurerm, gcs, remote, etc.)
             backend_config_file: Backend configuration HCL file (required for remote backends)
             state_dir: Directory for persistent Terraform state (mutually exclusive with remote backend)
-            no_cache: Bypass Dagger cache by auto-generating an epoch timestamp
-            cache_buster: Custom cache key for advanced use cases (cannot use with --no-cache)
+            cache_buster: Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))
 
         Returns:
             Status message indicating success or failure of deployment
@@ -468,24 +512,14 @@ class UnifiCloudflareGlue:
                 --unifi-url=https://unifi.local:8443 \\
                 --unifi-api-key=env:UNIFI_API_KEY \\
                 --unifi-only \\
-                --no-cache
+                --cache-buster=$(date +%s)
         """
-        # Validate cache control options
-        if no_cache and cache_buster:
-            return "✗ Failed: Cannot use both --no-cache and --cache-buster"
-
         # Validate mutual exclusion of deployment flags
         if unifi_only and cloudflare_only:
             return "✗ Failed: Cannot use both --unifi-only and --cloudflare-only"
 
-        # Determine effective cache buster value
-        # CRITICAL: Generate timestamp at function runtime, not at cache-check time
-        # This ensures each invocation gets a unique value even if Dagger tries to cache
+        # Use cache_buster directly for cache control
         effective_cache_buster = cache_buster
-        if no_cache:
-            # Force unique timestamp generation by using actual time module
-            import time as time_module
-            effective_cache_buster = f"nocache-{int(time_module.time())}-{id(locals())}"
 
         # Validate credentials based on deployment scope
         if unifi_only:
@@ -628,6 +662,22 @@ class UnifiCloudflareGlue:
                 ctr = ctr.with_new_file(f"{workdir}/backend.tf", backend_hcl)
             except Exception as e:
                 return f"✗ Failed: Could not generate backend configuration\n{str(e)}"
+
+        # Generate and mount provider.tf for unifi-dns module (unifi-only deployment)
+        # The glue module has its own provider block, but standalone unifi-dns needs one
+        if module_path == "unifi-dns":
+            try:
+                provider_hcl = self._generate_unifi_provider_block(
+                    unifi_url=unifi_url,
+                    api_url=actual_api_url,
+                    unifi_api_key="" if unifi_api_key is None else "present",  # Just indicate presence
+                    unifi_username="" if unifi_username is None else "present",
+                    unifi_password="" if unifi_password is None else "present",
+                    unifi_insecure=unifi_insecure,
+                )
+                ctr = ctr.with_new_file(f"{workdir}/provider.tf", provider_hcl)
+            except Exception as e:
+                return f"✗ Failed: Could not generate UniFi provider configuration\n{str(e)}"
 
         # Process and mount backend config file if provided
         if backend_config_file is not None:
@@ -834,13 +884,6 @@ class UnifiCloudflareGlue:
             results.extend(guidance_lines)
 
         final_result = "\n".join(results)
-        
-        # CRITICAL: Append timestamp to result when using no_cache to break Dagger's function-level cache
-        # Dagger caches function results based on input parameters, so identical inputs return cached results
-        # Adding the unique timestamp to the output makes each result different, forcing execution
-        if no_cache and effective_cache_buster:
-            final_result += f"\n\n[Cache Break: {effective_cache_buster}]"
-        
         return final_result
 
     @function
@@ -863,8 +906,7 @@ class UnifiCloudflareGlue:
         backend_type: Annotated[str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")] = "local",
         backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
         state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
-        no_cache: Annotated[bool, Doc("Bypass Dagger cache, force fresh execution by auto-generating epoch timestamp")] = False,
-        cache_buster: Annotated[str, Doc("Custom cache key for advanced use (cannot be used with --no-cache)")] = "",
+        cache_buster: Annotated[str, Doc("Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))")] = "",
     ) -> dagger.Directory:
         """
         Generate Terraform plans for UniFi DNS and/or Cloudflare Tunnel configurations.
@@ -903,8 +945,7 @@ class UnifiCloudflareGlue:
             backend_type: Terraform backend type (local, s3, azurerm, gcs, remote, etc.)
             backend_config_file: Backend configuration HCL file (required for remote backends)
             state_dir: Directory for persistent Terraform state (mutually exclusive with remote backend)
-            no_cache: Bypass Dagger cache by auto-generating an epoch timestamp
-            cache_buster: Custom cache key for advanced use cases
+            cache_buster: Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))
 
         Returns:
             dagger.Directory containing all plan artifacts:
@@ -964,18 +1005,12 @@ class UnifiCloudflareGlue:
                 --backend-config-file=./s3-backend.hcl \\
                 export --path=./plans
         """
-        # Validate cache control options
-        if no_cache and cache_buster:
-            raise ValueError("✗ Failed: Cannot use both --no-cache and --cache-buster")
-
         # Validate mutual exclusion of deployment flags
         if unifi_only and cloudflare_only:
             raise ValueError("✗ Failed: Cannot use both --unifi-only and --cloudflare-only")
 
-        # Determine effective cache buster value
+        # Use cache_buster directly for cache control
         effective_cache_buster = cache_buster
-        if no_cache:
-            effective_cache_buster = str(int(time.time()))
 
         # Validate credentials based on deployment scope
         if unifi_only:
@@ -1236,8 +1271,7 @@ Notes
         backend_type: Annotated[str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")] = "local",
         backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
         state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
-        no_cache: Annotated[bool, Doc("Bypass Dagger cache, force fresh execution")] = False,
-        cache_buster: Annotated[str, Doc("Custom cache key (advanced use)")] = "",
+        cache_buster: Annotated[str, Doc("Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))")] = "",
     ) -> str:
         """
         Destroy UniFi DNS and/or Cloudflare Tunnel resources using the combined Terraform module.
@@ -1273,8 +1307,7 @@ Notes
             backend_type: Terraform backend type (local, s3, azurerm, gcs, remote, etc.)
             backend_config_file: Backend configuration HCL file (required for remote backends)
             state_dir: Directory for persistent Terraform state (mutually exclusive with remote backend)
-            no_cache: Bypass Dagger cache by auto-generating an epoch timestamp
-            cache_buster: Custom cache key for advanced use cases (cannot use with --no-cache)
+            cache_buster: Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))
 
         Returns:
             Status message indicating success or failure of destruction
@@ -1328,20 +1361,14 @@ Notes
                 --unifi-url=https://unifi.local:8443 \\
                 --unifi-api-key=env:UNIFI_API_KEY \\
                 --unifi-only \\
-                --no-cache
+                --cache-buster=$(date +%s)
         """
-        # Validate cache control options
-        if no_cache and cache_buster:
-            return "✗ Failed: Cannot use both --no-cache and --cache-buster"
-
         # Validate mutual exclusion of destruction flags
         if unifi_only and cloudflare_only:
             return "✗ Failed: Cannot use both --unifi-only and --cloudflare-only"
 
-        # Determine effective cache buster value
+        # Use cache_buster directly for cache control
         effective_cache_buster = cache_buster
-        if no_cache:
-            effective_cache_buster = str(int(time.time()))
 
         # Validate credentials based on destruction scope
         if unifi_only:
@@ -1479,6 +1506,22 @@ Notes
                 ctr = ctr.with_new_file(f"{workdir}/backend.tf", backend_hcl)
             except Exception as e:
                 return f"✗ Failed: Could not generate backend configuration\n{str(e)}"
+
+        # Generate and mount provider.tf for unifi-dns module (unifi-only deployment)
+        # The glue module has its own provider block, but standalone unifi-dns needs one
+        if module_path == "unifi-dns":
+            try:
+                provider_hcl = self._generate_unifi_provider_block(
+                    unifi_url=unifi_url,
+                    api_url=actual_api_url,
+                    unifi_api_key="" if unifi_api_key is None else "present",  # Just indicate presence
+                    unifi_username="" if unifi_username is None else "present",
+                    unifi_password="" if unifi_password is None else "present",
+                    unifi_insecure=unifi_insecure,
+                )
+                ctr = ctr.with_new_file(f"{workdir}/provider.tf", provider_hcl)
+            except Exception as e:
+                return f"✗ Failed: Could not generate UniFi provider configuration\n{str(e)}"
 
         # Process and mount backend config file if provided
         if backend_config_file is not None:
@@ -1878,8 +1921,7 @@ Notes
         cleanup: Annotated[bool, Doc("Whether to cleanup resources after test (default: true)")] = True,
         validate_connectivity: Annotated[bool, Doc("Whether to test actual HTTP connectivity")] = False,
         test_timeout: Annotated[str, Doc("Timeout for test operations (e.g., 5m)")] = "5m",
-        no_cache: Annotated[bool, Doc("Bypass Dagger cache, force fresh execution by auto-generating epoch timestamp")] = False,
-        cache_buster: Annotated[str, Doc("Custom cache key for advanced use (cannot be used with --no-cache)")] = "",
+        cache_buster: Annotated[str, Doc("Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))")] = "",
         wait_before_cleanup: Annotated[int, Doc("Seconds to wait between validation and cleanup for manual verification")] = 0,
         test_mac_address: Annotated[str, Doc("MAC address for test device (must exist in UniFi controller, e.g., 'aa:bb:cc:dd:ee:ff')")] = "aa:bb:cc:dd:ee:ff",
         terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
@@ -1909,11 +1951,7 @@ Notes
             cleanup: Whether to cleanup resources after test (default: true)
             validate_connectivity: Whether to test actual HTTP connectivity
             test_timeout: Timeout for test operations (e.g., 5m)
-            no_cache: Bypass Dagger cache by auto-generating an epoch timestamp.
-                This is the preferred way to force fresh test execution.
-                Cannot be used together with --cache-buster.
-            cache_buster: Custom cache key for advanced use cases requiring
-                specific cache invalidation values. Cannot be used with --no-cache.
+            cache_buster: Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))
             wait_before_cleanup: Seconds to wait between validation and cleanup.
                 Allows manual verification of created resources before they are destroyed.
             test_mac_address: MAC address for the test device. This MAC must exist in your
@@ -1955,7 +1993,7 @@ Notes
                 --unifi-api-key=env:UNIFI_API_KEY \\
                 --unifi-url=https://unifi.local:8443 \\
                 --api-url=https://unifi.local:8443 \\
-                --no-cache
+                --cache-buster=$(date +%s)
 
             # With custom cache buster (advanced use)
             dagger call test-integration \\
@@ -2002,14 +2040,8 @@ Notes
                 --terraform-version=1.10.0 \\
                 --kcl-version=0.11.0
         """
-        # Validate that --no-cache and --cache-buster are not used together
-        if no_cache and cache_buster:
-            return "✗ Failed: Cannot use both --no-cache and --cache-buster"
-
-        # Determine effective cache buster value
+        # Use cache_buster directly for cache control
         effective_cache_buster = cache_buster
-        if no_cache:
-            effective_cache_buster = str(int(time.time()))
 
         # Validate UniFi authentication
         using_api_key = unifi_api_key is not None

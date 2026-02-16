@@ -543,6 +543,53 @@ mv backend.yaml backend.yaml.tmpl
 # Follow SECRETS.md instructions
 ```
 
+## Cache Control
+
+Dagger's caching is extremely aggressive and operates at multiple levels (function results, container operations, and directory hashes). When working with remote infrastructure (Terraform backends, APIs), you may need to bypass caching to ensure fresh execution.
+
+### Understanding Dagger's Caching
+
+Dagger caches based on:
+1. **Function-level**: Function code + input parameter values → cached result
+2. **Container-level**: Container state (image, mounts, env vars, commands) → cached layer  
+3. **Directory-level**: Directory content hash → cached directory object
+
+### Bypassing Cache with Explicit Timestamps
+
+The `--cache-buster` parameter accepts a unique string value that forces fresh execution by changing the cache key:
+
+```bash
+# Force fresh execution with current timestamp
+dagger call -m unifi-cloudflare-glue test-integration \
+    --source=./kcl \
+    --cloudflare-zone=test.example.com \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=your-account-id \
+    --unifi-url=https://unifi.local:8443 \
+    --api-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --cache-buster=$(date +%s)
+```
+
+The `$(date +%s)` shell substitution provides a unique Unix epoch timestamp (seconds since January 1, 1970) on each invocation. Because the value is different every second, it creates a unique cache key that forces Dagger to execute the function fresh rather than returning a cached result.
+
+### When to Use Cache Busting
+
+Use `--cache-buster=$(date +%s)` when:
+- Running integration tests against live APIs/services
+- External state (remote Terraform backend, APIs) may have changed
+- Deploying infrastructure that exists outside Dagger's cache
+- Debugging intermittent issues that might be cache-related
+- You need deterministic re-execution without code changes
+
+### When NOT to Use Cache Busting
+
+Don't use cache busting for:
+- Deterministic operations (same inputs → same outputs)
+- Build operations where caching improves speed
+- Development workflows where cache is beneficial
+- Operations that don't interact with external mutable state
+
 ## Next Steps
 
 - **[Development Environment](../examples/dev-environment/)**: Get started quickly
