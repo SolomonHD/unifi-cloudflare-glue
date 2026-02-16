@@ -2709,6 +2709,55 @@ Notes
 
         return "\n".join(report_lines)
 
+    async def _detect_deployment_module(
+        self,
+        tf_ctr: dagger.Container,
+        cache_buster: str = "",
+    ) -> tuple[str, list[str]]:
+        """
+        Detect which Terraform module created the state by inspecting available outputs.
+
+        This helper function queries `terraform output -json` to determine whether
+        the state was created by the cloudflare-tunnel module (unprefixed outputs)
+        or the glue module (prefixed outputs with 'cloudflare_' prefix).
+
+        Args:
+            tf_ctr: Initialized Terraform container with module mounted
+            cache_buster: Optional cache buster for cache control
+
+        Returns:
+            Tuple of (module_type, available_outputs) where:
+            - module_type is either "cloudflare-tunnel" or "glue"
+            - available_outputs is a list of output names found in state
+        """
+        try:
+            # Query all outputs from Terraform state
+            if cache_buster:
+                # Inject cache buster as comment in shell command to make it unique
+                tf_ctr = tf_ctr.with_exec(["sh", "-c", f"# cache_bust={cache_buster}\nterraform output -json"])
+            else:
+                tf_ctr = tf_ctr.with_exec(["terraform", "output", "-json"])
+
+            all_outputs = await tf_ctr.stdout()
+            outputs_dict = json.loads(all_outputs)
+            available_outputs = list(outputs_dict.keys())
+
+            # Detect module type based on output naming pattern
+            # Glue module uses 'cloudflare_' prefix on outputs
+            if "cloudflare_tunnel_ids" in available_outputs:
+                return "glue", available_outputs
+            elif "tunnel_ids" in available_outputs:
+                return "cloudflare-tunnel", available_outputs
+            else:
+                # Fallback to cloudflare-tunnel for backward compatibility
+                # This handles edge cases where outputs might be missing or corrupted
+                return "cloudflare-tunnel", available_outputs
+
+        except Exception:
+            # If we can't query outputs, default to cloudflare-tunnel
+            # This maintains backward compatibility
+            return "cloudflare-tunnel", []
+
     @function
     async def get_tunnel_secrets(
         self,
@@ -2721,12 +2770,20 @@ Notes
         backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
         state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
         output_format: Annotated[str, Doc("Output format: 'human' for readable text, 'json' for machine-parseable")] = "human",
+        cache_buster: Annotated[str, Doc("Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))")] = "",
     ) -> str:
         """
         Retrieve Cloudflare tunnel secrets from Terraform state.
 
         This function extracts tunnel tokens and credentials from Terraform state
         after deployment, enabling configuration of cloudflared on devices.
+
+        **Automatic Module Detection:**
+        This function automatically detects whether the state was created by the
+        cloudflare-tunnel module (standalone) or the glue module (combined deployment).
+        It queries available Terraform outputs to determine the correct output names:
+        - cloudflare-tunnel module: `tunnel_ids`, `tunnel_tokens`, `credentials_json`
+        - glue module: `cloudflare_tunnel_ids`, `cloudflare_tunnel_tokens`, `cloudflare_credentials_json`
 
         State Management (must match deployment configuration):
         1. Ephemeral (default): State stored in container from previous deploy
@@ -2743,6 +2800,7 @@ Notes
             backend_config_file: Backend configuration HCL file (required for remote backends)
             state_dir: Directory for persistent Terraform state (must match deployment)
             output_format: Output format - 'human' for readable text, 'json' for automation
+            cache_buster: Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))
 
         Returns:
             Tunnel secrets in requested format (human-readable or JSON)
@@ -2788,8 +2846,19 @@ Notes
                 --cloudflare-account-id=xxx \\
                 --zone-name=example.com \\
                 --output-format=json
+
+            # Force fresh execution (bypass Dagger cache)
+            dagger call get-tunnel-secrets \\
+                --source=. \\
+                --cloudflare-token=env:CF_TOKEN \\
+                --cloudflare-account-id=xxx \\
+                --zone-name=example.com \\
+                --cache-buster=$(date +%s)
         """
         try:
+            # Use cache_buster directly for cache control
+            effective_cache_buster = cache_buster
+
             # Validate output format
             if output_format not in ["human", "json"]:
                 return (
@@ -2824,124 +2893,122 @@ Notes
             # Create Terraform container
             tf_ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
 
+            # Add cache buster IMMEDIATELY to ensure Terraform operations aren't cached
+            if effective_cache_buster:
+                tf_ctr = tf_ctr.with_env_variable("CACHE_BUSTER", effective_cache_buster)
+
             # Mount source directory at /src
             tf_ctr = tf_ctr.with_directory("/src", source)
 
-            # Mount the Cloudflare Tunnel Terraform module from Dagger module's source
-            # Note: Always use the module's own terraform directory, not the user's source
-            try:
-                tf_module = dagger.dag.current_module().source().directory("terraform/modules/cloudflare-tunnel")
-                tf_ctr = tf_ctr.with_directory("/module", tf_module)
-            except Exception as e:
-                return f"✗ Failed: Cloudflare Tunnel Terraform module not found at terraform/modules/cloudflare-tunnel: {str(e)}"
-
-            # Generate and mount backend.tf if using remote backend
-            if backend_type != "local":
-                try:
-                    backend_hcl = self._generate_backend_block(backend_type)
-                    tf_ctr = tf_ctr.with_new_file("/module/backend.tf", backend_hcl)
-                except Exception as e:
-                    return f"✗ Failed: Could not generate backend configuration\n{str(e)}"
-
-            # Process and mount backend config file if provided
-            if backend_config_file is not None:
-                try:
-                    # Convert YAML to HCL if necessary
-                    config_content, _ = await _process_backend_config(backend_config_file)
-                    # Mount the processed content as a .tfbackend file
-                    tf_ctr = tf_ctr.with_new_file("/root/.terraform/backend.tfbackend", config_content)
-                except Exception as e:
-                    return f"✗ Failed: Could not process backend config file\n{str(e)}"
-
-            # Set up environment variables for Cloudflare provider
-            # Use override variables to allow CLI parameters to take precedence over config
-            tf_ctr = tf_ctr.with_env_variable("TF_VAR_account_id_override", cloudflare_account_id)
-            tf_ctr = tf_ctr.with_env_variable("TF_VAR_zone_name_override", zone_name)
-            # Use CLOUDFLARE_API_TOKEN env var - more reliable with Dagger secrets
-            tf_ctr = tf_ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
-
             # Handle state directory mounting for persistent local state
             using_persistent_state = state_dir is not None
-            if using_persistent_state:
-                # Mount state directory
-                tf_ctr = tf_ctr.with_directory("/state", state_dir)
-                # Clean up any existing .terraform directory to prevent provider conflicts
-                tf_ctr = tf_ctr.with_exec(["sh", "-c", "rm -rf /state/.terraform && echo 'Cleaned .terraform directory'"])
-                _ = await tf_ctr.stdout()
-                # Copy module files to state directory
-                tf_ctr = tf_ctr.with_exec(["sh", "-c", "cp -r /module/* /state/ && ls -la /state"])
-                # Set working directory to state directory
-                tf_ctr = tf_ctr.with_workdir("/state")
-            else:
-                # Set working directory to module
-                tf_ctr = tf_ctr.with_workdir("/module")
-
-            # Run terraform init
-            init_cmd = ["terraform", "init"]
-            if backend_config_file is not None:
-                init_cmd.extend(["-backend-config=/root/.terraform/backend.tfbackend"])
-
-            try:
-                tf_ctr = tf_ctr.with_exec(init_cmd)
-                init_output = await tf_ctr.stdout()
-            except dagger.ExecError as e:
-                error_msg = f"✗ Failed: Terraform init failed\n{str(e)}"
-                if backend_type != "local":
-                    error_msg += (
-                        "\n\nEnsure backend-type matches your deployment.\n"
+            using_remote_backend = backend_type != "local"
+            
+            # For remote backends: Create minimal Terraform config that just connects to backend
+            # For local state: Need to mount the actual module that created the state
+            if using_remote_backend:
+                # Remote backend: Create minimal config that just connects to S3/etc
+                # No module mounting needed - state already has all outputs
+                tf_ctr = tf_ctr.with_workdir("/workspace")
+                
+                # Create minimal backend.tf
+                backend_hcl = self._generate_backend_block(backend_type)
+                tf_ctr = tf_ctr.with_new_file("/workspace/backend.tf", backend_hcl)
+                
+                # Process and mount backend config file
+                if backend_config_file is not None:
+                    try:
+                        config_content, _ = await _process_backend_config(backend_config_file)
+                        tf_ctr = tf_ctr.with_new_file("/root/.terraform/backend.tfbackend", config_content)
+                    except Exception as e:
+                        return f"✗ Failed: Could not process backend config file\n{str(e)}"
+                
+                # Run terraform init to connect to remote backend
+                init_cmd = ["terraform", "init"]
+                if backend_config_file is not None:
+                    init_cmd.extend(["-backend-config=/root/.terraform/backend.tfbackend"])
+                
+                try:
+                    tf_ctr = tf_ctr.with_exec(init_cmd)
+                    _ = await tf_ctr.stdout()
+                except dagger.ExecError as e:
+                    return (
+                        f"✗ Failed: Terraform init failed\n{str(e)}\n\n"
                         "Backend configuration troubleshooting:\n"
                         "  - Verify backend config file is valid HCL\n"
                         "  - Check credentials in environment variables\n"
                         "  - Ensure backend infrastructure exists (bucket, table, etc.)"
                     )
-                return error_msg
+                
+                detected_module = "unknown"
+                available_outputs = []
+                
+            else:
+                # Local/persistent state: Need the actual module that created the state
+                # Mount glue module (most common case)
+                try:
+                    tf_modules = dagger.dag.current_module().source().directory("terraform/modules")
+                    tf_ctr = tf_ctr.with_directory("/module", tf_modules)
+                    workdir = "/module/glue"
+                except Exception as e:
+                    return f"✗ Failed: Could not mount Terraform modules: {str(e)}"
+                
+                if using_persistent_state:
+                    # Mount state directory
+                    tf_ctr = tf_ctr.with_directory("/state", state_dir)
+                    # Clean up any existing .terraform directory
+                    tf_ctr = tf_ctr.with_exec(["sh", "-c", "rm -rf /state/.terraform && echo 'Cleaned .terraform directory'"])
+                    _ = await tf_ctr.stdout()
+                    # Copy module files to state directory
+                    tf_ctr = tf_ctr.with_exec(["sh", "-c", f"cp -r {workdir}/* /state/ && ls -la /state"])
+                    _ = await tf_ctr.stdout()
+                    tf_ctr = tf_ctr.with_workdir("/state")
+                else:
+                    tf_ctr = tf_ctr.with_workdir(workdir)
+                
+                # Run terraform init
+                try:
+                    tf_ctr = tf_ctr.with_exec(["terraform", "init"])
+                    _ = await tf_ctr.stdout()
+                except dagger.ExecError as e:
+                    return f"✗ Failed: Terraform init failed\n{str(e)}"
+                
+                # Detect which module created the state
+                detected_module, available_outputs = await self._detect_deployment_module(tf_ctr, effective_cache_buster)
 
-            # Debug: List available outputs
+            # Retrieve outputs using the standalone module naming convention
+            # Both glue and cloudflare-tunnel modules now expose outputs with these names
+            # (glue module has alias outputs for backward compatibility)
+            
+            # Use tunnel_ids (available in both modules - native in cloudflare-tunnel, alias in glue)
             try:
-                tf_ctr = tf_ctr.with_exec(["terraform", "output", "-json"])
-                all_outputs = await tf_ctr.stdout()
-                # Parse to check what outputs exist
-                outputs_dict = json.loads(all_outputs)
-                available_outputs = list(outputs_dict.keys())
-            except Exception:
-                available_outputs = ["unknown"]
-
-            # Run terraform output to get tunnel_ids
-            try:
-                tf_ctr = tf_ctr.with_exec(["terraform", "output", "-json", "tunnel_ids"])
+                if effective_cache_buster:
+                    tf_ctr = tf_ctr.with_exec(["sh", "-c", f"# cache_bust={effective_cache_buster}\nterraform output -json tunnel_ids"])
+                else:
+                    tf_ctr = tf_ctr.with_exec(["terraform", "output", "-json", "tunnel_ids"])
                 ids_json_str = await tf_ctr.stdout()
             except dagger.ExecError as e:
-                error_str = str(e)
-                if "No outputs found" in error_str or "output" in error_str.lower():
-                    return f"✗ Failed: No tunnels found in Terraform outputs. Available outputs: {', '.join(available_outputs)}"
-                elif "state" in error_str.lower() or "tfstate" in error_str.lower():
-                    return f"✗ Failed: No Terraform state found. Available outputs: {', '.join(available_outputs)}"
-                else:
-                    return f"✗ Failed: Could not retrieve tunnel IDs\nError: {str(e)}\nAvailable outputs: {', '.join(available_outputs)}"
+                return f"✗ Failed: Could not retrieve tunnel_ids output\n{str(e)}\nAvailable outputs: {', '.join(available_outputs) if available_outputs else 'none'}"
 
-            # Run terraform output to get tunnel_tokens
+            # Use tunnel_tokens (available in both modules)
             try:
-                tf_ctr = tf_ctr.with_exec(["terraform", "output", "-json", "tunnel_tokens"])
+                if effective_cache_buster:
+                    tf_ctr = tf_ctr.with_exec(["sh", "-c", f"# cache_bust={effective_cache_buster}\nterraform output -json tunnel_tokens"])
+                else:
+                    tf_ctr = tf_ctr.with_exec(["terraform", "output", "-json", "tunnel_tokens"])
                 tokens_json_str = await tf_ctr.stdout()
             except dagger.ExecError as e:
-                error_str = str(e)
-                if "No outputs found" in error_str or "output" in error_str.lower():
-                    return f"✗ Failed: No tunnels found in Terraform outputs. Available outputs: {', '.join(available_outputs)}"
-                elif "state" in error_str.lower() or "tfstate" in error_str.lower():
-                    return f"✗ Failed: No Terraform state found. Available outputs: {', '.join(available_outputs)}"
-                else:
-                    return f"✗ Failed: Could not retrieve tunnel tokens\nError: {str(e)}\nAvailable outputs: {', '.join(available_outputs)}"
+                return f"✗ Failed: Could not retrieve tunnel_tokens output\n{str(e)}\nAvailable outputs: {', '.join(available_outputs) if available_outputs else 'none'}"
 
-            # Run terraform output to get credentials_json
+            # Use credentials_json (available in both modules)
             try:
-                tf_ctr = tf_ctr.with_exec(["terraform", "output", "-json", "credentials_json"])
+                if effective_cache_buster:
+                    tf_ctr = tf_ctr.with_exec(["sh", "-c", f"# cache_bust={effective_cache_buster}\nterraform output -json credentials_json"])
+                else:
+                    tf_ctr = tf_ctr.with_exec(["terraform", "output", "-json", "credentials_json"])
                 credentials_json_str = await tf_ctr.stdout()
             except dagger.ExecError as e:
-                error_str = str(e)
-                if "No outputs found" in error_str or "output" in error_str.lower():
-                    return "✗ Failed: No tunnels found in Terraform outputs. State may be corrupted."
-                else:
-                    return f"✗ Failed: Could not retrieve credentials\n{str(e)}"
+                return f"✗ Failed: Could not retrieve credentials_json output\n{str(e)}\nAvailable outputs: {', '.join(available_outputs) if available_outputs else 'none'}"
 
             # Parse JSON outputs
             try:
@@ -2961,8 +3028,12 @@ Notes
                     "tunnel_ids": tunnel_ids,
                     "tunnel_tokens": tunnel_tokens,
                     "credentials_json": credentials,
-                    "count": len(tunnel_tokens)
+                    "count": len(tunnel_tokens),
+                    "module_type": detected_module
                 }
+                # Add cache_buster to result if provided
+                if effective_cache_buster:
+                    result["cache_buster"] = effective_cache_buster
                 return json.dumps(result, indent=2)
             else:
                 # Human-readable format
@@ -2972,6 +3043,7 @@ Notes
                     "=" * 60,
                     "",
                     f"Zone: {zone_name}",
+                    f"Detected Module: {detected_module}",
                     f"Total Tunnels: {len(tunnel_tokens)}",
                     "",
                     "-" * 60,
@@ -3036,8 +3108,17 @@ Notes
                     "4. Run cloudflared:",
                     "   cloudflared tunnel run",
                     "",
-                    "=" * 60,
                 ])
+
+                # Add execution timestamp to make result unique (breaks Dagger cache)
+                if effective_cache_buster:
+                    output_lines.extend([
+                        "=" * 60,
+                        f"Execution ID: {effective_cache_buster}",
+                        "=" * 60,
+                    ])
+                else:
+                    output_lines.append("=" * 60)
 
                 return "\n".join(output_lines)
 
