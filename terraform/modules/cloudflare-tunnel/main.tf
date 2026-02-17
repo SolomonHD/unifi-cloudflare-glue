@@ -100,4 +100,10 @@ resource "cloudflare_dns_record" "tunnel" {
   content = "${cloudflare_zero_trust_tunnel_cloudflared.this[each.value.mac].id}.cfargotunnel.com"
   proxied = true
   ttl     = 1 # 1 = automatic TTL
+
+  # Prevent unnecessary recreation when zone_id appears as "known after apply"
+  # The zone_id doesn't actually change, but the data source makes it appear computed
+  lifecycle {
+    ignore_changes = [zone_id]
+  }
 }
