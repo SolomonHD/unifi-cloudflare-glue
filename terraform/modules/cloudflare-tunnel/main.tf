@@ -49,6 +49,15 @@ resource "random_password" "tunnel_secret" {
   special = false
 }
 
+# Retrieve the Cloudflare-generated tunnel token (JWT) for each tunnel
+# This is the value required for the TUNNEL_TOKEN environment variable in cloudflared
+data "cloudflare_zero_trust_tunnel_cloudflared_token" "this" {
+  for_each = local.effective_config.tunnels
+
+  account_id = local.effective_account_id
+  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.this[each.key].id
+}
+
 # Configure tunnel ingress rules
 resource "cloudflare_zero_trust_tunnel_cloudflared_config" "this" {
   for_each = local.effective_config.tunnels

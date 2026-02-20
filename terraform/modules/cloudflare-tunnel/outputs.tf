@@ -50,7 +50,7 @@ output "record_ids" {
 output "tunnel_tokens" {
   description = "Map of MAC address to tunnel token (Cloudflare-generated JWT for TUNNEL_TOKEN env var in cloudflared)"
   value = {
-    for mac, tunnel in cloudflare_zero_trust_tunnel_cloudflared.this : mac => tunnel.tunnel_token
+    for mac, _ in cloudflare_zero_trust_tunnel_cloudflared.this : mac => data.cloudflare_zero_trust_tunnel_cloudflared_token.this[mac].token
   }
   sensitive = true
 }
