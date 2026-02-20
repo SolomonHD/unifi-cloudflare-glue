@@ -48,9 +48,9 @@ output "record_ids" {
 }
 
 output "tunnel_tokens" {
-  description = "Map of MAC address to tunnel token (base64-encoded tunnel_secret for cloudflared service install)"
+  description = "Map of MAC address to tunnel token (Cloudflare-generated JWT for TUNNEL_TOKEN env var in cloudflared)"
   value = {
-    for mac, tunnel in cloudflare_zero_trust_tunnel_cloudflared.this : mac => base64encode(random_password.tunnel_secret[mac].result)
+    for mac, tunnel in cloudflare_zero_trust_tunnel_cloudflared.this : mac => tunnel.tunnel_token
   }
   sensitive = true
 }
