@@ -46,17 +46,17 @@ locals {
   # Build list of found MACs and their IPs
   found_macs = {
     for key, lookup in local.mac_lookup_map : lookup.mac_normalized => {
-      ip          = try(data.unifi_user.device[key].ip, null)
+      ip          = unifi_user.device[key].ip
       device_name = lookup.device_name
       domain      = lookup.domain
     }
-    if try(data.unifi_user.device[key].ip, null) != null
+    if unifi_user.device[key].ip != null
   }
 
   # Build list of missing MACs
   missing_macs = [
     for key, lookup in local.mac_lookup_map : lookup.mac_normalized
-    if try(data.unifi_user.device[key].ip, null) == null
+    if unifi_user.device[key].ip == null
   ]
 
   # Unique missing MACs (remove duplicates)
@@ -102,16 +102,22 @@ locals {
 }
 
 # ==============================================================================
-# Data Sources
+# UniFi Client Registration (ensures MAC addresses are in persistent client DB)
 # ==============================================================================
 
-# Query UniFi Controller for each device by MAC address
-# The filipowm/unifi provider uses unifi_user data source to look up clients by MAC
-data "unifi_user" "device" {
+# Register each device MAC as a persistent client in the UniFi Controller
+# allow_existing=true takes over management of existing active clients
+# skip_forget_on_destroy=true prevents client removal when device is removed from config
+# This ensures the stat/user/{mac} endpoint returns data even for clients
+# that are active but not yet "remembered" by the controller (Network 10.x behavior)
+resource "unifi_user" "device" {
   for_each = local.mac_lookup_map
 
-  site = local.effective_config.site
-  mac  = each.value.mac_normalized
+  mac                      = each.value.mac_normalized
+  name                     = each.value.device_name
+  site                     = local.effective_config.site
+  allow_existing           = true
+  skip_forget_on_destroy   = true
 }
 
 # ==============================================================================
