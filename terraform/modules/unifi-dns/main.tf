@@ -46,17 +46,17 @@ locals {
   # Build list of found MACs and their IPs
   found_macs = {
     for key, lookup in local.mac_lookup_map : lookup.mac_normalized => {
-      ip          = unifi_user.device[key].ip
+      ip          = data.unifi_user.device[key].ip
       device_name = lookup.device_name
       domain      = lookup.domain
     }
-    if unifi_user.device[key].ip != null
+    if data.unifi_user.device[key].ip != null
   }
 
   # Build list of missing MACs
   missing_macs = [
     for key, lookup in local.mac_lookup_map : lookup.mac_normalized
-    if unifi_user.device[key].ip == null
+    if data.unifi_user.device[key].ip == null
   ]
 
   # Unique missing MACs (remove duplicates)
@@ -92,13 +92,13 @@ locals {
   }
 
   # Build DNS A-records for ALL configured devices (keys are static from config)
-  # IP values come from unifi_user resource and will be "(known after apply)"
-  # on first run, but for_each only needs keys to be known
+  # IP values come from data source (reads after resource registers MAC)
+  # Will be "(known after apply)" on first run, but for_each only needs keys
   dns_records = {
     for device in local.effective_config.devices : device.friendly_hostname => {
       hostname = device.friendly_hostname
       domain   = coalesce(device.domain, local.effective_config.default_domain)
-      ip       = unifi_user.device["${device.friendly_hostname}-0"].ip
+      ip       = data.unifi_user.device["${device.friendly_hostname}-0"].ip
     }
   }
 }
@@ -120,6 +120,17 @@ resource "unifi_user" "device" {
   site                     = local.effective_config.site
   allow_existing           = true
   skip_forget_on_destroy   = true
+}
+
+# Read back the registered client's IP from the UniFi Controller
+# depends_on ensures this runs AFTER unifi_user registers the MAC,
+# solving the Network 10.x "UnknownUser" issue for unremembered clients
+data "unifi_user" "device" {
+  for_each = local.mac_lookup_map
+
+  site       = local.effective_config.site
+  mac        = each.value.mac_normalized
+  depends_on = [unifi_user.device]
 }
 
 # ==============================================================================
