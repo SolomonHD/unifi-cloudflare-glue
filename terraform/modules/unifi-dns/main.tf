@@ -91,12 +91,14 @@ locals {
     )) < length(device.nics)
   }
 
-  # Build DNS records configuration for devices with found MACs
+  # Build DNS A-records for ALL configured devices (keys are static from config)
+  # IP values come from unifi_user resource and will be "(known after apply)"
+  # on first run, but for_each only needs keys to be known
   dns_records = {
-    for name, device in local.devices_with_found_macs : name => {
+    for device in local.effective_config.devices : device.friendly_hostname => {
       hostname = device.friendly_hostname
       domain   = coalesce(device.domain, local.effective_config.default_domain)
-      ip       = local.found_macs[local.device_primary_mac[device.friendly_hostname]].ip
+      ip       = unifi_user.device["${device.friendly_hostname}-0"].ip
     }
   }
 }
@@ -142,6 +144,7 @@ resource "unifi_dns_record" "dns_record" {
 locals {
   # Flatten all service_cnames from devices and NICs
   # KCL now provides fully-qualified CNAMEs, so we use them as-is
+  # No filter needed — unifi_user resource ensures all MACs are registered
   cname_records = flatten([
     for device in local.effective_config.devices : concat(
       # Device-level CNAMEs
@@ -152,7 +155,6 @@ locals {
           hostname = device.friendly_hostname
           domain   = coalesce(device.domain, local.effective_config.default_domain)
         }
-        if contains(keys(local.devices_with_found_macs), device.friendly_hostname)
       ],
       # NIC-level CNAMEs
       flatten([
@@ -163,7 +165,6 @@ locals {
             hostname = device.friendly_hostname
             domain   = coalesce(device.domain, local.effective_config.default_domain)
           }
-          if contains(keys(local.devices_with_found_macs), device.friendly_hostname)
         ]
       ])
     )
