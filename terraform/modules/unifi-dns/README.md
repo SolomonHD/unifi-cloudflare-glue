@@ -16,19 +16,24 @@ The `unifi-dns` module provides infrastructure-as-code management for UniFi's lo
 | Name | Version |
 |------|---------|
 | terraform | >= 1.5.0 |
-| filipowm/unifi provider | ~> 1.0 |
+| filipowm/unifi provider | ~> 1.1.0 |
 
 ## Provider Authentication
 
-This module uses the `filipowm/unifi` provider. Configure authentication via environment variables:
+This module uses the `filipowm/unifi` provider. API-key authentication is the
+tested primary path; username/password remains available for compatibility.
+Configure one authentication path via environment variables:
 
 ```bash
-export UNIFI_USERNAME="admin"
-export UNIFI_PASSWORD="your-password"
+export UNIFI_API_KEY="..."
 export UNIFI_API_URL="https://192.168.1.1"
 # Optional: export UNIFI_SITE="default"
 export UNIFI_INSECURE="true"  # If using self-signed certificates
 ```
+
+The v1.0.0 to v1.1.x update is same-provider maintenance, not an API-key
+authentication fix. Separately, the module registers or adopts configured
+clients before reading their IP to avoid Network 10.x `UnknownUser` failures.
 
 ## Usage
 
@@ -202,7 +207,7 @@ This module was migrated from `paultyng/unifi` to `filipowm/unifi` provider:
 
 ### What's Changed
 - **Provider source**: `paultyng/unifi` → `filipowm/unifi`
-- **Provider version**: `~> 0.41` → `~> 1.0`
+- **Provider version**: `~> 0.41` → current reviewed baseline `~> 1.1.0`
 - **DNS resources**: Now uses native `unifi_dns_record` resources instead of `unifi_user` with `local_dns_record`
 - **CNAME support**: Now fully supported and created as actual DNS records
 - **Data source**: Still uses `unifi_user` (to look up clients by MAC address)

@@ -56,6 +56,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added an isolated UniFi provider baseline fixture for a representative
+  64-A/64-CNAME lifecycle beneath unique `unifi-poc-<run>.solomonhd.ai`
+  namespaces. It uses only private-address targets and never manages production
+  MAC addresses, `sghd.io` records, or Cloudflare Tunnel resources.
+- Normalized the Network 10.x client-registration workaround: configured
+  clients are registered or adopted before the dependent IP lookup, avoiding
+  `UnknownUser` races without forgetting clients during destroy.
+- Updated the reviewed `filipowm/unifi` provider baseline from v1.0.0 to v1.1.x
+  with a `~> 1.1.0` constraint. This is same-provider maintenance, not an
+  API-key authentication fix; API-key authentication already passed the v1.0.0
+  production baseline plan.
+
 - **Unified Deployment with Selective Component Flags:**
   - Added `--unifi-only` flag to `deploy()` for UniFi-only deployments
   - Added `--cloudflare-only` flag to `deploy()` for Cloudflare-only deployments

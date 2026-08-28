@@ -46,17 +46,17 @@ locals {
   # Build list of found MACs and their IPs
   found_macs = {
     for key, lookup in local.mac_lookup_map : lookup.mac_normalized => {
-      ip          = try(data.unifi_user.device[key].ip, null)
+      ip          = data.unifi_user.device[key].ip
       device_name = lookup.device_name
       domain      = lookup.domain
     }
-    if try(data.unifi_user.device[key].ip, null) != null
+    if data.unifi_user.device[key].ip != null
   }
 
   # Build list of missing MACs
   missing_macs = [
     for key, lookup in local.mac_lookup_map : lookup.mac_normalized
-    if try(data.unifi_user.device[key].ip, null) == null
+    if data.unifi_user.device[key].ip == null
   ]
 
   # Unique missing MACs (remove duplicates)
@@ -91,27 +91,41 @@ locals {
     )) < length(device.nics)
   }
 
-  # Build DNS records configuration for devices with found MACs
+  # Build DNS A-records for all configured devices. The keys remain static while
+  # IP values are read after the corresponding client has been registered.
   dns_records = {
-    for name, device in local.devices_with_found_macs : name => {
+    for device in local.effective_config.devices : device.friendly_hostname => {
       hostname = device.friendly_hostname
       domain   = coalesce(device.domain, local.effective_config.default_domain)
-      ip       = local.found_macs[local.device_primary_mac[device.friendly_hostname]].ip
+      ip       = data.unifi_user.device["${device.friendly_hostname}-0"].ip
     }
   }
 }
 
 # ==============================================================================
-# Data Sources
+# UniFi Client Registration and Lookup
 # ==============================================================================
 
-# Query UniFi Controller for each device by MAC address
-# The filipowm/unifi provider uses unifi_user data source to look up clients by MAC
+# Register or adopt every normalized MAC before querying its current IP. Network
+# 10.x can report UnknownUser for active clients that are not yet remembered.
+resource "unifi_user" "device" {
+  for_each = local.mac_lookup_map
+
+  mac                    = each.value.mac_normalized
+  name                   = each.value.device_name
+  site                   = local.effective_config.site
+  allow_existing         = true
+  skip_forget_on_destroy = true
+}
+
+# Read the registered client after resource adoption. The explicit dependency is
+# required because the data source otherwise races the Network 10.x registration.
 data "unifi_user" "device" {
   for_each = local.mac_lookup_map
 
-  site = local.effective_config.site
-  mac  = each.value.mac_normalized
+  site       = local.effective_config.site
+  mac        = each.value.mac_normalized
+  depends_on = [unifi_user.device]
 }
 
 # ==============================================================================
@@ -136,6 +150,7 @@ resource "unifi_dns_record" "dns_record" {
 locals {
   # Flatten all service_cnames from devices and NICs
   # KCL now provides fully-qualified CNAMEs, so we use them as-is
+  # No filter is needed because every configured client is registered above.
   cname_records = flatten([
     for device in local.effective_config.devices : concat(
       # Device-level CNAMEs
@@ -146,7 +161,6 @@ locals {
           hostname = device.friendly_hostname
           domain   = coalesce(device.domain, local.effective_config.default_domain)
         }
-        if contains(keys(local.devices_with_found_macs), device.friendly_hostname)
       ],
       # NIC-level CNAMEs
       flatten([
@@ -157,7 +171,6 @@ locals {
             hostname = device.friendly_hostname
             domain   = coalesce(device.domain, local.effective_config.default_domain)
           }
-          if contains(keys(local.devices_with_found_macs), device.friendly_hostname)
         ]
       ])
     )

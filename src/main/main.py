@@ -2178,7 +2178,7 @@ Notes
   required_providers {{
     unifi = {{
       source  = "filipowm/unifi"
-      version = "~> 1.0"
+      version = "~> 1.1.0"
     }}
   }}
 }}
@@ -2223,6 +2223,268 @@ output "record_id" {{
             if "not found" in diagnostic or "no dns record" in diagnostic:
                 return False
             raise RuntimeError(_safe_exec_error("UniFi DNS validation", error)) from None
+
+    async def _unifi_dns_prefix_count(
+        self,
+        prefix: str,
+        site: str,
+        unifi_url: str,
+        api_url: str,
+        unifi_insecure: bool,
+        unifi_api_key: Secret,
+        deadline: float,
+    ) -> int:
+        """Count live static-DNS names matching a run prefix through the API."""
+        actual_api_url = (api_url if api_url else unifi_url).rstrip("/")
+        curl_args = "--insecure " if unifi_insecure else ""
+        command = (
+            f"curl {curl_args}--fail-with-body -sS "
+            '-H "X-API-KEY: $UNIFI_API_KEY" '
+            '"$UNIFI_API/proxy/network/v2/api/site/$UNIFI_SITE/static-dns" '
+            '| jq -r --arg prefix "$UNIFI_DNS_PREFIX" '
+            '\'[if type == "array" then .[] '
+            "elif .data then .data[] elif .result then .result[] else empty end "
+            '| select((.key // .name // "") | contains($prefix))] | length\''
+        )
+        container = (
+            dagger.dag.container()
+            .from_("alpine/curl:latest")
+            .with_exec(["apk", "add", "--no-cache", "jq"])
+            .with_env_variable("UNIFI_API", actual_api_url)
+            .with_env_variable("UNIFI_SITE", site)
+            .with_env_variable("UNIFI_DNS_PREFIX", prefix)
+            .with_secret_variable("UNIFI_API_KEY", unifi_api_key)
+            .with_exec(["sh", "-c", command])
+        )
+        try:
+            output = await _before_deadline(container.stdout(), deadline)
+            return int(output.strip())
+        except Exception as error:
+            raise RuntimeError(_safe_exec_error("UniFi DNS prefix query", error)) from None
+
+    @function
+    async def test_unifi_dns_baseline(
+        self,
+        source: Annotated[Directory, Doc("Project source containing the baseline fixture")],
+        run_id: Annotated[
+            str,
+            Doc("Unique 6-32 character lowercase run identifier for sandbox isolation"),
+        ],
+        unifi_url: Annotated[str, Doc("UniFi controller URL")],
+        unifi_api_key: Annotated[Secret, Doc("UniFi API key")],
+        api_url: Annotated[str, Doc("UniFi API URL; defaults to unifi_url")] = "",
+        site: Annotated[str, Doc("UniFi site for disposable DNS records")] = "default",
+        unifi_insecure: Annotated[bool, Doc("Skip UniFi TLS verification")] = False,
+        a_record_count: Annotated[int, Doc("Number of disposable A records")] = 64,
+        cname_record_count: Annotated[int, Doc("Number of disposable CNAME records")] = 64,
+        test_timeout: Annotated[str, Doc("Shared lifecycle timeout, such as 10m")] = "10m",
+        terraform_version: Annotated[str, Doc("Terraform image version")] = "1.10.0",
+        cache_buster: Annotated[str, Doc("Unique value that forces a fresh Dagger execution")] = "",
+    ) -> str:
+        """Run the isolated UniFi v1.1 DNS create/read/update/destroy baseline.
+
+        The API key is mounted as a Dagger secret and Terraform state remains
+        inside the lifecycle containers. Cleanup and provider-level absence
+        checks are mandatory. Use only after authorizing live UniFi DNS changes.
+
+        Example:
+            dagger call test-unifi-dns-baseline \\
+                --source=. \\
+                --run-id=20260828-a1b2c3 \\
+                --unifi-url=https://192.168.60.1 \\
+                --unifi-api-key=env:UNIFI_API_KEY \\
+                --unifi-insecure \\
+                --cache-buster=$(date +%s)
+        """
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{4,30}[a-z0-9]", run_id):
+            raise ValueError(
+                "run_id must be 6-32 lowercase letters, digits, or hyphens "
+                "and may not start or end with a hyphen"
+            )
+        if not 1 <= a_record_count <= 200:
+            raise ValueError("a_record_count must be from 1 through 200")
+        if not 1 <= cname_record_count <= 200:
+            raise ValueError("cname_record_count must be from 1 through 200")
+
+        timeout_seconds = _parse_duration(test_timeout)
+        cleanup_reserve = min(120.0, max(30.0, timeout_seconds * 0.25))
+        if timeout_seconds <= cleanup_reserve:
+            cleanup_reserve = max(1.0, timeout_seconds / 2)
+        lifecycle_deadline = time.monotonic() + timeout_seconds
+        operation_deadline = lifecycle_deadline - cleanup_reserve
+
+        sandbox_zone = f"unifi-poc-{run_id}.solomonhd.ai"
+        validation_names = [
+            f"a-001.{sandbox_zone}",
+            f"cname-001.{sandbox_zone}",
+        ]
+        state_file: Optional[dagger.File] = None
+        primary_failure: Optional[str] = None
+        cleanup_failure: Optional[str] = None
+        created = False
+        zero_drift = False
+        updated = False
+        read_validated = False
+        absence_validated = False
+
+        def configured_container(update_first_record: bool) -> dagger.Container:
+            fixture = source.directory("terraform/fixtures/unifi-provider-baseline")
+            container = (
+                dagger.dag.container()
+                .from_(f"hashicorp/terraform:{terraform_version}")
+                .with_directory("/fixture", fixture)
+                .with_workdir("/fixture")
+                .with_env_variable("TF_IN_AUTOMATION", "true")
+                .with_env_variable("TF_INPUT", "false")
+                .with_env_variable("TF_VAR_run_id", run_id)
+                .with_env_variable("TF_VAR_site", site)
+                .with_env_variable("TF_VAR_a_record_count", str(a_record_count))
+                .with_env_variable("TF_VAR_cname_record_count", str(cname_record_count))
+                .with_env_variable("TF_VAR_update_first_record", str(update_first_record).lower())
+            )
+            if cache_buster:
+                container = container.with_env_variable("CACHE_BUSTER", cache_buster)
+            return self._with_unifi_provider_environment(
+                container,
+                unifi_url,
+                api_url,
+                unifi_insecure,
+                unifi_api_key,
+                None,
+                None,
+            )
+
+        container = configured_container(update_first_record=False)
+        try:
+            container = container.with_exec(["terraform", "init", "-input=false", "-no-color"])
+            await _before_deadline(container.stdout(), operation_deadline)
+
+            container = container.with_exec(
+                ["terraform", "apply", "-auto-approve", "-input=false", "-no-color"]
+            )
+            await _before_deadline(container.stdout(), operation_deadline)
+            state_file = container.file("/fixture/terraform.tfstate")
+            await _before_deadline(state_file.contents(), operation_deadline)
+            created = True
+
+            container = container.with_exec(
+                [
+                    "terraform",
+                    "plan",
+                    "-detailed-exitcode",
+                    "-input=false",
+                    "-no-color",
+                    "-out=/tmp/zero-drift.tfplan",
+                ]
+            )
+            await _before_deadline(container.stdout(), operation_deadline)
+            zero_drift = True
+
+            for name in validation_names:
+                exists = await self._unifi_dns_exists(
+                    name,
+                    site,
+                    unifi_url,
+                    api_url,
+                    unifi_insecure,
+                    unifi_api_key,
+                    None,
+                    None,
+                    terraform_version,
+                    operation_deadline,
+                )
+                if not exists:
+                    raise RuntimeError(f"provider read did not find expected sandbox record {name}")
+            read_validated = True
+
+            container = container.with_env_variable("TF_VAR_update_first_record", "true")
+            container = container.with_exec(
+                [
+                    "sh",
+                    "-c",
+                    "terraform plan -detailed-exitcode -input=false -no-color "
+                    '-out=/tmp/update.tfplan >/dev/null; code=$?; [ "$code" -eq 2 ]',
+                ]
+            )
+            await _before_deadline(container.stdout(), operation_deadline)
+            container = container.with_exec(
+                ["terraform", "apply", "-auto-approve", "-input=false", "/tmp/update.tfplan"]
+            )
+            await _before_deadline(container.stdout(), operation_deadline)
+            state_file = container.file("/fixture/terraform.tfstate")
+            await _before_deadline(state_file.contents(), operation_deadline)
+            updated = True
+        except Exception as error:
+            primary_failure = _safe_exec_error("UniFi DNS baseline lifecycle", error)
+            try:
+                candidate_state = container.file("/fixture/terraform.tfstate")
+                await _before_deadline(candidate_state.contents(), lifecycle_deadline)
+                state_file = candidate_state
+            except Exception:
+                pass
+        finally:
+            if state_file is None:
+                cleanup_failure = "no Terraform state was available for mandatory cleanup"
+            else:
+                try:
+                    cleanup_container = (
+                        configured_container(update_first_record=True)
+                        .with_file("/fixture/terraform.tfstate", state_file)
+                        .with_exec(["terraform", "init", "-input=false", "-no-color"])
+                    )
+                    await _before_deadline(cleanup_container.stdout(), lifecycle_deadline)
+                    cleanup_container = cleanup_container.with_exec(
+                        [
+                            "terraform",
+                            "destroy",
+                            "-auto-approve",
+                            "-input=false",
+                            "-no-color",
+                        ]
+                    )
+                    await _before_deadline(cleanup_container.stdout(), lifecycle_deadline)
+                except Exception as error:
+                    cleanup_failure = _safe_exec_error("UniFi DNS baseline cleanup", error)
+
+            if cleanup_failure is None:
+                try:
+                    remaining = await self._unifi_dns_prefix_count(
+                        sandbox_zone,
+                        site,
+                        unifi_url,
+                        api_url,
+                        unifi_insecure,
+                        unifi_api_key,
+                        lifecycle_deadline,
+                    )
+                    if remaining:
+                        cleanup_failure = (
+                            f"API absence verification found {remaining} records in "
+                            f"the sandbox namespace {sandbox_zone}"
+                        )
+                    else:
+                        absence_validated = True
+                except Exception as error:
+                    cleanup_failure = _safe_exec_error(
+                        "UniFi DNS baseline absence verification", error
+                    )
+
+        failures = [failure for failure in (primary_failure, cleanup_failure) if failure]
+        if failures:
+            raise RuntimeError("; ".join(failures))
+
+        return "\n".join(
+            [
+                "UniFi DNS baseline lifecycle passed",
+                f"Sandbox: {sandbox_zone}",
+                f"Records: {a_record_count} A + {cname_record_count} CNAME",
+                f"Create completed: {created}",
+                f"Provider reads completed: {read_validated}",
+                f"Second plan zero drift: {zero_drift}",
+                f"Benign update completed: {updated}",
+                f"Destroy and absence verification completed: {absence_validated}",
+            ]
+        )
 
     async def _cloudflare_resource_counts(
         self,
