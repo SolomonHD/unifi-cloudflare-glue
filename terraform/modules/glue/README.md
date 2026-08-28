@@ -296,7 +296,7 @@ This order ensures that when Cloudflare Tunnel services start, they can resolve 
 | Name | Version |
 |------|---------|
 | terraform | >= 1.5.0 |
-| filipowm/unifi | ~> 1.0 |
+| filipowm/unifi | ~> 1.1.0 |
 | cloudflare/cloudflare | ~> 5.0 |
 | hashicorp/random | ~> 3.0 |
 

@@ -83,6 +83,5 @@ output "service_cnames_created" {
       coalesce(device.service_cnames, []),
       flatten([for nic in device.nics : coalesce(nic.service_cnames, [])])
     )
-    if contains(keys(local.devices_with_found_macs), device.friendly_hostname)
   ])
 }
