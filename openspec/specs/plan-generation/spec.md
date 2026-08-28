@@ -1,7 +1,10 @@
 # Spec: Plan Generation
 
-## ADDED Requirements
+## Purpose
 
+Define Terraform plan inputs, execution behavior, and export formats.
+
+## Requirements
 ### Requirement: Plan Function Signature
 
 The Dagger module MUST provide a `plan()` function that accepts configuration and outputs Terraform plans without applying changes.
@@ -68,30 +71,26 @@ The `plan()` function MUST generate Terraform plans for both UniFi DNS and Cloud
 
 ### Requirement: Plan Output Formats
 
-The `plan()` function MUST export three formats per module for different use cases.
+The `plan()` function MUST default to exportable artifacts that have been reviewed for secret disclosure, while raw Terraform plan formats MUST require explicit sensitive-artifact acknowledgement.
 
-#### Scenario: Export binary plan files
-**Given:** Terraform has generated plan files  
-**When:** Plan generation completes  
-**Then:** The output directory contains:
-- `unifi-plan.tfplan` (binary format, usable with `terraform apply`)
-- `cloudflare-plan.tfplan` (binary format, usable with `terraform apply`)
+#### Scenario: Export safe default plan artifacts
+- **GIVEN** Terraform has generated plans
+- **WHEN** the caller exports the default plan result
+- **THEN** the output contains a redacted human-readable plan and aggregated summary for each requested component
+- **AND** the output does not contain binary plan files or raw JSON plan files
 
-#### Scenario: Export JSON plan files
-**Given:** Terraform has generated plan files  
-**When:** Plan generation completes  
-**Then:** The function runs:
-- `terraform show -json unifi-plan.tfplan > unifi-plan.json`
-- `terraform show -json cloudflare-plan.tfplan > cloudflare-plan.json`  
-And exports both JSON files
+#### Scenario: Explicitly export sensitive plan artifacts
+- **GIVEN** the caller has selected the sensitive-artifact option
+- **WHEN** plan generation completes
+- **THEN** the output may include Terraform binary and JSON plan files
+- **AND** each sensitive artifact is owner-readable only
+- **AND** a warning manifest explains that Terraform plans can contain credentials and sensitive values
 
-#### Scenario: Export human-readable plan files
-**Given:** Terraform has generated plan files  
-**When:** Plan generation completes  
-**Then:** The function runs:
-- `terraform show unifi-plan.tfplan > unifi-plan.txt`
-- `terraform show cloudflare-plan.tfplan > cloudflare-plan.txt`  
-And exports both text files
+#### Scenario: Provider credentials are absent from plan inputs
+- **GIVEN** Terraform providers require Cloudflare or UniFi authentication
+- **WHEN** the plan is generated in either output mode
+- **THEN** provider credentials are supplied through provider-supported secret environment variables
+- **AND** they are not supplied as Terraform input variables serialized into the plan
 
 ### Requirement: Plan Summary Generation
 
@@ -117,22 +116,19 @@ The `plan()` function MUST create an aggregated summary of resource changes acro
 
 ### Requirement: Output Directory Structure
 
-The `plan()` function MUST return a `dagger.Directory` containing all plan artifacts in a well-organized structure.
+The `plan()` function MUST return a `dagger.Directory` whose contents match the selected artifact-sensitivity mode.
 
-#### Scenario: Return directory with all plan artifacts
-**Given:** Plan generation has completed successfully  
-**When:** User calls `export --path=./plans` on the returned directory  
-**Then:** The exported directory contains:
-```
-plans/
-├── unifi-plan.tfplan        # Binary plan (for terraform apply)
-├── unifi-plan.json          # Structured JSON (for automation)
-├── unifi-plan.txt           # Human-readable (for review)
-├── cloudflare-plan.tfplan   # Binary plan
-├── cloudflare-plan.json     # Structured JSON
-├── cloudflare-plan.txt      # Human-readable
-└── plan-summary.txt         # Aggregated summary
-```
+#### Scenario: Return safe default directory
+- **GIVEN** plan generation completed without sensitive-artifact opt-in
+- **WHEN** the user exports the returned directory
+- **THEN** the directory contains redacted human-readable plans and `plan-summary.txt`
+- **AND** it contains no `.tfplan` or raw plan `.json` files
+
+#### Scenario: Return acknowledged sensitive directory
+- **GIVEN** plan generation completed with sensitive-artifact opt-in
+- **WHEN** the user exports the returned directory
+- **THEN** the directory additionally contains the requested `.tfplan` and JSON files
+- **AND** it contains a sensitivity warning manifest
 
 ### Requirement: Container Reference Management
 
@@ -275,7 +271,7 @@ The `plan()` function MUST be documented with comprehensive examples and usage g
 - Example usage snippet
 - Security note about plan file contents
 
-## ADDED Requirements (from change: selective-plan-generation)
+<!-- Requirements added by selective-plan-generation -->
 
 ### Requirement: Plan function supports selective component planning
 The `plan()` function SHALL support generating Terraform plans for individual components (UniFi-only or Cloudflare-only) in addition to the default full deployment planning.
@@ -358,3 +354,10 @@ The `plan()` function SHALL return a Directory containing standardized plan arti
   - `plan.json` - JSON representation of the plan
   - `plan.txt` - Human-readable plan output
   - `plan-summary.txt` - Summary with resource counts and component information
+
+### Requirement: Plan output has secret-disclosure regression coverage
+The plan implementation MUST be tested with sentinel provider credentials to detect disclosure in default artifacts and command output.
+
+#### Scenario: Default plan export is scanned
+- **WHEN** automated tests generate and inspect a default plan result with sentinel secrets
+- **THEN** no sentinel credential MUST appear in any exported file or captured execution output

@@ -7,7 +7,29 @@ This guide covers security best practices for using `unifi-cloudflare-glue`, inc
 All sensitive credentials are handled using Dagger's `Secret` type, which ensures:
 - Secrets are never logged to console output
 - Secrets are not stored in command history
-- Secrets are passed securely to containers via environment variables
+- Secrets are passed to containers through secret environment variables or secret-file mounts
+
+### Required response to the 2026-08-27 exposure
+
+Do not run another live backend plan, deploy, destroy, tunnel-secret retrieval,
+or integration test until both prerequisites below are complete:
+
+1. Rotate the S3 backend access key and secret key through the owning IAM and
+   secret-manager workflow. Update the rendered backend source, confirm the new
+   credential can read and lock the intended state, then revoke the exposed old
+   credential. Do not paste either value into an issue, terminal transcript, or
+   commit.
+2. Securely dispose of every local or CI artifact produced by the affected runs,
+   including `.tfplan`, raw plan JSON, rendered backend YAML/HCL, Dagger trace
+   downloads, logs, caches, and uploaded CI artifacts. Resolve each exact path
+   before removal, use the platform's secure deletion or encrypted-volume disposal
+   procedure, empty recoverable trash where applicable, and expire remote artifact
+   copies. On copy-on-write or SSD storage, rely on encrypted-volume/key disposal
+   rather than assuming file overwrite is effective.
+
+Afterward, search only the known affected artifact locations for the retired access
+key identifier (never the secret key) and confirm no copy remains. Record completion
+in the operator change log before allowing the controlled read-only production plan.
 
 ### Environment Variable Pattern
 
@@ -84,6 +106,10 @@ dagger call deploy \
 
 ## Terraform State Security
 
+Backend configuration files supplied to Dagger are converted immediately to a
+secret and mounted owner-readable at Terraform's backend path. They are never
+recreated as ordinary Dagger files.
+
 ### Local State (Default)
 
 By default, Terraform stores state locally in the container:
@@ -117,6 +143,32 @@ When using local state, remember to clean up state files if needed:
 # After destroy, clean up any remaining state files
 rm -f terraform.tfstate terraform.tfstate.backup
 ```
+
+## Terraform Plan Artifacts
+
+`dagger call plan` exports only `plan.txt` and `plan-summary.txt` by default.
+Provider credentials use provider environment variables and are not Terraform
+input variables.
+
+The CLI input syntax is unchanged by secret mounting: use `env:` for provider
+credentials and pass the backend file path with `--backend-config-file`. Dagger
+converts the file contents to a secret internally. Do not pass backend contents
+as command arguments or ordinary environment variables.
+
+Raw binary and JSON plans can still contain credentials or other sensitive values.
+Request them only when necessary:
+
+```bash
+dagger call plan \
+    --kcl-source=./kcl \
+    ... \
+    --sensitive-artifacts \
+    export --path=./plans-sensitive
+```
+
+The opt-in files and warning manifest are created with owner-only permissions.
+Keep them in encrypted, access-controlled storage and securely dispose of them as
+soon as review is complete. Do not upload them as ordinary CI artifacts.
 
 ## CI/CD Security
 

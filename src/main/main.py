@@ -11,19 +11,22 @@ from typing import Annotated, Optional
 import random
 import string
 import json
-import shlex
+import re
 import time
 
-from .backend_config import process_backend_config_content
+try:
+    from .backend_config import process_backend_config_content
+except ImportError:  # Support the repository's direct-module unit test imports.
+    from backend_config import process_backend_config_content  # type: ignore[no-redef]
 
 
 async def _process_backend_config(backend_config_file: dagger.File) -> tuple[str, str]:
     """
     Process a backend configuration file, converting YAML to HCL if necessary.
-    
+
     Args:
         backend_config_file: File object containing backend configuration (YAML or HCL)
-        
+
     Returns:
         Tuple of (content, extension) where content is the HCL-formatted backend config
         and extension is '.tfbackend' for mounting
@@ -34,12 +37,87 @@ async def _process_backend_config(backend_config_file: dagger.File) -> tuple[str
         return process_backend_config_content(content)
     except Exception:
         # If we can't read the file, return empty content
-        return ("", '.tfbackend')
+        return ("", ".tfbackend")
+
+
+BACKEND_SECRET_PATH = "/root/.terraform/backend.tfbackend"
+
+
+def _parse_duration(value: str) -> float:
+    """Parse a positive duration such as ``30s``, ``5m``, or ``1.5h``."""
+    match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([smh])\s*", value)
+    if not match:
+        raise ValueError("test_timeout must be a positive duration ending in s, m, or h")
+    amount = float(match.group(1))
+    if amount <= 0:
+        raise ValueError("test_timeout must be greater than zero")
+    return amount * {"s": 1, "m": 60, "h": 3600}[match.group(2)]
+
+
+def _safe_exec_error(step: str, error: Exception) -> str:
+    """Return useful execution context without copying provider output or headers."""
+    exit_code = getattr(error, "exit_code", None)
+    suffix = f" (exit code {exit_code})" if exit_code is not None else ""
+    return f"{step} failed{suffix}; inspect the redacted Dagger trace for details"
+
+
+async def _before_deadline(awaitable, deadline: float):
+    """Await an operation without allowing it to exceed the shared deadline."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("integration operation deadline exceeded")
+    return await asyncio.wait_for(awaitable, timeout=remaining)
+
+
+def _integration_failure_reasons(
+    primary_failure: Optional[str],
+    validation_results: dict[str, str],
+    cleanup_ledger: list[dict[str, object]],
+    cleanup_status: dict[str, str],
+) -> list[str]:
+    """Evaluate strict integration outcome state without exposing provider output."""
+    reasons: list[str] = []
+    if primary_failure:
+        reasons.append(primary_failure)
+    required_validation = {
+        "cloudflare_tunnel": "validated",
+        "cloudflare_dns": "validated",
+        "unifi_validation": "validated",
+        "secrets_retrieval": "success",
+    }
+    for key, expected in required_validation.items():
+        if validation_results.get(key) != expected:
+            reasons.append(f"{key}={validation_results.get(key, 'missing')}")
+    for entry in cleanup_ledger:
+        if not entry.get("state_captured"):
+            reasons.append(f"{entry['provider']} state was not captured")
+    for provider, status in cleanup_status.items():
+        if not str(status).startswith("success"):
+            reasons.append(f"{provider} cleanup={status}")
+    return reasons
+
+
+async def _with_backend_secret(
+    container: dagger.Container,
+    backend_config_file: dagger.File,
+) -> dagger.Container:
+    """Convert backend configuration content to a mounted Dagger secret."""
+    config_content, _ = await _process_backend_config(backend_config_file)
+    if not config_content:
+        raise ValueError("backend configuration is empty or unreadable")
+    backend_secret = dagger.dag.set_secret("terraform-backend-config", config_content)
+    return container.with_mounted_secret(
+        BACKEND_SECRET_PATH,
+        backend_secret,
+        owner="root",
+        mode=0o600,
+    )
 
 
 # Custom exception for KCL generation errors
 class KCLGenerationError(Exception):
     """Raised when KCL configuration generation fails."""
+
     pass
 
 
@@ -126,13 +204,16 @@ class UnifiCloudflareGlue:
 
         # Create container with KCL and yq for YAML to JSON conversion
         base_ctr = dagger.dag.container().from_(f"kcllang/kcl:{kcl_version}")
-        
+
         # Install curl and yq for YAML to JSON conversion
-        ctr = base_ctr.with_exec([
-            "sh", "-c",
-            "apt-get update && apt-get install -y curl && curl -sL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq"
-        ])
-        
+        ctr = base_ctr.with_exec(
+            [
+                "sh",
+                "-c",
+                "apt-get update && apt-get install -y curl && curl -sL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq",
+            ]
+        )
+
         # Mount source directory
         ctr = ctr.with_directory("/src", source).with_workdir("/src")
 
@@ -264,11 +345,11 @@ class UnifiCloudflareGlue:
     ) -> tuple[bool, str]:
         """
         Validate backend configuration parameters.
-        
+
         Args:
             backend_type: Type of backend (local, s3, azurerm, gcs, remote, etc.)
             backend_config_file: Optional File object containing backend configuration
-            
+
         Returns:
             Tuple of (is_valid, error_message)
         """
@@ -283,7 +364,7 @@ class UnifiCloudflareGlue:
                 f"      --backend-config-file=./{backend_type}-backend.hcl \\\n"
                 f"      ..."
             )
-        
+
         # Config file provided but local backend selected
         if backend_type == "local" and backend_config_file is not None:
             return False, (
@@ -293,7 +374,7 @@ class UnifiCloudflareGlue:
                 "To use local backend without config file:\n"
                 "  Omit --backend-config-file or set --backend-type=local"
             )
-        
+
         return True, ""
 
     def _validate_state_storage_config(
@@ -303,11 +384,11 @@ class UnifiCloudflareGlue:
     ) -> tuple[bool, str]:
         """
         Validate mutual exclusion between remote backend and persistent local state directory.
-        
+
         Args:
             backend_type: Type of backend (local, s3, azurerm, gcs, remote, etc.)
             state_dir: Optional Directory for persistent local state storage
-            
+
         Returns:
             Tuple of (is_valid, error_message)
         """
@@ -335,70 +416,60 @@ class UnifiCloudflareGlue:
                 "       --backend-type=s3 \\\n"
                 "       --backend-config-file=./s3-backend.hcl"
             )
-        
+
         return True, ""
 
     def _generate_backend_block(self, backend_type: str) -> str:
         """
         Generate backend.tf content for remote backends.
-        
+
         Args:
             backend_type: Type of backend (s3, azurerm, gcs, remote, etc.)
-            
+
         Returns:
             HCL content for backend.tf file
         """
-        return f'''terraform {{
+        return f"""terraform {{
   backend "{backend_type}" {{}}
 }}
-'''
+"""
 
-    def _generate_unifi_provider_block(
-        self,
-        unifi_url: str,
-        api_url: str,
-        unifi_api_key: str = "",
-        unifi_username: str = "",
-        unifi_password: str = "",
-        unifi_insecure: bool = False,
-    ) -> str:
+    def _generate_unifi_provider_block(self) -> str:
         """
         Generate provider.tf content for UniFi provider.
-        
+
         This is used for standalone unifi-dns module deployments where the module
         doesn't have its own provider block. The glue module has its own provider
         configuration, so this is only needed for unifi-only deployments.
-        
-        Args:
-            unifi_url: UniFi Controller URL
-            api_url: UniFi API URL (defaults to unifi_url if empty)
-            unifi_api_key: UniFi API key (optional)
-            unifi_username: UniFi username (optional)
-            unifi_password: UniFi password (optional)
-            unifi_insecure: Skip TLS verification
-            
+
         Returns:
             HCL content for provider.tf file
         """
-        actual_api_url = api_url if api_url else unifi_url
-        
-        # Build provider block with conditional authentication
-        # Use api_key if provided, otherwise use username/password
-        if unifi_api_key:
-            auth_config = f'''  api_key        = var.unifi_api_key'''
-        else:
-            auth_config = f'''  username       = var.unifi_username
-  password       = var.unifi_password'''
-        
-        return f'''# Provider configuration for standalone unifi-dns module
+        return f"""# Provider configuration for standalone unifi-dns module
 # This file is dynamically generated for unifi-only deployments
-provider "unifi" {{
-  api_url        = var.unifi_url != "" ? (var.api_url != "" ? var.api_url : var.unifi_url) : "https://placeholder.local:8443"
-{auth_config}
-  allow_insecure = var.unifi_insecure
-}}
-'''
+provider "unifi" {{}}
+"""
 
+    def _with_unifi_provider_environment(
+        self,
+        container: dagger.Container,
+        unifi_url: str,
+        api_url: str,
+        unifi_insecure: bool,
+        unifi_api_key: Optional[Secret],
+        unifi_username: Optional[Secret],
+        unifi_password: Optional[Secret],
+    ) -> dagger.Container:
+        """Configure the UniFi provider without Terraform credential variables."""
+        actual_api_url = api_url if api_url else unifi_url
+        container = container.with_env_variable("UNIFI_API", actual_api_url)
+        container = container.with_env_variable("UNIFI_INSECURE", str(unifi_insecure).lower())
+        if unifi_api_key is not None:
+            return container.with_secret_variable("UNIFI_API_KEY", unifi_api_key)
+        if unifi_username is not None and unifi_password is not None:
+            container = container.with_secret_variable("UNIFI_USERNAME", unifi_username)
+            return container.with_secret_variable("UNIFI_PASSWORD", unifi_password)
+        return container
 
     @function
     async def deploy(
@@ -413,14 +484,34 @@ provider "unifi" {{
         unifi_username: Annotated[Optional[Secret], Doc("UniFi username")] = None,
         unifi_password: Annotated[Optional[Secret], Doc("UniFi password")] = None,
         unifi_insecure: Annotated[bool, Doc("Skip TLS verification for UniFi controller")] = False,
-        unifi_only: Annotated[bool, Doc("Deploy only UniFi DNS (mutually exclusive with --cloudflare-only)")] = False,
-        cloudflare_only: Annotated[bool, Doc("Deploy only Cloudflare Tunnels (mutually exclusive with --unifi-only)")] = False,
-        terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
-        kcl_version: Annotated[str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")] = "latest",
-        backend_type: Annotated[str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")] = "local",
-        backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
-        state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
-        cache_buster: Annotated[str, Doc("Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))")] = "",
+        unifi_only: Annotated[
+            bool, Doc("Deploy only UniFi DNS (mutually exclusive with --cloudflare-only)")
+        ] = False,
+        cloudflare_only: Annotated[
+            bool, Doc("Deploy only Cloudflare Tunnels (mutually exclusive with --unifi-only)")
+        ] = False,
+        terraform_version: Annotated[
+            str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")
+        ] = "latest",
+        kcl_version: Annotated[
+            str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")
+        ] = "latest",
+        backend_type: Annotated[
+            str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")
+        ] = "local",
+        backend_config_file: Annotated[
+            Optional[dagger.File],
+            Doc("Backend configuration HCL file (required for remote backends)"),
+        ] = None,
+        state_dir: Annotated[
+            Optional[dagger.Directory],
+            Doc(
+                "Directory for persistent Terraform state (mutually exclusive with remote backend)"
+            ),
+        ] = None,
+        cache_buster: Annotated[
+            str, Doc("Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))")
+        ] = "",
     ) -> str:
         """
         Deploy UniFi DNS and/or Cloudflare Tunnels using the combined Terraform module.
@@ -574,7 +665,9 @@ provider "unifi" {{
 
         if not cloudflare_only:  # Generate UniFi config unless cloudflare-only
             try:
-                unifi_file = await self.generate_unifi_config(effective_kcl_source, kcl_version)
+                unifi_file = await self.generate_unifi_config(  # type: ignore[attr-defined]
+                    effective_kcl_source, kcl_version
+                )
                 unifi_dir = dagger.dag.directory().with_file("unifi.json", unifi_file)
                 results.append("✓ UniFi configuration generated")
             except Exception as e:
@@ -584,8 +677,12 @@ provider "unifi" {{
 
         if not unifi_only:  # Generate Cloudflare config unless unifi-only
             try:
-                cloudflare_file = await self.generate_cloudflare_config(effective_kcl_source, kcl_version)
-                cloudflare_dir = dagger.dag.directory().with_file("cloudflare.json", cloudflare_file)
+                cloudflare_file = await self.generate_cloudflare_config(  # type: ignore[attr-defined]
+                    effective_kcl_source, kcl_version
+                )
+                cloudflare_dir = dagger.dag.directory().with_file(
+                    "cloudflare.json", cloudflare_file
+                )
                 results.append("✓ Cloudflare configuration generated")
             except Exception as e:
                 return f"✗ Failed: Could not generate Cloudflare config\n{str(e)}"
@@ -643,7 +740,11 @@ provider "unifi" {{
                 workdir = "/module/glue"
             else:
                 # Individual modules only need themselves
-                tf_module = dagger.dag.current_module().source().directory(f"terraform/modules/{module_path}")
+                tf_module = (
+                    dagger.dag.current_module()
+                    .source()
+                    .directory(f"terraform/modules/{module_path}")
+                )
                 ctr = ctr.with_directory("/module", tf_module)
                 workdir = "/module"
         except Exception as e:
@@ -667,14 +768,7 @@ provider "unifi" {{
         # The glue module has its own provider block, but standalone unifi-dns needs one
         if module_path == "unifi-dns":
             try:
-                provider_hcl = self._generate_unifi_provider_block(
-                    unifi_url=unifi_url,
-                    api_url=actual_api_url,
-                    unifi_api_key="" if unifi_api_key is None else "present",  # Just indicate presence
-                    unifi_username="" if unifi_username is None else "present",
-                    unifi_password="" if unifi_password is None else "present",
-                    unifi_insecure=unifi_insecure,
-                )
+                provider_hcl = self._generate_unifi_provider_block()
                 ctr = ctr.with_new_file(f"{workdir}/provider.tf", provider_hcl)
             except Exception as e:
                 return f"✗ Failed: Could not generate UniFi provider configuration\n{str(e)}"
@@ -682,17 +776,18 @@ provider "unifi" {{
         # Process and mount backend config file if provided
         if backend_config_file is not None:
             try:
-                config_content, _ = await _process_backend_config(backend_config_file)
-                ctr = ctr.with_new_file("/root/.terraform/backend.tfbackend", config_content)
+                ctr = await _with_backend_secret(ctr, backend_config_file)
             except Exception as e:
-                return f"✗ Failed: Could not process backend config file\n{str(e)}"
+                return f"✗ Failed: {_safe_exec_error('Backend configuration processing', e)}"
 
         # Set up environment variables based on which module is being used
         if module_path == "cloudflare-tunnel":
             # Cloudflare module expects config_file (not cloudflare_config_file)
             # Pass account_id and zone_name as overrides to allow CLI parameters to take precedence
             if cloudflare_dir is not None:
-                ctr = ctr.with_env_variable("TF_VAR_config_file", "/workspace/cloudflare/cloudflare.json")
+                ctr = ctr.with_env_variable(
+                    "TF_VAR_config_file", "/workspace/cloudflare/cloudflare.json"
+                )
             if cloudflare_account_id:
                 ctr = ctr.with_env_variable("TF_VAR_account_id_override", cloudflare_account_id)
             if zone_name:
@@ -712,30 +807,40 @@ provider "unifi" {{
                 ctr = ctr.with_env_variable("TF_VAR_api_url", actual_api_url)
                 ctr = ctr.with_env_variable("TF_VAR_unifi_insecure", str(unifi_insecure).lower())
             if unifi_dir is not None:
-                ctr = ctr.with_env_variable("TF_VAR_unifi_config_file", "/workspace/unifi/unifi.json")
+                ctr = ctr.with_env_variable(
+                    "TF_VAR_unifi_config_file", "/workspace/unifi/unifi.json"
+                )
             if cloudflare_dir is not None:
-                ctr = ctr.with_env_variable("TF_VAR_cloudflare_config_file", "/workspace/cloudflare/cloudflare.json")
+                ctr = ctr.with_env_variable(
+                    "TF_VAR_cloudflare_config_file", "/workspace/cloudflare/cloudflare.json"
+                )
             if cloudflare_account_id:
                 ctr = ctr.with_env_variable("TF_VAR_cloudflare_account_id", cloudflare_account_id)
                 ctr = ctr.with_env_variable("TF_VAR_zone_name", zone_name)
 
         # Add authentication secrets conditionally
         if unifi_only or not cloudflare_only:  # UniFi credentials needed
-            if unifi_api_key:
-                ctr = ctr.with_secret_variable("TF_VAR_unifi_api_key", unifi_api_key)
-            elif unifi_username and unifi_password:
-                ctr = ctr.with_secret_variable("TF_VAR_unifi_username", unifi_username)
-                ctr = ctr.with_secret_variable("TF_VAR_unifi_password", unifi_password)
-        
+            ctr = self._with_unifi_provider_environment(
+                ctr,
+                unifi_url,
+                actual_api_url,
+                unifi_insecure,
+                unifi_api_key,
+                unifi_username,
+                unifi_password,
+            )
+
         if cloudflare_only or not unifi_only:  # Cloudflare credentials needed
             if cloudflare_token:
                 # Use CLOUDFLARE_API_TOKEN env var - more reliable with Dagger secrets
                 ctr = ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
 
         # Handle state directory mounting and setup (persistent local state)
-        if using_persistent_state:
+        if state_dir is not None:
             ctr = ctr.with_directory("/state", state_dir)
-            ctr = ctr.with_exec(["sh", "-c", "rm -rf /state/.terraform && echo 'Cleaned .terraform directory'"])
+            ctr = ctr.with_exec(
+                ["sh", "-c", "rm -rf /state/.terraform && echo 'Cleaned .terraform directory'"]
+            )
             _ = await ctr.stdout()
             ctr = ctr.with_exec(["sh", "-c", f"cp -r {workdir}/* /state/ && ls -la /state"])
             _ = await ctr.stdout()
@@ -746,14 +851,14 @@ provider "unifi" {{
         # Run terraform init
         init_cmd = ["terraform", "init"]
         if backend_config_file is not None:
-            init_cmd.extend(["-backend-config=/root/.terraform/backend.tfbackend"])
+            init_cmd.extend([f"-backend-config={BACKEND_SECRET_PATH}"])
 
         try:
             ctr = ctr.with_exec(init_cmd)
             _ = await ctr.stdout()
             results.append("✓ Terraform init completed")
         except dagger.ExecError as e:
-            error_msg = f"✗ Failed: Terraform init failed\n{str(e)}"
+            error_msg = f"✗ Failed: {_safe_exec_error('Terraform init', e)}"
             if backend_type != "local":
                 error_msg += (
                     "\n\nBackend configuration troubleshooting:\n"
@@ -768,23 +873,26 @@ provider "unifi" {{
         try:
             if effective_cache_buster:
                 # Inject cache buster as comment in shell command to make it unique
-                ctr = ctr.with_exec(["sh", "-c", f"# cache_bust={effective_cache_buster}\nterraform apply -auto-approve"])
+                ctr = ctr.with_exec(
+                    [
+                        "sh",
+                        "-c",
+                        f"# cache_bust={effective_cache_buster}\nterraform apply -auto-approve",
+                    ]
+                )
             else:
                 ctr = ctr.with_exec(["terraform", "apply", "-auto-approve"])
             apply_result = await ctr.stdout()
             results.append("✓ Terraform apply completed")
         except dagger.ExecError as e:
-            error_details = f"Exit code: {e.exit_code}\n"
-            error_details += f"Stdout:\n{e.stdout or 'N/A'}\n"
-            error_details += f"Stderr:\n{e.stderr or 'N/A'}"
-            return f"✗ Failed: Terraform apply failed\n{error_details}"
+            return f"✗ Failed: {_safe_exec_error('Terraform apply', e)}"
 
         # Final summary
         results.append("")
         results.append("=" * 60)
         results.append("DEPLOYMENT SUMMARY")
         results.append("=" * 60)
-        
+
         # Add execution timestamp to make result unique (breaks Dagger cache)
         if effective_cache_buster:
             results.append(f"Execution ID: {effective_cache_buster}")
@@ -794,7 +902,7 @@ provider "unifi" {{
             results.append("✓ UniFi DNS deployment completed successfully")
         elif cloudflare_only:
             results.append("✓ Cloudflare Tunnel deployment completed successfully")
-            
+
             # Add tunnel token retrieval guidance for cloudflare-only deployment
             guidance_lines = [
                 "",
@@ -826,20 +934,24 @@ provider "unifi" {{
                 dagger_cmd_parts.append(f"    --state-dir=./terraform-state")
 
             guidance_lines.extend(dagger_cmd_parts)
-            guidance_lines.extend([
-                "",
-                "Option 2: Install cloudflared service directly:",
-                "  cloudflared service install <tunnel-token-from-option-1>",
-                "",
-                "For detailed setup instructions, see:",
-                "  examples/homelab-media-stack/README.md",
-                "-" * 60,
-            ])
+            guidance_lines.extend(
+                [
+                    "",
+                    "Option 2: Install cloudflared service directly:",
+                    "  cloudflared service install <tunnel-token-from-option-1>",
+                    "",
+                    "For detailed setup instructions, see:",
+                    "  examples/homelab-media-stack/README.md",
+                    "-" * 60,
+                ]
+            )
 
             results.extend(guidance_lines)
         else:
-            results.append("✓ Both UniFi DNS and Cloudflare Tunnel deployments completed successfully")
-            
+            results.append(
+                "✓ Both UniFi DNS and Cloudflare Tunnel deployments completed successfully"
+            )
+
             # Add tunnel token retrieval guidance for full deployment
             guidance_lines = [
                 "",
@@ -871,15 +983,17 @@ provider "unifi" {{
                 dagger_cmd_parts.append(f"    --state-dir=./terraform-state")
 
             guidance_lines.extend(dagger_cmd_parts)
-            guidance_lines.extend([
-                "",
-                "Option 2: Install cloudflared service directly:",
-                "  cloudflared service install <tunnel-token-from-option-1>",
-                "",
-                "For detailed setup instructions, see:",
-                "  examples/homelab-media-stack/README.md",
-                "-" * 60,
-            ])
+            guidance_lines.extend(
+                [
+                    "",
+                    "Option 2: Install cloudflared service directly:",
+                    "  cloudflared service install <tunnel-token-from-option-1>",
+                    "",
+                    "For detailed setup instructions, see:",
+                    "  examples/homelab-media-stack/README.md",
+                    "-" * 60,
+                ]
+            )
 
             results.extend(guidance_lines)
 
@@ -895,18 +1009,51 @@ provider "unifi" {{
         cloudflare_account_id: Annotated[str, Doc("Cloudflare Account ID")] = "",
         zone_name: Annotated[str, Doc("DNS zone name")] = "",
         api_url: Annotated[str, Doc("UniFi API URL (defaults to unifi_url)")] = "",
-        unifi_api_key: Annotated[Optional[Secret], Doc("UniFi API key (mutually exclusive with username/password)")] = None,
-        unifi_username: Annotated[Optional[Secret], Doc("UniFi username (use with password)")] = None,
-        unifi_password: Annotated[Optional[Secret], Doc("UniFi password (use with username)")] = None,
-        unifi_insecure: Annotated[bool, Doc("Skip TLS verification for UniFi controller (useful for self-signed certificates)")] = False,
-        unifi_only: Annotated[bool, Doc("Plan only UniFi DNS (mutually exclusive with --cloudflare-only)")] = False,
-        cloudflare_only: Annotated[bool, Doc("Plan only Cloudflare Tunnels (mutually exclusive with --unifi-only)")] = False,
-        terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
-        kcl_version: Annotated[str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")] = "latest",
-        backend_type: Annotated[str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")] = "local",
-        backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
-        state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
-        cache_buster: Annotated[str, Doc("Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))")] = "",
+        unifi_api_key: Annotated[
+            Optional[Secret], Doc("UniFi API key (mutually exclusive with username/password)")
+        ] = None,
+        unifi_username: Annotated[
+            Optional[Secret], Doc("UniFi username (use with password)")
+        ] = None,
+        unifi_password: Annotated[
+            Optional[Secret], Doc("UniFi password (use with username)")
+        ] = None,
+        unifi_insecure: Annotated[
+            bool,
+            Doc("Skip TLS verification for UniFi controller (useful for self-signed certificates)"),
+        ] = False,
+        unifi_only: Annotated[
+            bool, Doc("Plan only UniFi DNS (mutually exclusive with --cloudflare-only)")
+        ] = False,
+        cloudflare_only: Annotated[
+            bool, Doc("Plan only Cloudflare Tunnels (mutually exclusive with --unifi-only)")
+        ] = False,
+        terraform_version: Annotated[
+            str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")
+        ] = "latest",
+        kcl_version: Annotated[
+            str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")
+        ] = "latest",
+        backend_type: Annotated[
+            str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")
+        ] = "local",
+        backend_config_file: Annotated[
+            Optional[dagger.File],
+            Doc("Backend configuration HCL file (required for remote backends)"),
+        ] = None,
+        state_dir: Annotated[
+            Optional[dagger.Directory],
+            Doc(
+                "Directory for persistent Terraform state (mutually exclusive with remote backend)"
+            ),
+        ] = None,
+        sensitive_artifacts: Annotated[
+            bool,
+            Doc("Include raw .tfplan and JSON artifacts that may contain secrets (owner-only)"),
+        ] = False,
+        cache_buster: Annotated[
+            str, Doc("Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))")
+        ] = "",
     ) -> dagger.Directory:
         """
         Generate Terraform plans for UniFi DNS and/or Cloudflare Tunnel configurations.
@@ -945,14 +1092,13 @@ provider "unifi" {{
             backend_type: Terraform backend type (local, s3, azurerm, gcs, remote, etc.)
             backend_config_file: Backend configuration HCL file (required for remote backends)
             state_dir: Directory for persistent Terraform state (mutually exclusive with remote backend)
+            sensitive_artifacts: Explicitly include raw Terraform plan artifacts
             cache_buster: Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))
 
         Returns:
-            dagger.Directory containing all plan artifacts:
-            - plan.tfplan - Binary plan file for terraform apply
-            - plan.json - JSON representation of the plan
-            - plan.txt - Human-readable plan output
-            - plan-summary.txt - Summary with resource counts and component information
+            Safe by default directory containing plan.txt and plan-summary.txt. When
+            sensitive_artifacts is enabled, owner-only plan.tfplan, plan.json, and
+            SENSITIVE-ARTIFACTS.md are included as well.
 
         Example:
             # Full deployment plan (both UniFi and Cloudflare)
@@ -1018,9 +1164,13 @@ provider "unifi" {{
             using_api_key = unifi_api_key is not None
             using_password = unifi_username is not None and unifi_password is not None
             if not using_api_key and not using_password:
-                raise ValueError("✗ Failed: UniFi-only planning requires either --unifi-api-key OR both --unifi-username and --unifi-password")
+                raise ValueError(
+                    "✗ Failed: UniFi-only planning requires either --unifi-api-key OR both --unifi-username and --unifi-password"
+                )
             if using_api_key and using_password:
-                raise ValueError("✗ Failed: Cannot use both API key and username/password. Choose one authentication method.")
+                raise ValueError(
+                    "✗ Failed: Cannot use both API key and username/password. Choose one authentication method."
+                )
             if not unifi_url:
                 raise ValueError("✗ Failed: UniFi-only planning requires --unifi-url")
         elif cloudflare_only:
@@ -1028,7 +1178,9 @@ provider "unifi" {{
             if cloudflare_token is None:
                 raise ValueError("✗ Failed: Cloudflare-only planning requires --cloudflare-token")
             if not cloudflare_account_id:
-                raise ValueError("✗ Failed: Cloudflare-only planning requires --cloudflare-account-id")
+                raise ValueError(
+                    "✗ Failed: Cloudflare-only planning requires --cloudflare-account-id"
+                )
             if not zone_name:
                 raise ValueError("✗ Failed: Cloudflare-only planning requires --zone-name")
         else:
@@ -1036,15 +1188,21 @@ provider "unifi" {{
             using_api_key = unifi_api_key is not None
             using_password = unifi_username is not None and unifi_password is not None
             if not using_api_key and not using_password:
-                raise ValueError("✗ Failed: Full deployment planning requires either --unifi-api-key OR both --unifi-username and --unifi-password")
+                raise ValueError(
+                    "✗ Failed: Full deployment planning requires either --unifi-api-key OR both --unifi-username and --unifi-password"
+                )
             if using_api_key and using_password:
-                raise ValueError("✗ Failed: Cannot use both API key and username/password. Choose one authentication method.")
+                raise ValueError(
+                    "✗ Failed: Cannot use both API key and username/password. Choose one authentication method."
+                )
             if not unifi_url:
                 raise ValueError("✗ Failed: Full deployment planning requires --unifi-url")
             if cloudflare_token is None:
                 raise ValueError("✗ Failed: Full deployment planning requires --cloudflare-token")
             if not cloudflare_account_id:
-                raise ValueError("✗ Failed: Full deployment planning requires --cloudflare-account-id")
+                raise ValueError(
+                    "✗ Failed: Full deployment planning requires --cloudflare-account-id"
+                )
             if not zone_name:
                 raise ValueError("✗ Failed: Full deployment planning requires --zone-name")
 
@@ -1072,15 +1230,21 @@ provider "unifi" {{
 
         if not cloudflare_only:  # Generate UniFi config unless cloudflare-only
             try:
-                unifi_file = await self.generate_unifi_config(effective_kcl_source, kcl_version)
+                unifi_file = await self.generate_unifi_config(  # type: ignore[attr-defined]
+                    effective_kcl_source, kcl_version
+                )
                 unifi_dir = dagger.dag.directory().with_file("unifi.json", unifi_file)
             except Exception as e:
                 raise RuntimeError(f"✗ Failed: Could not generate UniFi config\n{str(e)}")
 
         if not unifi_only:  # Generate Cloudflare config unless unifi-only
             try:
-                cloudflare_file = await self.generate_cloudflare_config(effective_kcl_source, kcl_version)
-                cloudflare_dir = dagger.dag.directory().with_file("cloudflare.json", cloudflare_file)
+                cloudflare_file = await self.generate_cloudflare_config(  # type: ignore[attr-defined]
+                    effective_kcl_source, kcl_version
+                )
+                cloudflare_dir = dagger.dag.directory().with_file(
+                    "cloudflare.json", cloudflare_file
+                )
             except Exception as e:
                 raise RuntimeError(f"✗ Failed: Could not generate Cloudflare config\n{str(e)}")
 
@@ -1101,7 +1265,9 @@ provider "unifi" {{
                 tf_modules = dagger.dag.current_module().source().directory("terraform/modules")
                 ctr = ctr.with_directory("/module", tf_modules)
             except Exception as e:
-                raise RuntimeError(f"✗ Failed: Could not mount Terraform modules at terraform/modules/: {str(e)}")
+                raise RuntimeError(
+                    f"✗ Failed: Could not mount Terraform modules at terraform/modules/: {str(e)}"
+                )
 
             # Mount configuration files conditionally
             if unifi_dir is not None:
@@ -1116,8 +1282,7 @@ provider "unifi" {{
 
             # Process and mount backend config file if provided
             if backend_config_file is not None:
-                config_content, _ = await _process_backend_config(backend_config_file)
-                ctr = ctr.with_new_file("/root/.terraform/backend.tfbackend", config_content)
+                ctr = await _with_backend_secret(ctr, backend_config_file)
 
             # Set up environment variables conditionally based on deployment scope
             if unifi_url:
@@ -1125,20 +1290,28 @@ provider "unifi" {{
                 ctr = ctr.with_env_variable("TF_VAR_api_url", actual_api_url)
                 ctr = ctr.with_env_variable("TF_VAR_unifi_insecure", str(unifi_insecure).lower())
             if unifi_dir is not None:
-                ctr = ctr.with_env_variable("TF_VAR_unifi_config_file", "/workspace/unifi/unifi.json")
+                ctr = ctr.with_env_variable(
+                    "TF_VAR_unifi_config_file", "/workspace/unifi/unifi.json"
+                )
             if cloudflare_dir is not None:
-                ctr = ctr.with_env_variable("TF_VAR_cloudflare_config_file", "/workspace/cloudflare/cloudflare.json")
+                ctr = ctr.with_env_variable(
+                    "TF_VAR_cloudflare_config_file", "/workspace/cloudflare/cloudflare.json"
+                )
             if cloudflare_account_id:
                 ctr = ctr.with_env_variable("TF_VAR_cloudflare_account_id", cloudflare_account_id)
                 ctr = ctr.with_env_variable("TF_VAR_zone_name", zone_name)
 
             # Add authentication secrets conditionally
             if unifi_only or not cloudflare_only:  # UniFi credentials needed
-                if unifi_api_key:
-                    ctr = ctr.with_secret_variable("TF_VAR_unifi_api_key", unifi_api_key)
-                elif unifi_username and unifi_password:
-                    ctr = ctr.with_secret_variable("TF_VAR_unifi_username", unifi_username)
-                    ctr = ctr.with_secret_variable("TF_VAR_unifi_password", unifi_password)
+                ctr = self._with_unifi_provider_environment(
+                    ctr,
+                    unifi_url,
+                    actual_api_url,
+                    unifi_insecure,
+                    unifi_api_key,
+                    unifi_username,
+                    unifi_password,
+                )
 
             if cloudflare_only or not unifi_only:  # Cloudflare credentials needed
                 if cloudflare_token:
@@ -1146,10 +1319,12 @@ provider "unifi" {{
                     ctr = ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
 
             # Handle state directory mounting and setup (persistent local state)
-            if using_persistent_state:
+            if state_dir is not None:
                 ctr = ctr.with_directory("/state", state_dir)
                 # Clean up any existing .terraform directory to prevent provider conflicts
-                ctr = ctr.with_exec(["sh", "-c", "rm -rf /state/.terraform && echo 'Cleaned .terraform directory'"])
+                ctr = ctr.with_exec(
+                    ["sh", "-c", "rm -rf /state/.terraform && echo 'Cleaned .terraform directory'"]
+                )
                 _ = await ctr.stdout()
                 ctr = ctr.with_exec(["sh", "-c", "cp -r /module/glue/* /state/ && ls -la /state"])
                 _ = await ctr.stdout()
@@ -1160,7 +1335,7 @@ provider "unifi" {{
             # Run terraform init
             init_cmd = ["terraform", "init"]
             if backend_config_file is not None:
-                init_cmd.extend(["-backend-config=/root/.terraform/backend.tfbackend"])
+                init_cmd.extend([f"-backend-config={BACKEND_SECRET_PATH}"])
 
             ctr = ctr.with_exec(init_cmd)
             _ = await ctr.stdout()
@@ -1178,23 +1353,64 @@ provider "unifi" {{
             _ = await ctr.stdout()
 
             # Extract plan files from POST-execution container
-            plan_binary = await ctr.file("/state/plan.tfplan" if using_persistent_state else "/module/glue/plan.tfplan")
-            plan_json = await ctr.file("/state/plan.json" if using_persistent_state else "/module/glue/plan.json")
-            plan_txt = await ctr.file("/state/plan.txt" if using_persistent_state else "/module/glue/plan.txt")
+            plan_binary = await ctr.file(
+                "/state/plan.tfplan" if using_persistent_state else "/module/glue/plan.tfplan"
+            )
+            plan_json = await ctr.file(
+                "/state/plan.json" if using_persistent_state else "/module/glue/plan.json"
+            )
+            plan_txt = await ctr.file(
+                "/state/plan.txt" if using_persistent_state else "/module/glue/plan.txt"
+            )
 
-            # Add to output directory
-            output_dir = output_dir.with_file("plan.tfplan", plan_binary)
-            output_dir = output_dir.with_file("plan.json", plan_json)
+            # The human-readable plan is the only default plan artifact. Terraform
+            # redacts values marked sensitive in this representation.
             output_dir = output_dir.with_file("plan.txt", plan_txt)
+
+            if sensitive_artifacts:
+                output_dir = output_dir.with_file("plan.tfplan", plan_binary, permissions=0o600)
+                output_dir = output_dir.with_file("plan.json", plan_json, permissions=0o600)
+                output_dir = output_dir.with_new_file(
+                    "SENSITIVE-ARTIFACTS.md",
+                    """# Sensitive Terraform plan artifacts
+
+This directory includes raw Terraform plan formats that can retain provider
+inputs, credentials, and sensitive values. Keep these files in encrypted,
+access-controlled storage; do not upload them as general CI artifacts or commit
+them to source control. Securely delete them as soon as review is complete.
+""",
+                    permissions=0o600,
+                )
 
             # Parse plan for resource counts
             try:
                 json_content = await plan_json.contents()
                 plan_data = json.loads(json_content)
                 changes = plan_data.get("resource_changes", [])
-                total_add = sum(1 for c in changes if any(a.get("action") in ["create", "add"] for a in c.get("change", {}).get("actions", [])))
-                total_change = sum(1 for c in changes if any(a.get("action") in ["update", "change"] for a in c.get("change", {}).get("actions", [])))
-                total_destroy = sum(1 for c in changes if any(a.get("action") in ["delete", "destroy"] for a in c.get("change", {}).get("actions", [])))
+                total_add = sum(
+                    1
+                    for c in changes
+                    if any(
+                        a.get("action") in ["create", "add"]
+                        for a in c.get("change", {}).get("actions", [])
+                    )
+                )
+                total_change = sum(
+                    1
+                    for c in changes
+                    if any(
+                        a.get("action") in ["update", "change"]
+                        for a in c.get("change", {}).get("actions", [])
+                    )
+                )
+                total_destroy = sum(
+                    1
+                    for c in changes
+                    if any(
+                        a.get("action") in ["delete", "destroy"]
+                        for a in c.get("change", {}).get("actions", [])
+                    )
+                )
             except Exception:
                 # Fallback: parse from text
                 txt_content = await plan_txt.contents()
@@ -1203,7 +1419,7 @@ provider "unifi" {{
                 total_destroy = txt_content.count("will be destroyed")
 
         except Exception as e:
-            raise RuntimeError(f"✗ Failed: Terraform plan failed\n{str(e)}")
+            raise RuntimeError(f"✗ Failed: {_safe_exec_error('Terraform plan', e)}") from None
 
         # Phase 3: Create plan summary
         timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -1215,6 +1431,17 @@ provider "unifi" {{
             planned_components = "Cloudflare Tunnels only"
         else:
             planned_components = "UniFi DNS and Cloudflare Tunnels"
+
+        output_files = "- plan.txt     (redacted human-readable format)"
+        handling_notes = "- Default safe export: raw Terraform plan formats were omitted"
+        if sensitive_artifacts:
+            output_files += """
+- plan.tfplan  (SENSITIVE binary plan; owner-only)
+- plan.json    (SENSITIVE raw JSON plan; owner-only)
+- SENSITIVE-ARTIFACTS.md (secure handling and disposal warning)"""
+            handling_notes = (
+                "- Sensitive artifact export was explicitly enabled; follow the warning manifest"
+            )
 
         summary_content = f"""Terraform Plan Summary
 ======================
@@ -1234,16 +1461,12 @@ Total changes:        {total_add + total_change + total_destroy}
 
 Output Files
 ------------
-- plan.tfplan  (binary plan for terraform apply)
-- plan.json    (structured JSON for automation)
-- plan.txt     (human-readable format)
+{output_files}
 
 Notes
 -----
-- Binary plan file can be used with 'terraform apply plan.tfplan'
-- JSON file is suitable for policy-as-code tools (OPA, Sentinel)
 - Text file is optimized for manual review and diffing
-- Plan files may contain sensitive values - handle securely
+{handling_notes}
 - This plan was generated using the combined Terraform module
 """
 
@@ -1264,14 +1487,34 @@ Notes
         unifi_username: Annotated[Optional[Secret], Doc("UniFi username")] = None,
         unifi_password: Annotated[Optional[Secret], Doc("UniFi password")] = None,
         unifi_insecure: Annotated[bool, Doc("Skip TLS verification for UniFi controller")] = False,
-        unifi_only: Annotated[bool, Doc("Destroy only UniFi DNS (mutually exclusive with --cloudflare-only)")] = False,
-        cloudflare_only: Annotated[bool, Doc("Destroy only Cloudflare Tunnels (mutually exclusive with --unifi-only)")] = False,
-        terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
-        kcl_version: Annotated[str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")] = "latest",
-        backend_type: Annotated[str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")] = "local",
-        backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
-        state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
-        cache_buster: Annotated[str, Doc("Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))")] = "",
+        unifi_only: Annotated[
+            bool, Doc("Destroy only UniFi DNS (mutually exclusive with --cloudflare-only)")
+        ] = False,
+        cloudflare_only: Annotated[
+            bool, Doc("Destroy only Cloudflare Tunnels (mutually exclusive with --unifi-only)")
+        ] = False,
+        terraform_version: Annotated[
+            str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")
+        ] = "latest",
+        kcl_version: Annotated[
+            str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")
+        ] = "latest",
+        backend_type: Annotated[
+            str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")
+        ] = "local",
+        backend_config_file: Annotated[
+            Optional[dagger.File],
+            Doc("Backend configuration HCL file (required for remote backends)"),
+        ] = None,
+        state_dir: Annotated[
+            Optional[dagger.Directory],
+            Doc(
+                "Directory for persistent Terraform state (mutually exclusive with remote backend)"
+            ),
+        ] = None,
+        cache_buster: Annotated[
+            str, Doc("Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))")
+        ] = "",
     ) -> str:
         """
         Destroy UniFi DNS and/or Cloudflare Tunnel resources using the combined Terraform module.
@@ -1423,7 +1666,9 @@ Notes
 
         if not cloudflare_only:  # Generate UniFi config unless cloudflare-only
             try:
-                unifi_file = await self.generate_unifi_config(effective_kcl_source, kcl_version)
+                unifi_file = await self.generate_unifi_config(  # type: ignore[attr-defined]
+                    effective_kcl_source, kcl_version
+                )
                 unifi_dir = dagger.dag.directory().with_file("unifi.json", unifi_file)
                 results.append("✓ UniFi configuration generated")
             except Exception as e:
@@ -1433,8 +1678,12 @@ Notes
 
         if not unifi_only:  # Generate Cloudflare config unless unifi-only
             try:
-                cloudflare_file = await self.generate_cloudflare_config(effective_kcl_source, kcl_version)
-                cloudflare_dir = dagger.dag.directory().with_file("cloudflare.json", cloudflare_file)
+                cloudflare_file = await self.generate_cloudflare_config(  # type: ignore[attr-defined]
+                    effective_kcl_source, kcl_version
+                )
+                cloudflare_dir = dagger.dag.directory().with_file(
+                    "cloudflare.json", cloudflare_file
+                )
                 results.append("✓ Cloudflare configuration generated")
             except Exception as e:
                 return f"✗ Failed: Could not generate Cloudflare config\n{str(e)}"
@@ -1487,7 +1736,11 @@ Notes
                 ctr = ctr.with_directory("/module", tf_modules)
                 workdir = "/module/glue"
             else:
-                tf_module = dagger.dag.current_module().source().directory(f"terraform/modules/{module_path}")
+                tf_module = (
+                    dagger.dag.current_module()
+                    .source()
+                    .directory(f"terraform/modules/{module_path}")
+                )
                 ctr = ctr.with_directory("/module", tf_module)
                 workdir = "/module"
         except Exception as e:
@@ -1511,14 +1764,7 @@ Notes
         # The glue module has its own provider block, but standalone unifi-dns needs one
         if module_path == "unifi-dns":
             try:
-                provider_hcl = self._generate_unifi_provider_block(
-                    unifi_url=unifi_url,
-                    api_url=actual_api_url,
-                    unifi_api_key="" if unifi_api_key is None else "present",  # Just indicate presence
-                    unifi_username="" if unifi_username is None else "present",
-                    unifi_password="" if unifi_password is None else "present",
-                    unifi_insecure=unifi_insecure,
-                )
+                provider_hcl = self._generate_unifi_provider_block()
                 ctr = ctr.with_new_file(f"{workdir}/provider.tf", provider_hcl)
             except Exception as e:
                 return f"✗ Failed: Could not generate UniFi provider configuration\n{str(e)}"
@@ -1526,17 +1772,18 @@ Notes
         # Process and mount backend config file if provided
         if backend_config_file is not None:
             try:
-                config_content, _ = await _process_backend_config(backend_config_file)
-                ctr = ctr.with_new_file("/root/.terraform/backend.tfbackend", config_content)
+                ctr = await _with_backend_secret(ctr, backend_config_file)
             except Exception as e:
-                return f"✗ Failed: Could not process backend config file\n{str(e)}"
+                return f"✗ Failed: {_safe_exec_error('Backend configuration processing', e)}"
 
         # Set up environment variables based on which module is being used
         if module_path == "cloudflare-tunnel":
             # Cloudflare module expects config_file (not cloudflare_config_file)
             # Pass account_id and zone_name as overrides to allow CLI parameters to take precedence
             if cloudflare_dir is not None:
-                ctr = ctr.with_env_variable("TF_VAR_config_file", "/workspace/cloudflare/cloudflare.json")
+                ctr = ctr.with_env_variable(
+                    "TF_VAR_config_file", "/workspace/cloudflare/cloudflare.json"
+                )
             if cloudflare_account_id:
                 ctr = ctr.with_env_variable("TF_VAR_account_id_override", cloudflare_account_id)
             if zone_name:
@@ -1556,20 +1803,28 @@ Notes
                 ctr = ctr.with_env_variable("TF_VAR_api_url", actual_api_url)
                 ctr = ctr.with_env_variable("TF_VAR_unifi_insecure", str(unifi_insecure).lower())
             if unifi_dir is not None:
-                ctr = ctr.with_env_variable("TF_VAR_unifi_config_file", "/workspace/unifi/unifi.json")
+                ctr = ctr.with_env_variable(
+                    "TF_VAR_unifi_config_file", "/workspace/unifi/unifi.json"
+                )
             if cloudflare_dir is not None:
-                ctr = ctr.with_env_variable("TF_VAR_cloudflare_config_file", "/workspace/cloudflare/cloudflare.json")
+                ctr = ctr.with_env_variable(
+                    "TF_VAR_cloudflare_config_file", "/workspace/cloudflare/cloudflare.json"
+                )
             if cloudflare_account_id:
                 ctr = ctr.with_env_variable("TF_VAR_cloudflare_account_id", cloudflare_account_id)
                 ctr = ctr.with_env_variable("TF_VAR_zone_name", zone_name)
 
         # Add authentication secrets conditionally
         if unifi_only or not cloudflare_only:  # UniFi credentials needed
-            if unifi_api_key:
-                ctr = ctr.with_secret_variable("TF_VAR_unifi_api_key", unifi_api_key)
-            elif unifi_username and unifi_password:
-                ctr = ctr.with_secret_variable("TF_VAR_unifi_username", unifi_username)
-                ctr = ctr.with_secret_variable("TF_VAR_unifi_password", unifi_password)
+            ctr = self._with_unifi_provider_environment(
+                ctr,
+                unifi_url,
+                actual_api_url,
+                unifi_insecure,
+                unifi_api_key,
+                unifi_username,
+                unifi_password,
+            )
 
         if cloudflare_only or not unifi_only:  # Cloudflare credentials needed
             if cloudflare_token:
@@ -1577,9 +1832,11 @@ Notes
                 ctr = ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
 
         # Handle state directory mounting and setup (persistent local state)
-        if using_persistent_state:
+        if state_dir is not None:
             ctr = ctr.with_directory("/state", state_dir)
-            ctr = ctr.with_exec(["sh", "-c", "rm -rf /state/.terraform && echo 'Cleaned .terraform directory'"])
+            ctr = ctr.with_exec(
+                ["sh", "-c", "rm -rf /state/.terraform && echo 'Cleaned .terraform directory'"]
+            )
             _ = await ctr.stdout()
             ctr = ctr.with_exec(["sh", "-c", f"cp -r {workdir}/* /state/ && ls -la /state"])
             _ = await ctr.stdout()
@@ -1590,14 +1847,14 @@ Notes
         # Run terraform init
         init_cmd = ["terraform", "init"]
         if backend_config_file is not None:
-            init_cmd.extend(["-backend-config=/root/.terraform/backend.tfbackend"])
+            init_cmd.extend([f"-backend-config={BACKEND_SECRET_PATH}"])
 
         try:
             ctr = ctr.with_exec(init_cmd)
             _ = await ctr.stdout()
             results.append("✓ Terraform init completed")
         except dagger.ExecError as e:
-            error_msg = f"✗ Failed: Terraform init failed\n{str(e)}"
+            error_msg = f"✗ Failed: {_safe_exec_error('Terraform init', e)}"
             if backend_type != "local":
                 error_msg += (
                     "\n\nBackend configuration troubleshooting:\n"
@@ -1615,10 +1872,7 @@ Notes
             destroy_result = await ctr.stdout()
             results.append("✓ Terraform destroy completed")
         except dagger.ExecError as e:
-            error_details = f"Exit code: {e.exit_code}\n"
-            error_details += f"Stdout:\n{e.stdout or 'N/A'}\n"
-            error_details += f"Stderr:\n{e.stderr or 'N/A'}"
-            return f"✗ Failed: Terraform destroy failed\n{error_details}"
+            return f"✗ Failed: {_safe_exec_error('Terraform destroy', e)}"
 
         # Final summary
         results.append("")
@@ -1684,13 +1938,16 @@ Notes
 
         # Create container with KCL and yq for YAML to JSON conversion
         base_ctr = dagger.dag.container().from_(f"kcllang/kcl:{kcl_version}")
-        
+
         # Install curl and yq for YAML to JSON conversion
-        ctr = base_ctr.with_exec([
-            "sh", "-c",
-            "apt-get update && apt-get install -y curl && curl -sL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq"
-        ])
-        
+        ctr = base_ctr.with_exec(
+            [
+                "sh",
+                "-c",
+                "apt-get update && apt-get install -y curl && curl -sL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq",
+            ]
+        )
+
         # Mount source directory
         ctr = ctr.with_directory("/src", source).with_workdir("/src")
 
@@ -1813,7 +2070,11 @@ Notes
             )
 
         # Step 10: Return as file
-        return dagger.dag.directory().with_new_file("cloudflare.json", json_result).file("cloudflare.json")
+        return (
+            dagger.dag.directory()
+            .with_new_file("cloudflare.json", json_result)
+            .file("cloudflare.json")
+        )
 
     def _generate_test_id(self) -> str:
         """Generate a random test identifier."""
@@ -1825,7 +2086,7 @@ Notes
         cloudflare_zone: str,
         cloudflare_account_id: str,
         test_mac: str = "aa:bb:cc:dd:ee:ff",
-        unifi_domain: str = ""
+        unifi_domain: str = "",
     ) -> dict:
         """
         Generate test configuration JSON for Cloudflare and UniFi Terraform modules.
@@ -1873,11 +2134,11 @@ Notes
                         {
                             "public_hostname": test_hostname,
                             "local_service_url": "http://192.168.1.100:8080",
-                            "no_tls_verify": False
+                            "no_tls_verify": False,
                         }
-                    ]
+                    ],
                 }
-            }
+            },
         }
 
         # Build UniFi config matching terraform/modules/unifi-dns/variables.tf
@@ -1887,45 +2148,185 @@ Notes
                     "friendly_hostname": test_id,
                     "domain": effective_unifi_domain,
                     "service_cnames": [],
-                    "nics": [
-                        {
-                            "mac_address": test_mac,
-                            "nic_name": "eth0",
-                            "service_cnames": []
-                        }
-                    ]
+                    "nics": [{"mac_address": test_mac, "nic_name": "eth0", "service_cnames": []}],
                 }
             ],
             "default_domain": effective_unifi_domain,
-            "site": "default"
+            "site": "default",
         }
 
         return {
             "cloudflare": json.dumps(cloudflare_config, indent=2),
-            "unifi": json.dumps(unifi_config, indent=2)
+            "unifi": json.dumps(unifi_config, indent=2),
         }
+
+    async def _unifi_dns_exists(
+        self,
+        hostname: str,
+        site: str,
+        unifi_url: str,
+        api_url: str,
+        unifi_insecure: bool,
+        unifi_api_key: Optional[Secret],
+        unifi_username: Optional[Secret],
+        unifi_password: Optional[Secret],
+        terraform_version: str,
+        deadline: float,
+    ) -> bool:
+        """Query the provider's DNS data source for an externally visible record."""
+        validation_hcl = f"""terraform {{
+  required_providers {{
+    unifi = {{
+      source  = "filipowm/unifi"
+      version = "~> 1.0"
+    }}
+  }}
+}}
+
+provider "unifi" {{}}
+
+data "unifi_dns_record" "integration" {{
+  name = {json.dumps(hostname)}
+  site = {json.dumps(site)}
+}}
+
+output "record_id" {{
+  value = data.unifi_dns_record.integration.id
+}}
+"""
+        validation_dir = dagger.dag.directory().with_new_file("main.tf", validation_hcl)
+        container = (
+            dagger.dag.container()
+            .from_(f"hashicorp/terraform:{terraform_version}")
+            .with_directory("/validation", validation_dir)
+            .with_workdir("/validation")
+        )
+        container = self._with_unifi_provider_environment(
+            container,
+            unifi_url,
+            api_url,
+            unifi_insecure,
+            unifi_api_key,
+            unifi_username,
+            unifi_password,
+        )
+        try:
+            container = container.with_exec(["terraform", "init", "-input=false"])
+            await _before_deadline(container.stdout(), deadline)
+            container = container.with_exec(
+                ["terraform", "apply", "-refresh-only", "-auto-approve", "-input=false"]
+            )
+            await _before_deadline(container.stdout(), deadline)
+            return True
+        except dagger.ExecError as error:
+            diagnostic = f"{error.stdout or ''}\n{error.stderr or ''}".lower()
+            if "not found" in diagnostic or "no dns record" in diagnostic:
+                return False
+            raise RuntimeError(_safe_exec_error("UniFi DNS validation", error)) from None
+
+    async def _cloudflare_resource_counts(
+        self,
+        account_id: str,
+        zone_name: str,
+        tunnel_name: str,
+        hostname: str,
+        cloudflare_token: Secret,
+        deadline: float,
+    ) -> tuple[int, int]:
+        """Return live Cloudflare tunnel and DNS record counts."""
+        container = (
+            dagger.dag.container()
+            .from_("alpine/curl:latest")
+            .with_exec(["apk", "add", "--no-cache", "jq"])
+            .with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
+        )
+        auth = '-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"'
+        try:
+            tunnel_count = await _before_deadline(
+                container.with_exec(
+                    [
+                        "sh",
+                        "-c",
+                        f"curl --fail-with-body -sS \"https://api.cloudflare.com/client/v4/accounts/{account_id}/cfd_tunnel?name={tunnel_name}\" {auth} | jq -r '.result | length'",
+                    ]
+                ).stdout(),
+                deadline,
+            )
+            zone_id = await _before_deadline(
+                container.with_exec(
+                    [
+                        "sh",
+                        "-c",
+                        f"curl --fail-with-body -sS \"https://api.cloudflare.com/client/v4/zones?name={zone_name}\" {auth} | jq -r '.result[0].id'",
+                    ]
+                ).stdout(),
+                deadline,
+            )
+            if not zone_id.strip() or zone_id.strip() == "null":
+                raise RuntimeError("Cloudflare zone lookup returned no zone")
+            dns_count = await _before_deadline(
+                container.with_exec(
+                    [
+                        "sh",
+                        "-c",
+                        f"curl --fail-with-body -sS \"https://api.cloudflare.com/client/v4/zones/{zone_id.strip()}/dns_records?name={hostname}\" {auth} | jq -r '.result | length'",
+                    ]
+                ).stdout(),
+                deadline,
+            )
+            return int(tunnel_count.strip()), int(dns_count.strip())
+        except (ValueError, dagger.ExecError) as error:
+            raise RuntimeError(_safe_exec_error("Cloudflare resource validation", error)) from None
 
     @function
     async def test_integration(
         self,
-        source: Annotated[Directory, Doc("Project source directory containing KCL and Terraform configs")],
+        source: Annotated[
+            Directory, Doc("Project source directory containing KCL and Terraform configs")
+        ],
         cloudflare_zone: Annotated[str, Doc("DNS zone for test records (e.g., test.example.com)")],
         cloudflare_token: Annotated[Secret, Doc("Cloudflare API token")],
         cloudflare_account_id: Annotated[str, Doc("Cloudflare account ID")],
         unifi_url: Annotated[str, Doc("UniFi controller URL (e.g., https://unifi.local:8443)")],
         api_url: Annotated[str, Doc("UniFi API URL (often same as unifi_url)")],
-        unifi_api_key: Annotated[Optional[Secret], Doc("UniFi API key (mutually exclusive with username/password)")] = None,
-        unifi_username: Annotated[Optional[Secret], Doc("UniFi username (use with password)")] = None,
-        unifi_password: Annotated[Optional[Secret], Doc("UniFi password (use with username)")] = None,
-        unifi_insecure: Annotated[bool, Doc("Skip TLS verification for UniFi controller (useful for self-signed certificates)")] = False,
-        cleanup: Annotated[bool, Doc("Whether to cleanup resources after test (default: true)")] = True,
-        validate_connectivity: Annotated[bool, Doc("Whether to test actual HTTP connectivity")] = False,
+        unifi_api_key: Annotated[
+            Optional[Secret], Doc("UniFi API key (mutually exclusive with username/password)")
+        ] = None,
+        unifi_username: Annotated[
+            Optional[Secret], Doc("UniFi username (use with password)")
+        ] = None,
+        unifi_password: Annotated[
+            Optional[Secret], Doc("UniFi password (use with username)")
+        ] = None,
+        unifi_insecure: Annotated[
+            bool,
+            Doc("Skip TLS verification for UniFi controller (useful for self-signed certificates)"),
+        ] = False,
+        cleanup: Annotated[
+            bool, Doc("Whether to cleanup resources after test (default: true)")
+        ] = True,
+        validate_connectivity: Annotated[
+            bool, Doc("Whether to test actual HTTP connectivity")
+        ] = False,
         test_timeout: Annotated[str, Doc("Timeout for test operations (e.g., 5m)")] = "5m",
-        cache_buster: Annotated[str, Doc("Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))")] = "",
-        wait_before_cleanup: Annotated[int, Doc("Seconds to wait between validation and cleanup for manual verification")] = 0,
-        test_mac_address: Annotated[str, Doc("MAC address for test device (must exist in UniFi controller, e.g., 'aa:bb:cc:dd:ee:ff')")] = "aa:bb:cc:dd:ee:ff",
-        terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
-        kcl_version: Annotated[str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")] = "latest",
+        cache_buster: Annotated[
+            str, Doc("Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))")
+        ] = "",
+        wait_before_cleanup: Annotated[
+            int, Doc("Seconds to wait between validation and cleanup for manual verification")
+        ] = 0,
+        test_mac_address: Annotated[
+            str,
+            Doc(
+                "MAC address for test device (must exist in UniFi controller, e.g., 'aa:bb:cc:dd:ee:ff')"
+            ),
+        ] = "aa:bb:cc:dd:ee:ff",
+        terraform_version: Annotated[
+            str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")
+        ] = "latest",
+        kcl_version: Annotated[
+            str, Doc("KCL version to use (e.g., '0.11.0' or 'latest')")
+        ] = "latest",
     ) -> str:
         """
         Run integration test creating ephemeral DNS resources with real APIs.
@@ -2053,6 +2454,17 @@ Notes
         if using_api_key and using_password:
             return "✗ Failed: Cannot use both API key and username/password. Choose one authentication method."
 
+        if not cleanup:
+            raise ValueError("cleanup=false is disabled for strict integration tests")
+
+        timeout_seconds = _parse_duration(test_timeout)
+        cleanup_reserve = min(60.0, max(10.0, timeout_seconds * 0.2))
+        if timeout_seconds <= cleanup_reserve:
+            cleanup_reserve = max(1.0, timeout_seconds / 2)
+        operation_deadline = time.monotonic() + (timeout_seconds - cleanup_reserve)
+        primary_failure: Optional[str] = None
+        cleanup_ledger: list[dict[str, object]] = []
+
         # Generate random test ID
         test_id = self._generate_test_id()
         test_hostname = f"{test_id}.{cloudflare_zone}"
@@ -2071,6 +2483,8 @@ Notes
             f"Test MAC Address: {test_mac_address}",
             f"Cleanup Enabled: {cleanup}",
             f"Connectivity Check: {validate_connectivity}",
+            f"Operation Timeout: {test_timeout}",
+            f"Cleanup Reserve: {cleanup_reserve:g}s",
         ]
 
         # Add cache buster info if provided
@@ -2085,11 +2499,16 @@ Notes
 
         # Create test configurations (Cloudflare and UniFi JSON)
         test_configs = self._generate_test_configs(
-            test_id, cloudflare_zone, cloudflare_account_id, test_mac_address,
-            unifi_domain=cloudflare_zone
+            test_id,
+            cloudflare_zone,
+            cloudflare_account_id,
+            test_mac_address,
+            unifi_domain=cloudflare_zone,
         )
         cloudflare_json = test_configs["cloudflare"]
         unifi_json = test_configs["unifi"]
+        cloudflare_dir = dagger.dag.directory().with_new_file("cloudflare.json", cloudflare_json)
+        unifi_dir = dagger.dag.directory().with_new_file("unifi.json", unifi_json)
 
         # Track cleanup status
         cleanup_status = {"cloudflare": "pending", "unifi": "pending", "state_files": "pending"}
@@ -2103,19 +2522,24 @@ Notes
             # Phase 1: Generate JSON configs for Terraform modules
             report_lines.append("PHASE 1: Generating Terraform JSON configurations...")
 
-            # Get the secret values for use in containers
-            cf_token_plain = await cloudflare_token.plaintext()
-
             # Create a container with the source code
             base_container = (
                 dagger.dag.container()
                 .from_(f"hashicorp/terraform:{terraform_version}")
-                .with_exec(["sh", "-c", "apk add --no-cache curl jq || apt-get update && apt-get install -y curl jq"])
+                .with_exec(
+                    [
+                        "sh",
+                        "-c",
+                        "apk add --no-cache curl jq || apt-get update && apt-get install -y curl jq",
+                    ]
+                )
             )
 
             # Add cache buster as environment variable if provided (forces cache invalidation)
             if effective_cache_buster:
-                base_container = base_container.with_env_variable("CACHE_BUSTER", effective_cache_buster)
+                base_container = base_container.with_env_variable(
+                    "CACHE_BUSTER", effective_cache_buster
+                )
 
             # Add source to container
             src_container = base_container.with_directory("/src", source)
@@ -2132,7 +2556,9 @@ Notes
             report_lines.append("PHASE 2: Creating Cloudflare resources...")
 
             # Create directory with Cloudflare config for Terraform
-            cloudflare_dir = dagger.dag.directory().with_new_file("cloudflare.json", cloudflare_json)
+            cloudflare_dir = dagger.dag.directory().with_new_file(
+                "cloudflare.json", cloudflare_json
+            )
 
             # Create Terraform container following deploy_cloudflare() pattern
             cf_ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
@@ -2147,10 +2573,16 @@ Notes
             except Exception:
                 # If module not in source, try project root
                 try:
-                    tf_module = dagger.dag.current_module().source().directory("terraform/modules/cloudflare-tunnel")
+                    tf_module = (
+                        dagger.dag.current_module()
+                        .source()
+                        .directory("terraform/modules/cloudflare-tunnel")
+                    )
                     cf_ctr = cf_ctr.with_directory("/module", tf_module)
                 except Exception:
-                    raise RuntimeError("Cloudflare Tunnel Terraform module not found at terraform/modules/cloudflare-tunnel")
+                    raise RuntimeError(
+                        "Cloudflare Tunnel Terraform module not found at terraform/modules/cloudflare-tunnel"
+                    )
 
             # Set environment variables with overrides for CLI parameters
             cf_ctr = cf_ctr.with_env_variable("TF_VAR_account_id_override", cloudflare_account_id)
@@ -2165,10 +2597,12 @@ Notes
 
             # Execute terraform init
             try:
-                init_result = await cf_ctr.with_exec(["terraform", "init"]).stdout()
+                init_result = await _before_deadline(
+                    cf_ctr.with_exec(["terraform", "init"]).stdout(), operation_deadline
+                )
                 report_lines.append("  ✓ Terraform init completed")
             except dagger.ExecError as e:
-                error_msg = f"Terraform init failed: {str(e)}"
+                error_msg = _safe_exec_error("Cloudflare Terraform init", e)
                 report_lines.append(f"  ✗ {error_msg}")
                 validation_results["cloudflare_error"] = error_msg
                 raise RuntimeError(error_msg) from e
@@ -2177,25 +2611,50 @@ Notes
             try:
                 # Save container reference after execution
                 cf_ctr = cf_ctr.with_exec(["terraform", "apply", "-auto-approve"])
-                apply_result = await cf_ctr.stdout()
+                apply_result = await _before_deadline(cf_ctr.stdout(), operation_deadline)
                 report_lines.append(f"  ✓ Created tunnel: {tunnel_name}")
                 report_lines.append(f"  ✓ Created DNS record: {test_hostname}")
                 validation_results["cloudflare_tunnel"] = "created"
                 validation_results["cloudflare_dns"] = "created"
+                cleanup_ledger.append(
+                    {
+                        "provider": "cloudflare",
+                        "resources": [tunnel_name, test_hostname],
+                        "state_captured": False,
+                    }
+                )
             except dagger.ExecError as e:
-                error_msg = f"Terraform apply failed: {str(e)}"
+                error_msg = _safe_exec_error("Cloudflare Terraform apply", e)
                 report_lines.append(f"  ✗ {error_msg}")
                 validation_results["cloudflare_error"] = error_msg
+                cleanup_ledger.append(
+                    {
+                        "provider": "cloudflare",
+                        "resources": [tunnel_name, test_hostname],
+                        "state_captured": False,
+                    }
+                )
+                try:
+                    cf_state_file = await cf_ctr.file("/module/terraform.tfstate")
+                    cloudflare_state_dir = dagger.dag.directory().with_file(
+                        "terraform.tfstate", cf_state_file
+                    )
+                    cleanup_ledger[-1]["state_captured"] = True
+                except Exception:
+                    pass
                 raise RuntimeError(error_msg) from e
 
             # Export Cloudflare state for cleanup phase
             try:
                 # Now cf_ctr contains the executed container with the state file
                 cf_state_file = await cf_ctr.file("/module/terraform.tfstate")
-                cloudflare_state_dir = dagger.dag.directory().with_file("terraform.tfstate", cf_state_file)
+                cloudflare_state_dir = dagger.dag.directory().with_file(
+                    "terraform.tfstate", cf_state_file
+                )
+                cleanup_ledger[-1]["state_captured"] = True
                 report_lines.append("  ✓ Cloudflare state exported")
-            except Exception as e:
-                report_lines.append(f"  ⚠ Cloudflare state export failed: {str(e)}")
+            except Exception:
+                report_lines.append("  ⚠ Cloudflare state capture failed")
                 cloudflare_state_dir = None
 
             # Phase 3: Create UniFi resources
@@ -2221,33 +2680,49 @@ Notes
             except Exception:
                 # If module not in source, try project root
                 try:
-                    tf_module = dagger.dag.current_module().source().directory("terraform/modules/unifi-dns")
+                    tf_module = (
+                        dagger.dag.current_module()
+                        .source()
+                        .directory("terraform/modules/unifi-dns")
+                    )
                     unifi_ctr = unifi_ctr.with_directory("/module", tf_module)
                 except Exception:
-                    raise RuntimeError("UniFi DNS Terraform module not found at terraform/modules/unifi-dns")
+                    raise RuntimeError(
+                        "UniFi DNS Terraform module not found at terraform/modules/unifi-dns"
+                    )
 
             # Set environment variables
             unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
-            unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_api_url", api_url if api_url else unifi_url)
+            unifi_ctr = unifi_ctr.with_env_variable(
+                "TF_VAR_api_url", api_url if api_url else unifi_url
+            )
             unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_config_file", "/workspace/unifi.json")
-            unifi_ctr = unifi_ctr.with_env_variable("TF_VAR_unifi_insecure", str(unifi_insecure).lower())
+            unifi_ctr = unifi_ctr.with_env_variable(
+                "TF_VAR_unifi_insecure", str(unifi_insecure).lower()
+            )
 
             # Pass authentication credentials as secrets
-            if unifi_api_key:
-                unifi_ctr = unifi_ctr.with_secret_variable("TF_VAR_unifi_api_key", unifi_api_key)
-            elif unifi_username and unifi_password:
-                unifi_ctr = unifi_ctr.with_secret_variable("TF_VAR_unifi_username", unifi_username)
-                unifi_ctr = unifi_ctr.with_secret_variable("TF_VAR_unifi_password", unifi_password)
+            unifi_ctr = self._with_unifi_provider_environment(
+                unifi_ctr,
+                unifi_url,
+                api_url,
+                unifi_insecure,
+                unifi_api_key,
+                unifi_username,
+                unifi_password,
+            )
 
             # Set working directory to module
             unifi_ctr = unifi_ctr.with_workdir("/module")
 
             # Execute terraform init
             try:
-                init_result = await unifi_ctr.with_exec(["terraform", "init"]).stdout()
+                init_result = await _before_deadline(
+                    unifi_ctr.with_exec(["terraform", "init"]).stdout(), operation_deadline
+                )
                 report_lines.append("  ✓ Terraform init completed")
             except dagger.ExecError as e:
-                error_msg = f"Terraform init failed: {str(e)}"
+                error_msg = _safe_exec_error("UniFi Terraform init", e)
                 report_lines.append(f"  ✗ {error_msg}")
                 validation_results["unifi_error"] = error_msg
                 raise RuntimeError(error_msg) from e
@@ -2256,23 +2731,48 @@ Notes
             try:
                 # Save container reference after execution
                 unifi_ctr = unifi_ctr.with_exec(["terraform", "apply", "-auto-approve"])
-                apply_result = await unifi_ctr.stdout()
+                apply_result = await _before_deadline(unifi_ctr.stdout(), operation_deadline)
                 report_lines.append(f"  ✓ Created UniFi DNS record: {unifi_hostname}")
                 validation_results["unifi_dns"] = "created"
+                cleanup_ledger.append(
+                    {
+                        "provider": "unifi",
+                        "resources": [unifi_hostname],
+                        "state_captured": False,
+                    }
+                )
             except dagger.ExecError as e:
-                error_msg = f"Terraform apply failed: {str(e)}"
+                error_msg = _safe_exec_error("UniFi Terraform apply", e)
                 report_lines.append(f"  ✗ {error_msg}")
                 validation_results["unifi_error"] = error_msg
+                cleanup_ledger.append(
+                    {
+                        "provider": "unifi",
+                        "resources": [unifi_hostname],
+                        "state_captured": False,
+                    }
+                )
+                try:
+                    unifi_state_file = await unifi_ctr.file("/module/terraform.tfstate")
+                    unifi_state_dir = dagger.dag.directory().with_file(
+                        "terraform.tfstate", unifi_state_file
+                    )
+                    cleanup_ledger[-1]["state_captured"] = True
+                except Exception:
+                    pass
                 raise RuntimeError(error_msg) from e
 
             # Export UniFi state for cleanup phase
             try:
                 # Now unifi_ctr contains the executed container with the state file
                 unifi_state_file = await unifi_ctr.file("/module/terraform.tfstate")
-                unifi_state_dir = dagger.dag.directory().with_file("terraform.tfstate", unifi_state_file)
+                unifi_state_dir = dagger.dag.directory().with_file(
+                    "terraform.tfstate", unifi_state_file
+                )
+                cleanup_ledger[-1]["state_captured"] = True
                 report_lines.append("  ✓ UniFi state exported")
-            except Exception as e:
-                report_lines.append(f"  ⚠ UniFi state export failed: {str(e)}")
+            except Exception:
+                report_lines.append("  ⚠ UniFi state capture failed")
                 unifi_state_dir = None
 
             # Phase 4: Credential Retrieval via get_tunnel_secrets
@@ -2281,17 +2781,22 @@ Notes
 
             try:
                 # Create a directory with the Cloudflare state for credential retrieval
-                cf_state_for_secrets = dagger.dag.directory().with_file("terraform.tfstate", cf_state_file)
+                cf_state_for_secrets = dagger.dag.directory().with_file(
+                    "terraform.tfstate", cf_state_file
+                )
 
                 # Call get_tunnel_secrets to verify credential retrieval works
-                secrets_result = await self.get_tunnel_secrets(
-                    source=source,
-                    cloudflare_token=cloudflare_token,
-                    cloudflare_account_id=cloudflare_account_id,
-                    zone_name=cloudflare_zone,
-                    terraform_version=terraform_version,
-                    state_dir=cf_state_for_secrets,
-                    output_format="json",
+                secrets_result = await _before_deadline(
+                    self.get_tunnel_secrets(
+                        source=source,
+                        cloudflare_token=cloudflare_token,
+                        cloudflare_account_id=cloudflare_account_id,
+                        zone_name=cloudflare_zone,
+                        terraform_version=terraform_version,
+                        state_dir=cf_state_for_secrets,
+                        output_format="json",
+                    ),
+                    operation_deadline,
                 )
 
                 # Verify the result is valid JSON
@@ -2317,10 +2822,12 @@ Notes
                 for mac, creds_json in secrets_data["credentials_json"].items():
                     # Parse JSON string if needed
                     try:
-                        creds = json.loads(creds_json) if isinstance(creds_json, str) else creds_json
+                        creds = (
+                            json.loads(creds_json) if isinstance(creds_json, str) else creds_json
+                        )
                     except (json.JSONDecodeError, TypeError):
                         creds = creds_json if isinstance(creds_json, dict) else {}
-                    
+
                     assert "AccountTag" in creds, f"Missing AccountTag for {mac}"
                     assert "TunnelID" in creds, f"Missing TunnelID for {mac}"
                     assert "TunnelName" in creds, f"Missing TunnelName for {mac}"
@@ -2333,14 +2840,17 @@ Notes
                 validation_results["secrets_retrieval"] = "success"
 
                 # Also test human-readable format
-                secrets_human = await self.get_tunnel_secrets(
-                    source=source,
-                    cloudflare_token=cloudflare_token,
-                    cloudflare_account_id=cloudflare_account_id,
-                    zone_name=cloudflare_zone,
-                    terraform_version=terraform_version,
-                    state_dir=cf_state_for_secrets,
-                    output_format="human",
+                secrets_human = await _before_deadline(
+                    self.get_tunnel_secrets(
+                        source=source,
+                        cloudflare_token=cloudflare_token,
+                        cloudflare_account_id=cloudflare_account_id,
+                        zone_name=cloudflare_zone,
+                        terraform_version=terraform_version,
+                        state_dir=cf_state_for_secrets,
+                        output_format="human",
+                    ),
+                    operation_deadline,
                 )
 
                 assert "CLOUDFLARE TUNNEL SECRETS" in secrets_human
@@ -2349,16 +2859,16 @@ Notes
                 report_lines.append(f"  ✓ Human-readable format verified")
                 validation_results["secrets_human_format"] = "success"
 
-            except json.JSONDecodeError as e:
-                error_msg = f"Secrets retrieval returned invalid JSON: {str(e)}"
+            except json.JSONDecodeError:
+                error_msg = "Secrets retrieval returned invalid JSON"
                 report_lines.append(f"  ✗ {error_msg}")
                 validation_results["secrets_retrieval"] = f"failed: {error_msg}"
-            except AssertionError as e:
-                error_msg = f"Secrets validation failed: {str(e)}"
+            except AssertionError:
+                error_msg = "Secrets validation failed"
                 report_lines.append(f"  ✗ {error_msg}")
                 validation_results["secrets_retrieval"] = f"failed: {error_msg}"
             except Exception as e:
-                error_msg = f"Secrets retrieval failed: {str(e)}"
+                error_msg = _safe_exec_error("Secrets retrieval", e)
                 report_lines.append(f"  ✗ {error_msg}")
                 validation_results["secrets_retrieval"] = f"failed: {error_msg}"
 
@@ -2369,23 +2879,27 @@ Notes
             # Create validation container with curl and jq for API calls
             validate_ctr = dagger.dag.container().from_("alpine/curl:latest")
             validate_ctr = validate_ctr.with_exec(["apk", "add", "--no-cache", "jq"])
+            validate_ctr = validate_ctr.with_secret_variable(
+                "CLOUDFLARE_API_TOKEN", cloudflare_token
+            )
 
             # Cloudflare API Validation
             # Required permissions: Zone:Read, DNS Records:Read, Cloudflare Tunnel:Read
             try:
                 # Validate Cloudflare tunnel via API
-                tunnel_list_result = await validate_ctr.with_exec([
-                    "sh", "-c",
-                    f'curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/{cloudflare_account_id}/cfd_tunnel?name={tunnel_name}" \
-                     -H "Authorization: Bearer {cf_token_plain}" \
-                     -H "Content-Type: application/json"'
-                ]).stdout()
-
-                # Parse result to check if tunnel exists
-                tunnel_count = await validate_ctr.with_exec([
-                    "sh", "-c",
-                    f'echo {shlex.quote(tunnel_list_result)} | jq \'.result | length\''
-                ]).stdout()
+                tunnel_count = await _before_deadline(
+                    validate_ctr.with_exec(
+                        [
+                            "sh",
+                            "-c",
+                            f"curl --fail-with-body -sS "
+                            f'"https://api.cloudflare.com/client/v4/accounts/{cloudflare_account_id}/cfd_tunnel?name={tunnel_name}" '
+                            '-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" '
+                            "-H \"Content-Type: application/json\" | jq -r '.result | length'",
+                        ]
+                    ).stdout(),
+                    operation_deadline,
+                )
 
                 if tunnel_count.strip() == "1":
                     report_lines.append(f"  ✓ Cloudflare tunnel validated: {tunnel_name}")
@@ -2394,39 +2908,41 @@ Notes
                     report_lines.append(f"  ✗ Cloudflare tunnel not found: {tunnel_name}")
                     validation_results["cloudflare_tunnel"] = "not_found"
             except Exception as e:
-                report_lines.append(f"  ✗ Cloudflare tunnel validation failed: {str(e)}")
-                validation_results["cloudflare_tunnel"] = f"error: {str(e)}"
+                report_lines.append(f"  ✗ {_safe_exec_error('Cloudflare tunnel validation', e)}")
+                validation_results["cloudflare_tunnel"] = "error"
 
             # Validate Cloudflare DNS record via API
             try:
                 # First get zone ID from zone name
-                zone_list_result = await validate_ctr.with_exec([
-                    "sh", "-c",
-                    f'curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name={cloudflare_zone}" \
-                     -H "Authorization: Bearer {cf_token_plain}" \
-                     -H "Content-Type: application/json"'
-                ]).stdout()
-
-                # Extract zone ID
-                zone_id = await validate_ctr.with_exec([
-                    "sh", "-c",
-                    f'echo {shlex.quote(zone_list_result)} | jq -r \'.result[0].id\''
-                ]).stdout()
+                zone_id = await _before_deadline(
+                    validate_ctr.with_exec(
+                        [
+                            "sh",
+                            "-c",
+                            f"curl --fail-with-body -sS "
+                            f'"https://api.cloudflare.com/client/v4/zones?name={cloudflare_zone}" '
+                            '-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" '
+                            "-H \"Content-Type: application/json\" | jq -r '.result[0].id'",
+                        ]
+                    ).stdout(),
+                    operation_deadline,
+                )
 
                 if zone_id and zone_id.strip() != "null":
                     # Query DNS records for the hostname
-                    dns_record_result = await validate_ctr.with_exec([
-                        "sh", "-c",
-                        f'curl -s -X GET "https://api.cloudflare.com/client/v4/zones/{zone_id.strip()}/dns_records?name={test_hostname}" \
-                         -H "Authorization: Bearer {cf_token_plain}" \
-                         -H "Content-Type: application/json"'
-                    ]).stdout()
-
-                    # Check if record exists
-                    dns_count = await validate_ctr.with_exec([
-                        "sh", "-c",
-                        f'echo {shlex.quote(dns_record_result)} | jq \'.result | length\''
-                    ]).stdout()
+                    dns_count = await _before_deadline(
+                        validate_ctr.with_exec(
+                            [
+                                "sh",
+                                "-c",
+                                f"curl --fail-with-body -sS "
+                                f'"https://api.cloudflare.com/client/v4/zones/{zone_id.strip()}/dns_records?name={test_hostname}" '
+                                '-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" '
+                                "-H \"Content-Type: application/json\" | jq -r '.result | length'",
+                            ]
+                        ).stdout(),
+                        operation_deadline,
+                    )
 
                     if dns_count.strip() == "1":
                         report_lines.append(f"  ✓ Cloudflare DNS validated: {test_hostname}")
@@ -2438,36 +2954,52 @@ Notes
                     report_lines.append(f"  ✗ Could not find zone: {cloudflare_zone}")
                     validation_results["cloudflare_dns"] = "zone_not_found"
             except Exception as e:
-                report_lines.append(f"  ✗ Cloudflare DNS validation failed: {str(e)}")
-                validation_results["cloudflare_dns"] = f"error: {str(e)}"
+                report_lines.append(f"  ✗ {_safe_exec_error('Cloudflare DNS validation', e)}")
+                validation_results["cloudflare_dns"] = "error"
 
-            # UniFi Validation (uses Terraform success as proxy due to API complexity)
+            # UniFi validation uses the provider's DNS data source, which queries the
+            # controller rather than treating apply success as proof of existence.
             try:
-                # UniFi API validation is complex due to authentication requirements
-                # For integration testing, we validate based on Terraform apply success
-                if validation_results.get("unifi_dns") == "created":
-                    report_lines.append(f"  ✓ UniFi DNS validated (Terraform apply succeeded)")
+                unifi_exists = await self._unifi_dns_exists(
+                    unifi_hostname,
+                    "default",
+                    unifi_url,
+                    api_url,
+                    unifi_insecure,
+                    unifi_api_key,
+                    unifi_username,
+                    unifi_password,
+                    terraform_version,
+                    operation_deadline,
+                )
+                if unifi_exists:
+                    report_lines.append(f"  ✓ UniFi DNS validated: {unifi_hostname}")
                     validation_results["unifi_validation"] = "validated"
                 else:
-                    report_lines.append(f"  ○ UniFi DNS validation skipped (creation may have failed)")
-                    validation_results["unifi_validation"] = "skipped"
+                    report_lines.append(f"  ✗ UniFi DNS not found: {unifi_hostname}")
+                    validation_results["unifi_validation"] = "not_found"
             except Exception as e:
-                report_lines.append(f"  ○ UniFi validation skipped: {str(e)}")
-                validation_results["unifi_validation"] = f"skipped: {str(e)}"
+                report_lines.append(f"  ✗ {_safe_exec_error('UniFi DNS validation', e)}")
+                validation_results["unifi_validation"] = "error"
 
             # Optional connectivity check (future enhancement)
             if validate_connectivity:
-                report_lines.append("  ○ HTTP connectivity check skipped (would test actual connectivity)")
+                report_lines.append(
+                    "  ○ HTTP connectivity check skipped (would test actual connectivity)"
+                )
                 validation_results["connectivity"] = "skipped"
 
             # Validation summary based on actual API responses
-            cf_success = validation_results.get("cloudflare_tunnel") == "validated" and \
-                         validation_results.get("cloudflare_dns") == "validated"
+            cf_success = (
+                validation_results.get("cloudflare_tunnel") == "validated"
+                and validation_results.get("cloudflare_dns") == "validated"
+            )
+            unifi_success = validation_results.get("unifi_validation") == "validated"
 
             report_lines.append("")
             report_lines.append("-" * 60)
-            if cf_success:
-                report_lines.append("VALIDATION SUMMARY: ✓ CLOUDFLARE RESOURCES VALIDATED")
+            if cf_success and unifi_success:
+                report_lines.append("VALIDATION SUMMARY: ✓ ALL RESOURCES VALIDATED")
             else:
                 report_lines.append("VALIDATION SUMMARY: ✗ SOME RESOURCES NOT FOUND")
             report_lines.append("-" * 60)
@@ -2477,21 +3009,99 @@ Notes
                 report_lines.append("")
                 report_lines.append(f"PHASE 5.5: Waiting {wait_before_cleanup}s before cleanup...")
                 report_lines.append("  (Use this time to manually verify created resources)")
-                await asyncio.sleep(wait_before_cleanup)
+                await _before_deadline(asyncio.sleep(wait_before_cleanup), operation_deadline)
                 report_lines.append(f"  ✓ Wait completed ({wait_before_cleanup}s)")
 
         except Exception as e:
+            if isinstance(e, TimeoutError):
+                primary_failure = "integration operation timed out"
+            else:
+                primary_failure = _safe_exec_error("Integration operation", e)
             report_lines.append("")
-            report_lines.append(f"✗ ERROR DURING TEST: {str(e)}")
-            validation_results["error"] = str(e)
+            report_lines.append(f"✗ ERROR DURING TEST: {primary_failure}")
+            validation_results["error"] = "timeout" if isinstance(e, TimeoutError) else "failed"
 
         finally:
+            cleanup_deadline = time.monotonic() + cleanup_reserve
             # Phase 6: Guaranteed Cleanup
             if cleanup:
                 report_lines.append("")
                 report_lines.append("PHASE 5: Cleanup (guaranteed execution)...")
 
-                # Cleanup Cloudflare resources first (reverse order of creation)
+                # UniFi was created after Cloudflare, so destroy its recorded state
+                # first. The later UniFi cleanup block remains as a state-less safety
+                # pass, while this pass guarantees reverse creation order.
+                if any(entry["provider"] == "unifi" for entry in cleanup_ledger):
+                    report_lines.append("  Cleaning up UniFi resources (reverse order)...")
+                    try:
+                        unifi_first_ctr = dagger.dag.container().from_(
+                            f"hashicorp/terraform:{terraform_version}"
+                        )
+                        unifi_first_ctr = unifi_first_ctr.with_directory("/workspace", unifi_dir)
+                        try:
+                            tf_module = source.directory("terraform/modules/unifi-dns")
+                        except Exception:
+                            tf_module = (
+                                dagger.dag.current_module()
+                                .source()
+                                .directory("terraform/modules/unifi-dns")
+                            )
+                        unifi_first_ctr = unifi_first_ctr.with_directory("/module", tf_module)
+                        if unifi_state_dir is None:
+                            raise RuntimeError("UniFi state unavailable for reverse cleanup")
+                        unifi_first_ctr = unifi_first_ctr.with_file(
+                            "/module/terraform.tfstate",
+                            unifi_state_dir.file("terraform.tfstate"),
+                        )
+                        unifi_first_ctr = unifi_first_ctr.with_env_variable(
+                            "TF_VAR_unifi_url", unifi_url
+                        )
+                        unifi_first_ctr = unifi_first_ctr.with_env_variable(
+                            "TF_VAR_api_url", api_url if api_url else unifi_url
+                        )
+                        unifi_first_ctr = unifi_first_ctr.with_env_variable(
+                            "TF_VAR_config_file", "/workspace/unifi.json"
+                        )
+                        unifi_first_ctr = unifi_first_ctr.with_env_variable(
+                            "TF_VAR_unifi_insecure", str(unifi_insecure).lower()
+                        )
+                        unifi_first_ctr = self._with_unifi_provider_environment(
+                            unifi_first_ctr,
+                            unifi_url,
+                            api_url,
+                            unifi_insecure,
+                            unifi_api_key,
+                            unifi_username,
+                            unifi_password,
+                        ).with_workdir("/module")
+                        await _before_deadline(
+                            unifi_first_ctr.with_exec(
+                                ["terraform", "init", "-input=false"]
+                            ).stdout(),
+                            cleanup_deadline,
+                        )
+                        await _before_deadline(
+                            unifi_first_ctr.with_exec(
+                                [
+                                    "terraform",
+                                    "destroy",
+                                    "-auto-approve",
+                                    "-refresh=false",
+                                    "-input=false",
+                                ]
+                            ).stdout(),
+                            cleanup_deadline,
+                        )
+                        cleanup_status["unifi"] = "success"
+                        unifi_state_dir = None
+                        report_lines.append(f"    ✓ Deleted UniFi DNS record: {unifi_hostname}")
+                    except Exception as error:
+                        cleanup_status["unifi"] = "failed"
+                        report_lines.append(
+                            f"    ✗ {_safe_exec_error('UniFi reverse-order cleanup', error)}"
+                        )
+
+                # Cleanup Cloudflare resources after the later-created UniFi record.
                 # NOTE: Implements retry logic for Cloudflare provider issue #5255
                 # where tunnel deletion fails on first attempt due to "active connections"
                 report_lines.append("  Cleaning up Cloudflare resources...")
@@ -2500,7 +3110,9 @@ Notes
 
                 try:
                     # Create Cloudflare cleanup container
-                    cf_cleanup_ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
+                    cf_cleanup_ctr = dagger.dag.container().from_(
+                        f"hashicorp/terraform:{terraform_version}"
+                    )
 
                     # Mount Cloudflare config at /workspace
                     cf_cleanup_ctr = cf_cleanup_ctr.with_directory("/workspace", cloudflare_dir)
@@ -2512,48 +3124,74 @@ Notes
                     except Exception:
                         # If module not in source, try project root
                         try:
-                            tf_module = dagger.dag.current_module().source().directory("terraform/modules/cloudflare-tunnel")
+                            tf_module = (
+                                dagger.dag.current_module()
+                                .source()
+                                .directory("terraform/modules/cloudflare-tunnel")
+                            )
                             cf_cleanup_ctr = cf_cleanup_ctr.with_directory("/module", tf_module)
                         except Exception:
-                            raise RuntimeError("Cloudflare Tunnel Terraform module not found at terraform/modules/cloudflare-tunnel")
+                            raise RuntimeError(
+                                "Cloudflare Tunnel Terraform module not found at terraform/modules/cloudflare-tunnel"
+                            )
 
                     # Mount preserved state file if available
                     if cloudflare_state_dir:
                         try:
                             # Extract state file from directory and mount it without overwriting module files
                             cf_state_file = cloudflare_state_dir.file("terraform.tfstate")
-                            cf_cleanup_ctr = cf_cleanup_ctr.with_file("/module/terraform.tfstate", cf_state_file)
-                            report_lines.append("    ✓ Cloudflare state file mounted for state-based destroy")
+                            cf_cleanup_ctr = cf_cleanup_ctr.with_file(
+                                "/module/terraform.tfstate", cf_state_file
+                            )
+                            report_lines.append(
+                                "    ✓ Cloudflare state file mounted for state-based destroy"
+                            )
                         except Exception as e:
-                            report_lines.append(f"    ⚠ Failed to mount Cloudflare state file: {str(e)}")
+                            report_lines.append(
+                                f"    ⚠ Failed to mount Cloudflare state file: {str(e)}"
+                            )
                             cloudflare_state_dir = None
                     else:
                         report_lines.append("    ⚠ No state file available for Cloudflare cleanup")
 
                     # Set environment variables with overrides for CLI parameters
-                    cf_cleanup_ctr = cf_cleanup_ctr.with_env_variable("TF_VAR_account_id_override", cloudflare_account_id)
-                    cf_cleanup_ctr = cf_cleanup_ctr.with_env_variable("TF_VAR_zone_name_override", cloudflare_zone)
-                    cf_cleanup_ctr = cf_cleanup_ctr.with_env_variable("TF_VAR_config_file", "/workspace/cloudflare.json")
+                    cf_cleanup_ctr = cf_cleanup_ctr.with_env_variable(
+                        "TF_VAR_account_id_override", cloudflare_account_id
+                    )
+                    cf_cleanup_ctr = cf_cleanup_ctr.with_env_variable(
+                        "TF_VAR_zone_name_override", cloudflare_zone
+                    )
+                    cf_cleanup_ctr = cf_cleanup_ctr.with_env_variable(
+                        "TF_VAR_config_file", "/workspace/cloudflare.json"
+                    )
 
                     # Pass Cloudflare token as secret - use CLOUDFLARE_API_TOKEN env var
-                    cf_cleanup_ctr = cf_cleanup_ctr.with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_token)
+                    cf_cleanup_ctr = cf_cleanup_ctr.with_secret_variable(
+                        "CLOUDFLARE_API_TOKEN", cloudflare_token
+                    )
 
                     # Set working directory to module
                     cf_cleanup_ctr = cf_cleanup_ctr.with_workdir("/module")
 
                     # Execute terraform init (no retry for init failures - fail fast)
                     try:
-                        await cf_cleanup_ctr.with_exec(["terraform", "init"]).stdout()
+                        await _before_deadline(
+                            cf_cleanup_ctr.with_exec(["terraform", "init"]).stdout(),
+                            cleanup_deadline,
+                        )
                     except dagger.ExecError as e:
-                        raise RuntimeError(f"Terraform init failed: {str(e)}")
+                        raise RuntimeError(_safe_exec_error("Cloudflare cleanup init", e)) from None
 
                     # Execute terraform destroy with retry logic
                     # Retry is needed due to Cloudflare provider issue #5255
                     for attempt in range(1, 3):  # 2 attempts max
                         try:
-                            destroy_result = await cf_cleanup_ctr.with_exec([
-                                "terraform", "destroy", "-auto-approve"
-                            ]).stdout()
+                            destroy_result = await _before_deadline(
+                                cf_cleanup_ctr.with_exec(
+                                    ["terraform", "destroy", "-auto-approve", "-refresh=false"]
+                                ).stdout(),
+                                cleanup_deadline,
+                            )
 
                             if attempt == 1:
                                 report_lines.append(f"    ✓ Destroyed tunnel: {tunnel_name}")
@@ -2566,36 +3204,52 @@ Notes
                             break  # Success, exit retry loop
 
                         except dagger.ExecError as e:
-                            last_error = str(e)
+                            last_error = _safe_exec_error("Cloudflare destroy", e)
                             if attempt == 1:
-                                report_lines.append("    First destroy attempt failed, retrying in 5 seconds...")
-                                await asyncio.sleep(5)
+                                report_lines.append(
+                                    "    First destroy attempt failed, retrying in 5 seconds..."
+                                )
+                                await _before_deadline(asyncio.sleep(5), cleanup_deadline)
                             else:
                                 # Second attempt failed - provide manual cleanup instructions
                                 cleanup_status["cloudflare"] = "failed_needs_manual_cleanup"
-                                report_lines.append("    ✗ Cloudflare cleanup failed after 2 attempts")
+                                report_lines.append(
+                                    "    ✗ Cloudflare cleanup failed after 2 attempts"
+                                )
                                 report_lines.append("")
-                                report_lines.append("    The following resources may need manual deletion via Cloudflare Dashboard:")
+                                report_lines.append(
+                                    "    The following resources may need manual deletion via Cloudflare Dashboard:"
+                                )
                                 report_lines.append(f"      - Tunnel: {tunnel_name}")
                                 report_lines.append(f"      - DNS Record: {test_hostname}")
                                 report_lines.append("")
                                 report_lines.append("    Manual cleanup steps:")
-                                report_lines.append("      1. Visit https://dash.cloudflare.com/ > Zero Trust > Networks > Tunnels")
-                                report_lines.append(f"      2. Find and delete tunnel: {tunnel_name}")
-                                report_lines.append(f"      3. Visit DNS > Records for zone {cloudflare_zone}")
-                                report_lines.append(f"      4. Delete CNAME record: {test_hostname}")
+                                report_lines.append(
+                                    "      1. Visit https://dash.cloudflare.com/ > Zero Trust > Networks > Tunnels"
+                                )
+                                report_lines.append(
+                                    f"      2. Find and delete tunnel: {tunnel_name}"
+                                )
+                                report_lines.append(
+                                    f"      3. Visit DNS > Records for zone {cloudflare_zone}"
+                                )
+                                report_lines.append(
+                                    f"      4. Delete CNAME record: {test_hostname}"
+                                )
                                 report_lines.append("")
                                 report_lines.append(f"    Original error: {last_error}")
 
                 except Exception as e:
-                    cleanup_status["cloudflare"] = f"failed: {str(e)}"
-                    report_lines.append(f"    ✗ Failed to cleanup Cloudflare: {str(e)}")
+                    cleanup_status["cloudflare"] = "failed"
+                    report_lines.append(f"    ✗ {_safe_exec_error('Cloudflare cleanup', e)}")
 
                 # Cleanup UniFi resources second
                 report_lines.append("  Cleaning up UniFi resources...")
                 try:
                     # Create UniFi cleanup container
-                    unifi_cleanup_ctr = dagger.dag.container().from_(f"hashicorp/terraform:{terraform_version}")
+                    unifi_cleanup_ctr = dagger.dag.container().from_(
+                        f"hashicorp/terraform:{terraform_version}"
+                    )
 
                     # Mount UniFi config at /workspace
                     unifi_cleanup_ctr = unifi_cleanup_ctr.with_directory("/workspace", unifi_dir)
@@ -2607,18 +3261,30 @@ Notes
                     except Exception:
                         # If module not in source, try project root
                         try:
-                            tf_module = dagger.dag.current_module().source().directory("terraform/modules/unifi-dns")
-                            unifi_cleanup_ctr = unifi_cleanup_ctr.with_directory("/module", tf_module)
+                            tf_module = (
+                                dagger.dag.current_module()
+                                .source()
+                                .directory("terraform/modules/unifi-dns")
+                            )
+                            unifi_cleanup_ctr = unifi_cleanup_ctr.with_directory(
+                                "/module", tf_module
+                            )
                         except Exception:
-                            raise RuntimeError("UniFi DNS Terraform module not found at terraform/modules/unifi-dns")
+                            raise RuntimeError(
+                                "UniFi DNS Terraform module not found at terraform/modules/unifi-dns"
+                            )
 
                     # Mount preserved state file if available
                     if unifi_state_dir:
                         try:
                             # Extract state file from directory and mount it without overwriting module files
                             unifi_state_file = unifi_state_dir.file("terraform.tfstate")
-                            unifi_cleanup_ctr = unifi_cleanup_ctr.with_file("/module/terraform.tfstate", unifi_state_file)
-                            report_lines.append("    ✓ UniFi state file mounted for state-based destroy")
+                            unifi_cleanup_ctr = unifi_cleanup_ctr.with_file(
+                                "/module/terraform.tfstate", unifi_state_file
+                            )
+                            report_lines.append(
+                                "    ✓ UniFi state file mounted for state-based destroy"
+                            )
                         except Exception as e:
                             report_lines.append(f"    ⚠ Failed to mount UniFi state file: {str(e)}")
                             unifi_state_dir = None
@@ -2626,44 +3292,109 @@ Notes
                         report_lines.append("    ⚠ No state file available for UniFi cleanup")
 
                     # Set environment variables
-                    unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable("TF_VAR_unifi_url", unifi_url)
-                    unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable("TF_VAR_api_url", api_url if api_url else unifi_url)
-                    unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable("TF_VAR_config_file", "/workspace/unifi.json")
-                    unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable("TF_VAR_unifi_insecure", str(unifi_insecure).lower())
+                    unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable(
+                        "TF_VAR_unifi_url", unifi_url
+                    )
+                    unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable(
+                        "TF_VAR_api_url", api_url if api_url else unifi_url
+                    )
+                    unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable(
+                        "TF_VAR_config_file", "/workspace/unifi.json"
+                    )
+                    unifi_cleanup_ctr = unifi_cleanup_ctr.with_env_variable(
+                        "TF_VAR_unifi_insecure", str(unifi_insecure).lower()
+                    )
 
                     # Pass authentication credentials as secrets
-                    if unifi_api_key:
-                        unifi_cleanup_ctr = unifi_cleanup_ctr.with_secret_variable("TF_VAR_unifi_api_key", unifi_api_key)
-                    elif unifi_username and unifi_password:
-                        unifi_cleanup_ctr = unifi_cleanup_ctr.with_secret_variable("TF_VAR_unifi_username", unifi_username)
-                        unifi_cleanup_ctr = unifi_cleanup_ctr.with_secret_variable("TF_VAR_unifi_password", unifi_password)
+                    unifi_cleanup_ctr = self._with_unifi_provider_environment(
+                        unifi_cleanup_ctr,
+                        unifi_url,
+                        api_url,
+                        unifi_insecure,
+                        unifi_api_key,
+                        unifi_username,
+                        unifi_password,
+                    )
 
                     # Set working directory to module
                     unifi_cleanup_ctr = unifi_cleanup_ctr.with_workdir("/module")
 
                     # Execute terraform init
                     try:
-                        await unifi_cleanup_ctr.with_exec(["terraform", "init"]).stdout()
+                        await _before_deadline(
+                            unifi_cleanup_ctr.with_exec(["terraform", "init"]).stdout(),
+                            cleanup_deadline,
+                        )
                     except dagger.ExecError as e:
-                        raise RuntimeError(f"Terraform init failed: {str(e)}")
+                        raise RuntimeError(_safe_exec_error("UniFi cleanup init", e)) from None
 
                     # Execute terraform destroy
                     try:
-                        destroy_result = await unifi_cleanup_ctr.with_exec([
-                            "terraform", "destroy", "-auto-approve"
-                        ]).stdout()
+                        destroy_result = await _before_deadline(
+                            unifi_cleanup_ctr.with_exec(
+                                ["terraform", "destroy", "-auto-approve", "-refresh=false"]
+                            ).stdout(),
+                            cleanup_deadline,
+                        )
                         report_lines.append(f"    ✓ Deleted UniFi DNS record: {unifi_hostname}")
                         cleanup_status["unifi"] = "success"
                     except dagger.ExecError as e:
-                        raise RuntimeError(f"Terraform destroy failed: {str(e)}")
+                        raise RuntimeError(_safe_exec_error("UniFi destroy", e)) from None
                 except Exception as e:
-                    cleanup_status["unifi"] = f"failed: {str(e)}"
-                    report_lines.append(f"    ✗ Failed to cleanup UniFi: {str(e)}")
+                    cleanup_status["unifi"] = "failed"
+                    report_lines.append(f"    ✗ {_safe_exec_error('UniFi cleanup', e)}")
 
                 # Cleanup local state files (state is container-local, so just document)
                 report_lines.append("  Cleaning up local state files...")
-                report_lines.append("    ✓ Terraform state is container-local (automatically cleaned up)")
+                report_lines.append(
+                    "    ✓ Terraform state is container-local (automatically cleaned up)"
+                )
                 cleanup_status["state_files"] = "success"
+
+                report_lines.append("  Verifying externally visible resources are absent...")
+                try:
+                    tunnel_count, dns_count = await self._cloudflare_resource_counts(
+                        cloudflare_account_id,
+                        cloudflare_zone,
+                        tunnel_name,
+                        test_hostname,
+                        cloudflare_token,
+                        cleanup_deadline,
+                    )
+                    if tunnel_count or dns_count:
+                        cleanup_status["cloudflare"] = "residual_resources"
+                        report_lines.append(
+                            f"    ✗ Cloudflare residuals: tunnel={tunnel_name}, dns={test_hostname}"
+                        )
+                    else:
+                        report_lines.append("    ✓ Cloudflare test resources are absent")
+                except Exception as error:
+                    cleanup_status["cloudflare"] = "residual_check_failed"
+                    report_lines.append(
+                        f"    ✗ {_safe_exec_error('Cloudflare residual check', error)}"
+                    )
+
+                try:
+                    unifi_exists = await self._unifi_dns_exists(
+                        unifi_hostname,
+                        "default",
+                        unifi_url,
+                        api_url,
+                        unifi_insecure,
+                        unifi_api_key,
+                        unifi_username,
+                        unifi_password,
+                        terraform_version,
+                        cleanup_deadline,
+                    )
+                    if unifi_exists:
+                        cleanup_status["unifi"] = "residual_resources"
+                        report_lines.append(f"    ✗ UniFi residual DNS record: {unifi_hostname}")
+                    else:
+                        report_lines.append("    ✓ UniFi test DNS record is absent")
+                except Exception as error:
+                    cleanup_status["unifi"] = "residual_check_failed"
+                    report_lines.append(f"    ✗ {_safe_exec_error('UniFi residual check', error)}")
 
                 # Cleanup summary with warnings
                 report_lines.append("")
@@ -2675,19 +3406,27 @@ Notes
                 report_lines.append(f"  State Files: {cleanup_status['state_files']}")
 
                 # Display warning if any cleanup step failed
-                if not all(status == "success" for status in cleanup_status.values()):
+                if not all(str(status).startswith("success") for status in cleanup_status.values()):
                     report_lines.append("")
                     report_lines.append("⚠ WARNING: Some cleanup steps failed!")
                     report_lines.append("  Manual cleanup may be required:")
                     if cleanup_status["cloudflare"] != "success":
-                        report_lines.append(f"    - Check Cloudflare dashboard for remaining resources: {tunnel_name}, {test_hostname}")
+                        report_lines.append(
+                            f"    - Check Cloudflare dashboard for remaining resources: {tunnel_name}, {test_hostname}"
+                        )
                     if cleanup_status["unifi"] != "success":
-                        report_lines.append(f"    - Check UniFi controller for remaining DNS record: {unifi_hostname}")
+                        report_lines.append(
+                            f"    - Check UniFi controller for remaining DNS record: {unifi_hostname}"
+                        )
             else:
                 report_lines.append("")
                 report_lines.append("PHASE 5: Cleanup SKIPPED (cleanup=false)")
                 report_lines.append("  WARNING: Resources may still exist!")
-                cleanup_status = {"cloudflare": "skipped", "unifi": "skipped", "state_files": "skipped"}
+                cleanup_status = {
+                    "cloudflare": "skipped",
+                    "unifi": "skipped",
+                    "state_files": "skipped",
+                }
 
         # Final summary
         report_lines.append("")
@@ -2706,6 +3445,18 @@ Notes
         report_lines.append(f"")
         report_lines.append(f"Cleanup Status: {'COMPLETED' if cleanup else 'SKIPPED'}")
         report_lines.append("=" * 60)
+
+        failure_reasons = _integration_failure_reasons(
+            primary_failure,
+            validation_results,
+            cleanup_ledger,
+            cleanup_status,
+        )
+
+        if failure_reasons:
+            raise RuntimeError(
+                f"Integration test {test_id} failed after cleanup: " + "; ".join(failure_reasons)
+            )
 
         return "\n".join(report_lines)
 
@@ -2734,7 +3485,9 @@ Notes
             # Query all outputs from Terraform state
             if cache_buster:
                 # Inject cache buster as comment in shell command to make it unique
-                tf_ctr = tf_ctr.with_exec(["sh", "-c", f"# cache_bust={cache_buster}\nterraform output -json"])
+                tf_ctr = tf_ctr.with_exec(
+                    ["sh", "-c", f"# cache_bust={cache_buster}\nterraform output -json"]
+                )
             else:
                 tf_ctr = tf_ctr.with_exec(["terraform", "output", "-json"])
 
@@ -2761,16 +3514,34 @@ Notes
     @function
     async def get_tunnel_secrets(
         self,
-        source: Annotated[dagger.Directory, Doc("Source directory (for accessing terraform modules)")],
+        source: Annotated[
+            dagger.Directory, Doc("Source directory (for accessing terraform modules)")
+        ],
         cloudflare_token: Annotated[Secret, Doc("Cloudflare API Token for authentication")],
         cloudflare_account_id: Annotated[str, Doc("Cloudflare Account ID")],
         zone_name: Annotated[str, Doc("DNS zone name (e.g., example.com)")],
-        terraform_version: Annotated[str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")] = "latest",
-        backend_type: Annotated[str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")] = "local",
-        backend_config_file: Annotated[Optional[dagger.File], Doc("Backend configuration HCL file (required for remote backends)")] = None,
-        state_dir: Annotated[Optional[dagger.Directory], Doc("Directory for persistent Terraform state (mutually exclusive with remote backend)")] = None,
-        output_format: Annotated[str, Doc("Output format: 'human' for readable text, 'json' for machine-parseable")] = "human",
-        cache_buster: Annotated[str, Doc("Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))")] = "",
+        terraform_version: Annotated[
+            str, Doc("Terraform version to use (e.g., '1.10.0' or 'latest')")
+        ] = "latest",
+        backend_type: Annotated[
+            str, Doc("Terraform backend type (local, s3, azurerm, gcs, remote, etc.)")
+        ] = "local",
+        backend_config_file: Annotated[
+            Optional[dagger.File],
+            Doc("Backend configuration HCL file (required for remote backends)"),
+        ] = None,
+        state_dir: Annotated[
+            Optional[dagger.Directory],
+            Doc(
+                "Directory for persistent Terraform state (mutually exclusive with remote backend)"
+            ),
+        ] = None,
+        output_format: Annotated[
+            str, Doc("Output format: 'human' for readable text, 'json' for machine-parseable")
+        ] = "human",
+        cache_buster: Annotated[
+            str, Doc("Unique value to bypass Dagger cache (use --cache-buster=$(date +%s))")
+        ] = "",
     ) -> str:
         """
         Retrieve Cloudflare tunnel secrets from Terraform state.
@@ -2903,46 +3674,47 @@ Notes
             # Handle state directory mounting for persistent local state
             using_persistent_state = state_dir is not None
             using_remote_backend = backend_type != "local"
-            
+
             # For remote backends: Create minimal Terraform config that just connects to backend
             # For local state: Need to mount the actual module that created the state
             if using_remote_backend:
                 # Remote backend: Create minimal config that just connects to S3/etc
                 # No module mounting needed - state already has all outputs
                 tf_ctr = tf_ctr.with_workdir("/workspace")
-                
+
                 # Create minimal backend.tf
                 backend_hcl = self._generate_backend_block(backend_type)
                 tf_ctr = tf_ctr.with_new_file("/workspace/backend.tf", backend_hcl)
-                
+
                 # Process and mount backend config file
                 if backend_config_file is not None:
                     try:
-                        config_content, _ = await _process_backend_config(backend_config_file)
-                        tf_ctr = tf_ctr.with_new_file("/root/.terraform/backend.tfbackend", config_content)
+                        tf_ctr = await _with_backend_secret(tf_ctr, backend_config_file)
                     except Exception as e:
-                        return f"✗ Failed: Could not process backend config file\n{str(e)}"
-                
+                        return (
+                            f"✗ Failed: {_safe_exec_error('Backend configuration processing', e)}"
+                        )
+
                 # Run terraform init to connect to remote backend
                 init_cmd = ["terraform", "init"]
                 if backend_config_file is not None:
-                    init_cmd.extend(["-backend-config=/root/.terraform/backend.tfbackend"])
-                
+                    init_cmd.extend([f"-backend-config={BACKEND_SECRET_PATH}"])
+
                 try:
                     tf_ctr = tf_ctr.with_exec(init_cmd)
                     _ = await tf_ctr.stdout()
                 except dagger.ExecError as e:
                     return (
-                        f"✗ Failed: Terraform init failed\n{str(e)}\n\n"
+                        f"✗ Failed: {_safe_exec_error('Terraform init', e)}\n\n"
                         "Backend configuration troubleshooting:\n"
                         "  - Verify backend config file is valid HCL\n"
                         "  - Check credentials in environment variables\n"
                         "  - Ensure backend infrastructure exists (bucket, table, etc.)"
                     )
-                
+
                 detected_module = "unknown"
-                available_outputs = []
-                
+                available_outputs: list[str] = []
+
             else:
                 # Local/persistent state: Need the actual module that created the state
                 # Mount glue module (most common case)
@@ -2952,63 +3724,91 @@ Notes
                     workdir = "/module/glue"
                 except Exception as e:
                     return f"✗ Failed: Could not mount Terraform modules: {str(e)}"
-                
-                if using_persistent_state:
+
+                if state_dir is not None:
                     # Mount state directory
                     tf_ctr = tf_ctr.with_directory("/state", state_dir)
                     # Clean up any existing .terraform directory
-                    tf_ctr = tf_ctr.with_exec(["sh", "-c", "rm -rf /state/.terraform && echo 'Cleaned .terraform directory'"])
+                    tf_ctr = tf_ctr.with_exec(
+                        [
+                            "sh",
+                            "-c",
+                            "rm -rf /state/.terraform && echo 'Cleaned .terraform directory'",
+                        ]
+                    )
                     _ = await tf_ctr.stdout()
                     # Copy module files to state directory
-                    tf_ctr = tf_ctr.with_exec(["sh", "-c", f"cp -r {workdir}/* /state/ && ls -la /state"])
+                    tf_ctr = tf_ctr.with_exec(
+                        ["sh", "-c", f"cp -r {workdir}/* /state/ && ls -la /state"]
+                    )
                     _ = await tf_ctr.stdout()
                     tf_ctr = tf_ctr.with_workdir("/state")
                 else:
                     tf_ctr = tf_ctr.with_workdir(workdir)
-                
+
                 # Run terraform init
                 try:
                     tf_ctr = tf_ctr.with_exec(["terraform", "init"])
                     _ = await tf_ctr.stdout()
                 except dagger.ExecError as e:
-                    return f"✗ Failed: Terraform init failed\n{str(e)}"
-                
+                    return f"✗ Failed: {_safe_exec_error('Terraform init', e)}"
+
                 # Detect which module created the state
-                detected_module, available_outputs = await self._detect_deployment_module(tf_ctr, effective_cache_buster)
+                detected_module, available_outputs = await self._detect_deployment_module(
+                    tf_ctr, effective_cache_buster
+                )
 
             # Retrieve outputs using the standalone module naming convention
             # Both glue and cloudflare-tunnel modules now expose outputs with these names
             # (glue module has alias outputs for backward compatibility)
-            
+
             # Use tunnel_ids (available in both modules - native in cloudflare-tunnel, alias in glue)
             try:
                 if effective_cache_buster:
-                    tf_ctr = tf_ctr.with_exec(["sh", "-c", f"# cache_bust={effective_cache_buster}\nterraform output -json tunnel_ids"])
+                    tf_ctr = tf_ctr.with_exec(
+                        [
+                            "sh",
+                            "-c",
+                            f"# cache_bust={effective_cache_buster}\nterraform output -json tunnel_ids",
+                        ]
+                    )
                 else:
                     tf_ctr = tf_ctr.with_exec(["terraform", "output", "-json", "tunnel_ids"])
                 ids_json_str = await tf_ctr.stdout()
             except dagger.ExecError as e:
-                return f"✗ Failed: Could not retrieve tunnel_ids output\n{str(e)}\nAvailable outputs: {', '.join(available_outputs) if available_outputs else 'none'}"
+                return f"✗ Failed: {_safe_exec_error('Retrieving tunnel_ids output', e)}\nAvailable outputs: {', '.join(available_outputs) if available_outputs else 'none'}"
 
             # Use tunnel_tokens (available in both modules)
             try:
                 if effective_cache_buster:
-                    tf_ctr = tf_ctr.with_exec(["sh", "-c", f"# cache_bust={effective_cache_buster}\nterraform output -json tunnel_tokens"])
+                    tf_ctr = tf_ctr.with_exec(
+                        [
+                            "sh",
+                            "-c",
+                            f"# cache_bust={effective_cache_buster}\nterraform output -json tunnel_tokens",
+                        ]
+                    )
                 else:
                     tf_ctr = tf_ctr.with_exec(["terraform", "output", "-json", "tunnel_tokens"])
                 tokens_json_str = await tf_ctr.stdout()
             except dagger.ExecError as e:
-                return f"✗ Failed: Could not retrieve tunnel_tokens output\n{str(e)}\nAvailable outputs: {', '.join(available_outputs) if available_outputs else 'none'}"
+                return f"✗ Failed: {_safe_exec_error('Retrieving tunnel_tokens output', e)}\nAvailable outputs: {', '.join(available_outputs) if available_outputs else 'none'}"
 
             # Use credentials_json (available in both modules)
             try:
                 if effective_cache_buster:
-                    tf_ctr = tf_ctr.with_exec(["sh", "-c", f"# cache_bust={effective_cache_buster}\nterraform output -json credentials_json"])
+                    tf_ctr = tf_ctr.with_exec(
+                        [
+                            "sh",
+                            "-c",
+                            f"# cache_bust={effective_cache_buster}\nterraform output -json credentials_json",
+                        ]
+                    )
                 else:
                     tf_ctr = tf_ctr.with_exec(["terraform", "output", "-json", "credentials_json"])
                 credentials_json_str = await tf_ctr.stdout()
             except dagger.ExecError as e:
-                return f"✗ Failed: Could not retrieve credentials_json output\n{str(e)}\nAvailable outputs: {', '.join(available_outputs) if available_outputs else 'none'}"
+                return f"✗ Failed: {_safe_exec_error('Retrieving credentials_json output', e)}\nAvailable outputs: {', '.join(available_outputs) if available_outputs else 'none'}"
 
             # Parse JSON outputs
             try:
@@ -3029,7 +3829,7 @@ Notes
                     "tunnel_tokens": tunnel_tokens,
                     "credentials_json": credentials,
                     "count": len(tunnel_tokens),
-                    "module_type": detected_module
+                    "module_type": detected_module,
                 }
                 # Add cache_buster to result if provided
                 if effective_cache_buster:
@@ -3057,24 +3857,28 @@ Notes
                     output_lines.append(f"Tunnel ID: {tunnel_id}")
                     output_lines.append("")
 
-                output_lines.extend([
-                    "-" * 60,
-                    "TUNNEL TOKENS (for cloudflared login)",
-                    "-" * 60,
-                    "",
-                ])
+                output_lines.extend(
+                    [
+                        "-" * 60,
+                        "TUNNEL TOKENS (for cloudflared login)",
+                        "-" * 60,
+                        "",
+                    ]
+                )
 
                 for mac, token in tunnel_tokens.items():
                     output_lines.append(f"MAC Address: {mac}")
                     output_lines.append(f"Token: {token}")
                     output_lines.append("")
 
-                output_lines.extend([
-                    "-" * 60,
-                    "CREDENTIALS JSON (for cloudflared config.yml)",
-                    "-" * 60,
-                    "",
-                ])
+                output_lines.extend(
+                    [
+                        "-" * 60,
+                        "CREDENTIALS JSON (for cloudflared config.yml)",
+                        "-" * 60,
+                        "",
+                    ]
+                )
 
                 for mac, creds_json in credentials.items():
                     # Parse JSON string from terraform output
@@ -3083,7 +3887,7 @@ Notes
                     except (json.JSONDecodeError, TypeError):
                         # If already a dict (shouldn't happen but handle it)
                         creds = creds_json if isinstance(creds_json, dict) else {}
-                    
+
                     output_lines.append(f"MAC Address: {mac}")
                     output_lines.append(f"  Account Tag: {creds.get('AccountTag', 'N/A')}")
                     output_lines.append(f"  Tunnel ID: {creds.get('TunnelID', 'N/A')}")
@@ -3091,36 +3895,40 @@ Notes
                     output_lines.append(f"  Tunnel Secret: {creds.get('TunnelSecret', 'N/A')}")
                     output_lines.append("")
 
-                output_lines.extend([
-                    "-" * 60,
-                    "USAGE INSTRUCTIONS",
-                    "-" * 60,
-                    "",
-                    "1. Install cloudflared on your device:",
-                    "   https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/",
-                    "",
-                    "2. Authenticate using tunnel token (interactive):",
-                    "   cloudflared tunnel login",
-                    "",
-                    "3. Or use credentials JSON for automated setup:",
-                    "   Create /etc/cloudflared/config.yml with the credentials above",
-                    "",
-                    "4. Run cloudflared:",
-                    "   cloudflared tunnel run",
-                    "",
-                ])
+                output_lines.extend(
+                    [
+                        "-" * 60,
+                        "USAGE INSTRUCTIONS",
+                        "-" * 60,
+                        "",
+                        "1. Install cloudflared on your device:",
+                        "   https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/",
+                        "",
+                        "2. Authenticate using tunnel token (interactive):",
+                        "   cloudflared tunnel login",
+                        "",
+                        "3. Or use credentials JSON for automated setup:",
+                        "   Create /etc/cloudflared/config.yml with the credentials above",
+                        "",
+                        "4. Run cloudflared:",
+                        "   cloudflared tunnel run",
+                        "",
+                    ]
+                )
 
                 # Add execution timestamp to make result unique (breaks Dagger cache)
                 if effective_cache_buster:
-                    output_lines.extend([
-                        "=" * 60,
-                        f"Execution ID: {effective_cache_buster}",
-                        "=" * 60,
-                    ])
+                    output_lines.extend(
+                        [
+                            "=" * 60,
+                            f"Execution ID: {effective_cache_buster}",
+                            "=" * 60,
+                        ]
+                    )
                 else:
                     output_lines.append("=" * 60)
 
                 return "\n".join(output_lines)
 
         except Exception as e:
-            return f"✗ Failed: Unexpected error retrieving tunnel secrets\n{str(e)}"
+            return f"✗ Failed: {_safe_exec_error('Tunnel secret retrieval', e)}"

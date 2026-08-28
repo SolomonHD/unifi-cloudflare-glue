@@ -62,27 +62,6 @@ variable "api_url" {
   default     = ""
 }
 
-variable "unifi_api_key" {
-  description = "UniFi API key for authentication (mutually exclusive with username/password)"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "unifi_username" {
-  description = "UniFi username for authentication (use with password)"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "unifi_password" {
-  description = "UniFi password for authentication (use with username)"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 variable "unifi_insecure" {
   description = "Skip TLS certificate verification for UniFi controller (useful for self-signed certificates)"
   type        = bool
@@ -102,13 +81,6 @@ variable "strict_mode" {
 # ==============================================================================
 # Cloudflare Provider Configuration
 # ==============================================================================
-
-variable "cloudflare_token" {
-  description = "Cloudflare API token with permissions: Zone:Read, DNS:Edit, Cloudflare Tunnel:Edit. Can be provided via CLOUDFLARE_API_TOKEN environment variable instead."
-  type        = string
-  sensitive   = true
-  default     = ""
-}
 
 variable "cloudflare_account_id" {
   description = "Cloudflare Account ID (can override value in config)"
