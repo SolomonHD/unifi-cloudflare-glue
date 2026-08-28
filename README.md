@@ -10,7 +10,7 @@ A hybrid DNS infrastructure tool that bridges UniFi network DNS with Cloudflare 
 
 ```bash
 # 1. Install the Dagger module
-dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.12.2
+dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.13.0
 
 # 2. Deploy both UniFi DNS and Cloudflare Tunnel
 dagger call -m unifi-cloudflare-glue deploy \
@@ -125,10 +125,18 @@ dagger call -m unifi-cloudflare-glue deploy \
 
 > **API Simplification:** Previous versions had separate `deploy-unifi` and `deploy-cloudflare` functions. These have been unified into the single `deploy` command with selective flags. If you're following external guides or blog posts referencing the old functions, use the examples above instead.
 
+> **Secret transport compatibility:** The plan, deploy, destroy, and
+> get-tunnel-secrets call syntax has not changed. Continue passing provider
+> credentials with `env:` and the backend file with `--backend-config-file`.
+> The module converts the backend file to a Dagger secret mount internally;
+> never paste its contents into a command or ordinary environment variable.
+> The only new plan flag is the optional `--sensitive-artifacts` opt-in below.
+
 ### Plan and Destroy
 
 ```bash
 # Generate plans without applying (full deployment)
+# Safe default exports only plan.txt and plan-summary.txt.
 dagger call -m unifi-cloudflare-glue plan \
     --kcl-source=./kcl \
     --unifi-url=https://unifi.local:8443 \
@@ -137,6 +145,17 @@ dagger call -m unifi-cloudflare-glue plan \
     --cloudflare-account-id=xxx \
     --zone-name=example.com \
     export --path=./plans
+
+# Explicit sensitive export (raw binary/JSON plans, owner-only)
+dagger call -m unifi-cloudflare-glue plan \
+    --kcl-source=./kcl \
+    --unifi-url=https://unifi.local:8443 \
+    --unifi-api-key=env:UNIFI_API_KEY \
+    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-account-id=xxx \
+    --zone-name=example.com \
+    --sensitive-artifacts \
+    export --path=./plans-sensitive
 
 # Plan UniFi-only deployment
 dagger call -m unifi-cloudflare-glue plan \
@@ -214,7 +233,7 @@ Always pin to specific versions in production:
 
 ```bash
 # ✅ Recommended - pinned version
-dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.12.2
+dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.13.0
 
 # ⚠️ Not recommended - latest main
 dagger install github.com/SolomonHD/unifi-cloudflare-glue@main
@@ -249,7 +268,7 @@ See [docs/security.md](docs/security.md) for comprehensive security guidance.
 # GitHub Actions example
 - name: Deploy infrastructure
   run: |
-    dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.12.2 \
+    dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.13.0 \
       unifi-cloudflare-glue deploy \
       --kcl-source=./kcl \
       --unifi-url=${{ secrets.UNIFI_URL }} \

@@ -14,15 +14,7 @@
 # When glue is used as the root module (full deployment), it needs provider blocks
 # The child modules inherit these provider configurations
 
-provider "unifi" {
-  # Conditionally configure UniFi provider with placeholder values when not used
-  # This allows cloudflare-only deployments without valid UniFi credentials
-  api_url        = var.unifi_url != "" ? (var.api_url != "" ? var.api_url : var.unifi_url) : "https://unifi.placeholder.local:8443"
-  api_key        = var.unifi_api_key != "" ? var.unifi_api_key : null
-  username       = var.unifi_username != "" ? var.unifi_username : (var.unifi_url != "" ? null : "placeholder")
-  password       = var.unifi_password != "" ? var.unifi_password : (var.unifi_url != "" ? null : "placeholder")
-  allow_insecure = var.unifi_insecure
-}
+provider "unifi" {}
 
 provider "cloudflare" {
   # Use environment variable CLOUDFLARE_API_TOKEN for authentication
@@ -60,9 +52,6 @@ module "unifi_dns" {
   # UniFi provider settings
   unifi_url      = var.unifi_url != "" ? var.unifi_url : "https://placeholder.local"
   api_url        = var.api_url
-  unifi_api_key  = var.unifi_api_key
-  unifi_username = var.unifi_username
-  unifi_password = var.unifi_password
   unifi_insecure = var.unifi_insecure
 
   # Module behavior

@@ -34,27 +34,6 @@ variable "api_url" {
   default     = ""
 }
 
-variable "unifi_api_key" {
-  description = "UniFi API key for authentication (mutually exclusive with username/password)"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "unifi_username" {
-  description = "UniFi username for authentication (use with password)"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "unifi_password" {
-  description = "UniFi password for authentication (use with username)"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 variable "unifi_insecure" {
   description = "Skip TLS certificate verification for UniFi controller (useful for self-signed certificates)"
   type        = bool

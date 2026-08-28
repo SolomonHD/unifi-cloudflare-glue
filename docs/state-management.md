@@ -254,7 +254,8 @@ dagger call deploy \
 #### Backward Compatibility
 
 - **HCL files continue to work**: The module auto-detects YAML vs HCL format
-- **No API changes**: The `--backend-config-file` parameter works with both formats
+- **No call-site API changes**: The `--backend-config-file` parameter works with
+  both formats; its contents are converted immediately to a Dagger secret mount
 - **Graceful fallback**: If YAML parsing fails, the file is treated as HCL
 
 ### Backend Examples

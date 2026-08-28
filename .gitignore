@@ -27,6 +27,7 @@ __pycache__/
 *.pem
 *.key
 *secret*
+!tests/unit/test_secret_safety.py
 *credential*
 *password*
 

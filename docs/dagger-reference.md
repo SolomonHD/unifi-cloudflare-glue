@@ -232,10 +232,18 @@ dagger call -m unifi-cloudflare-glue destroy \
 
 Generate Terraform plans without applying changes. Creates execution plans enabling the standard plan → review → apply workflow. Use selective flags to plan individual components.
 
-**Output formats per module:**
-- Binary plan files (for `terraform apply`)
-- JSON (for automation)
-- Human-readable text (for review)
+**Safe default output:**
+- Human-readable Terraform plan with sensitive-value redaction
+- Aggregated plan summary
+
+Raw binary and JSON formats require `--sensitive-artifacts` because Terraform
+plans can retain credentials and sensitive values.
+
+The invocation syntax for existing inputs is unchanged. Provider credentials
+remain Dagger `Secret` arguments supplied with `env:`, and callers still pass a
+backend file with `--backend-config-file`. The module immediately converts that
+file's contents to a secret mount; callers must not put the contents on the
+command line or in a normal environment variable.
 
 **Parameters:**
 
@@ -252,6 +260,7 @@ Generate Terraform plans without applying changes. Creates execution plans enabl
 | `--state-dir` | ❌ | Path for persistent local state |
 | `--backend-type` | ❌ | Backend type (s3, etc.) |
 | `--backend-config-file` | ❌ | Backend configuration file |
+| `--sensitive-artifacts` | ❌ | Include owner-only raw `.tfplan` and JSON artifacts plus a warning manifest |
 
 *Required parameters depend on selective flags used.
 
@@ -323,16 +332,13 @@ dagger call -m unifi-cloudflare-glue plan \
 
 ```
 plans/
-├── unifi-plan.tfplan      # Binary plan
-├── unifi-plan.json        # Structured JSON
-├── unifi-plan.txt         # Human-readable
-├── cloudflare-plan.tfplan # Binary plan
-├── cloudflare-plan.json   # Structured JSON
-├── cloudflare-plan.txt    # Human-readable
+├── plan.txt               # Redacted human-readable plan
 └── plan-summary.txt       # Aggregated summary
 ```
 
-**Security Note:** Plan files may contain sensitive values. Add your plans directory to `.gitignore`.
+With `--sensitive-artifacts`, the directory additionally contains owner-only
+`plan.tfplan`, `plan.json`, and `SENSITIVE-ARTIFACTS.md`. Treat the entire
+directory as secret material, keep it encrypted, and securely delete it after use.
 
 ## Testing
 

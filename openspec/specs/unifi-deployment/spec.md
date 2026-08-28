@@ -1,7 +1,10 @@
 # Spec: UniFi Deployment Function
 
-## ADDED Requirements
+## Purpose
 
+Define secure UniFi deployment behavior for the Dagger module.
+
+## Requirements
 ### Requirement: deploy_unifi Function
 
 The Dagger module SHALL provide a `deploy_unifi` function that deploys UniFi DNS configuration using Terraform with secure credential handling.
@@ -42,10 +45,11 @@ And sets the working directory to the module path
 
 #### Scenario: Secret Injection via Environment Variables
 Given secret values for UniFi authentication
-When the function runs Terraform
-Then secrets are passed via `TF_VAR_*` environment variables
-And secrets never appear in command line arguments
-And secrets are never logged in output
+When the function runs Terraform with API-key authentication
+Then the key is passed through Dagger's secret `UNIFI_API_KEY` provider environment variable
+And when compatibility username/password authentication is selected the credentials use secret `UNIFI_USERNAME` and `UNIFI_PASSWORD` provider environment variables
+And no credential is supplied through `TF_VAR_*` or another Terraform input variable
+And secrets never appear in command line arguments, plans, reports, or logs
 
 #### Scenario: Terraform Init Execution
 Given the Terraform container is prepared
@@ -57,7 +61,7 @@ And handles init failures with clear error messages
 Given `terraform init` succeeds
 When the function proceeds with deployment
 Then it runs `terraform apply -auto-approve`
-And captures stdout and stderr for status reporting
+And captures sanitized stdout and stderr for status reporting
 
 #### Scenario: Deployment Success
 Given Terraform apply completes successfully
@@ -68,16 +72,13 @@ And includes summary of applied resources
 #### Scenario: Deployment Failure
 Given Terraform apply fails
 When the function processes the error
-Then it returns a message starting with "✗ Failed"
-And includes Terraform error output
+Then it returns a failing result with non-secret Terraform error context
 And provides context for troubleshooting
 
 #### Scenario: Missing Configuration File
 Given a source directory without `unifi.json`
 When the function is called
 Then it returns an error indicating the configuration file is missing
-
----
 
 ### Requirement: UniFi Function Parameters
 

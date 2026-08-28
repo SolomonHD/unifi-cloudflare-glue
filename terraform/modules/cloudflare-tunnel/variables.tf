@@ -25,13 +25,6 @@ variable "config_file" {
   default     = ""
 }
 
-variable "cloudflare_token" {
-  description = "Cloudflare API token with permissions: Zone:Read, DNS:Edit, Cloudflare Tunnel:Edit. Can be provided via CLOUDFLARE_API_TOKEN environment variable instead."
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 variable "account_id_override" {
   description = "Optional account ID to override the value from config. If provided, takes precedence over config.account_id."
   type        = string

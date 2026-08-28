@@ -18,13 +18,15 @@ This index maps the sequence of changes needed to implement the `unifi-cloudflar
 | 010 | [example-homelab-media-stack](./010-example-homelab-media-stack.md) | Working example with media services | 007, 008, 009 |
 | 011 | [test-integration-cache-buster](./011-test-integration-cache-buster.md) | Add cache_buster and wait_before_cleanup parameters to test_integration | 010 |
 
-## Active Changes
+## Current Roadmap Queue
 
-| Change ID | Description | Status |
-|-----------|-------------|--------|
-| [fix-yq-parsing-bug](./fix-yq-parsing-bug/) | Fix yq parsing bug in KCL configuration generation functions | Proposed |
-| [add-terraform-plan-function](./add-terraform-plan-function/) | Add Terraform plan function for plan → review → apply workflow | In Progress |
-| [add-remote-dagger-module-docs](./add-remote-dagger-module-docs/) | Add documentation for remote Dagger module consumption | Proposed |
+| Order | Change ID | Dependencies | Status |
+|-------|-----------|--------------|--------|
+| 1 | [harden-dagger-secret-and-state-handling](./archive/2026-08-28-harden-dagger-secret-and-state-handling/) | None | Archived 2026-08-28 |
+| 2 | [normalize-current-unifi-provider-baseline](./normalize-current-unifi-provider-baseline/) | 1 | Proposed |
+| 3 | [migrate-to-ubiquiti-community-unifi](./migrate-to-ubiquiti-community-unifi/) | 1, 2 | Proposed |
+| 4 | [add-cloudflare-live-ci-canary](./add-cloudflare-live-ci-canary/) | 1, 2, 3 | Proposed |
+| 5 | [modernize-legacy-unit-test-contracts](./modernize-legacy-unit-test-contracts/) | 2, 3, 4 | Deferred from hardening; proposed last |
 
 ## Implementation Phases
 

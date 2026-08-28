@@ -1,7 +1,10 @@
 # Spec: Cloudflare Deployment Function
 
-## ADDED Requirements
+## Purpose
 
+Define secure Cloudflare deployment behavior for the Dagger module.
+
+## Requirements
 ### Requirement: deploy_cloudflare Function
 
 The Dagger module SHALL provide a `deploy_cloudflare` function that deploys Cloudflare Tunnel configuration using Terraform with secure credential handling.
@@ -26,9 +29,9 @@ And sets the working directory to the module path
 #### Scenario: Secret Injection via Environment Variables
 Given a secret Cloudflare API token
 When the function runs Terraform
-Then the token is passed via `TF_VAR_cloudflare_token` environment variable
-And the token never appears in command line arguments
-And the token is never logged in output
+Then the token is passed through Dagger's secret `CLOUDFLARE_API_TOKEN` environment variable
+And the token is not supplied through `TF_VAR_*` or another Terraform input variable
+And the token never appears in command line arguments, plans, reports, or logs
 
 #### Scenario: Terraform Init Execution
 Given the Terraform container is prepared
@@ -40,7 +43,7 @@ And handles init failures with clear error messages
 Given `terraform init` succeeds
 When the function proceeds with deployment
 Then it runs `terraform apply -auto-approve`
-And captures stdout and stderr for status reporting
+And captures sanitized stdout and stderr for status reporting
 
 #### Scenario: Deployment Success
 Given Terraform apply completes successfully
@@ -51,16 +54,13 @@ And includes summary of applied resources (tunnel names, DNS records)
 #### Scenario: Deployment Failure
 Given Terraform apply fails
 When the function processes the error
-Then it returns a message starting with "✗ Failed"
-And includes Terraform error output
+Then it returns a failing result with non-secret Terraform error context
 And provides context for troubleshooting
 
 #### Scenario: Missing Configuration File
 Given a source directory without `cloudflare.json`
 When the function is called
 Then it returns an error indicating the configuration file is missing
-
----
 
 ### Requirement: Cloudflare Function Parameters
 
