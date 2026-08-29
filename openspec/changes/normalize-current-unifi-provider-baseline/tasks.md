@@ -23,8 +23,8 @@
 
 - [x] 4.1 Re-run the production API-key-authenticated Dagger plan with v1.1.x and require 0 add, 0 change, and 0 destroy
 - [x] 4.2 Run Python tests, Terraform formatting/validation, KCL schema/generator tests, Dagger module checks, and secret-disclosure scans
-- [ ] 4.3 Publish the reviewed normalized revision on `main` as a semantic release tag or immutable commit
-- [ ] 4.4 In `portainer-docker-compose`, atomically update `dagger.json` and `kcl/kcl.mod` from `fix-cloudflare-token` to the same published revision
-- [ ] 4.5 Correct the downstream credential-audit and `rotate-high-risk-credentials` artifacts to state that glue already authenticates by API key and that v1.1 is maintenance
-- [ ] 4.6 Run the consumer pre-flight plan from the updated pin and require zero production drift
+- [x] 4.3 Publish the reviewed normalized revision on `main` as a semantic release tag or immutable commit — DONE: released `v0.14.0` at commit `d33f4deffd4d2dd7965c49663d4da4093a2f4100`
+- [x] 4.4 In `portainer-docker-compose`, atomically update `dagger.json` and `kcl/kcl.mod` from `fix-cloudflare-token` to the same published revision — DONE: consumer commit `eb4dddb` pins both dependencies to `v0.14.0` / `d33f4deffd4d2dd7965c49663d4da4093a2f4100`
+- [x] 4.5 Correct the downstream credential-audit and `rotate-high-risk-credentials` artifacts to state that glue already authenticates by API key and that v1.1 is maintenance — DONE in consumer commit `eb4dddb`; BO3 is re-scoped to the two password-based MCP sidecars
+- [x] 4.6 Run the consumer pre-flight plan from the updated pin and require zero production drift — DONE 2026-08-28: registered dependency resolved `v0.14.0`; plan reported 0 add, 0 change, 0 destroy; safe text artifacts passed secret scan and were deleted
 - [x] 4.7 Run `openspec validate normalize-current-unifi-provider-baseline --strict` and `git diff --check`
