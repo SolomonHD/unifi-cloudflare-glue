@@ -1,0 +1,5 @@
+name = "unifi-cloudflare-glue"
+
+[entrypoint]
+  kind = "dang"
+  source = "./sdk/entrypoint"

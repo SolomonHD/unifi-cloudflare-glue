@@ -1,0 +1,9 @@
+[modules.dagger-python-sdk]
+source = "github.com/dagger/python-sdk@9394f7454139f1ee2ca35be20e585b1e54f06cc2"
+
+[sdks.python]
+module = "dagger-python-sdk"
+
+[sdks.python.scopes."."]
+is-module = true
+name = "unifi-cloudflare-glue"

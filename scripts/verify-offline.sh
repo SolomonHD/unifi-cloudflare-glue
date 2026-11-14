@@ -6,10 +6,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 verify() {
-    uv run --offline --frozen \
-        --with pytest==9.2.0 --with pytest-asyncio==1.5.0 \
-        --with black==26.10.1 --with isort==9.0.2 \
-        --with mypy==2.4.1 --with types-PyYAML==6.0.12.20261113 "$@"
+    uv run --offline --frozen --no-sync "$@"
 }
 
 verify black --check src tests

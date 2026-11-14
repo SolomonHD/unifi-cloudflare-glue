@@ -73,7 +73,7 @@ Live planning SHALL enforce automatic freshness at function and execution bounda
 - **THEN** argument validation rejects them before contacting the backend or providers
 
 ### Requirement: State Management Consistency
-Planning SHALL use the same protected local-state or remote-backend contract as deploy and destroy, with explicit Secret-typed backend configuration and no automatic host Directory write-back.
+Remote planning SHALL use the same remote-backend/root contract as deploy and destroy, with explicit Secret-typed backend configuration and no automatic host Directory write-back. A protected local-state preview is read-only and SHALL NOT imply support or authorization for local deploy/destroy; durable local effects remain deferred to DLR-1.
 
 #### Scenario: Plan with persistent local state
 - **WHEN** a supported local-state preview is requested

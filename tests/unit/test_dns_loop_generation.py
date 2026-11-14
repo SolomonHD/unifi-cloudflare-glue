@@ -61,7 +61,10 @@ async def test_public_generation_rejects_dns_loop_before_output(dns_source, tmp_
     with patch.object(transport, "LocalContainer", return_value=container):
         with pytest.raises(transport.KCLGenerationError) as error:
             await transport.generate_consumer(dns_source(fixture), "cloudflare", tmp_path)
-    assert_dns_diagnostic(str(error.value), fixture)
+    assert str(error.value) == (
+        "KCL execution failed (exit code 1); check source syntax, validation and locked dependencies"
+    )
+    assert "example.com" not in str(error.value)
     assert not list((tmp_path / "generated").iterdir())
     assert not any(command[:2] == ["yq", "eval"] for command in container.commands)
 

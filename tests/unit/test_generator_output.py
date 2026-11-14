@@ -11,17 +11,19 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
-import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests/fixtures/generator-output"
 sys.path.insert(0, str(ROOT / "src/main"))
 
-from main import KCLGenerationError, UnifiCloudflareGlue  # noqa: E402
+from toolchains import kcl_image  # noqa: E402
+
+from main import KCLGenerationError, UnifiCloudflareGlue, _generate_configs  # noqa: E402
 
 pytestmark = pytest.mark.generator
 MAC_PATTERN = r"[0-9a-f]{2}(?::[0-9a-f]{2}){5}"
@@ -29,14 +31,14 @@ MAC_PATTERN = r"[0-9a-f]{2}(?::[0-9a-f]{2}){5}"
 
 def run_kcl(path: Path, *options: str) -> dict:
     completed = subprocess.run(
-        ["kcl", "run", str(path), *options],
+        ["kcl", "run", str(path), "--format", "json", *options],
         cwd=path.parent,
         capture_output=True,
         text=True,
         timeout=60,
         check=True,
     )
-    return yaml.safe_load(completed.stdout)
+    return json.loads(completed.stdout)
 
 
 def assert_unifi_contract(output: dict) -> None:
@@ -104,13 +106,12 @@ class LocalDirectory:
 
 
 class LocalContainer:
-    """Transport double; executes real KCL and models only yq extraction/encoding."""
+    """Transport double; only maps Dagger paths to real native KCL execution."""
 
     def __init__(self):
         self.source = None
         self.files = {}
         self.commands = []
-        self.output = ""
 
     def from_(self, image):
         self.image = image
@@ -125,36 +126,40 @@ class LocalContainer:
         assert path == "/src"
         return self
 
-    def with_new_file(self, path, contents):
-        self.files[path] = contents
-        return self
-
     def with_exec(self, command):
         self.commands.append(command)
-        if command == ["kcl", "run", "main.k"]:
-            completed = subprocess.run(
-                command, cwd=self.source, capture_output=True, text=True, check=True, timeout=60
+        assert command == [
+            "kcl",
+            "run",
+            "main.k",
+            "--format",
+            "json",
+            "--output",
+            "/tmp/kcl-output.json",
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "snapshot.json"
+            subprocess.run(
+                [*command[:-1], str(output)],
+                cwd=self.source,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=60,
             )
-            self.output = completed.stdout
-        elif command[:2] == ["yq", "eval"]:
-            data = yaml.safe_load(self.files[command[-1]])
-            self.output = (
-                json.dumps(data)
-                if command[2] == "-o=json"
-                else (
-                    "null\n"
-                    if data.get(command[2].removeprefix(".")) is None
-                    else yaml.safe_dump(data[command[2].removeprefix(".")])
-                )
-            )
-        else:
-            # Bootstrap/dependency acquisition is outside this offline unit boundary.
-            assert command[0] == "sh" or command == ["kcl", "mod", "update"]
-            self.output = ""
+            self.files[command[-1]] = output.read_text()
         return self
 
-    async def stdout(self):
-        return self.output
+    def file(self, path):
+        container = self
+
+        class SnapshotFile:
+            async def contents(self):
+                if path == "/src/kcl.mod.lock":
+                    return (container.source / "kcl.mod.lock").read_text()
+                return container.files[path]
+
+        return SnapshotFile()
 
 
 async def generate_consumer(source: Path, provider: str, tmp_path: Path):
@@ -162,21 +167,20 @@ async def generate_consumer(source: Path, provider: str, tmp_path: Path):
     output_directory = tmp_path / "generated"
     output_directory.mkdir(exist_ok=True)
 
-    class OutputDirectory(LocalDirectory):
-        def with_new_file(self, name, contents):
-            (self.path / name).write_text(contents)
-            return self
+    def output_file(name, contents):
+        path = output_directory / name
+        path.write_text(contents)
+        return LocalFile(path)
 
     with (
-        patch("main.dagger.dag.container", return_value=container),
-        patch("main.dagger.dag.directory", return_value=OutputDirectory(output_directory)),
+        patch("main.dagger.dag", new=Mock(file=output_file)),
+        patch("main.kcl_container", return_value=container.from_(kcl_image("0.12.4"))) as factory,
     ):
         method = getattr(UnifiCloudflareGlue(), f"generate_{provider}_config")
         result = await method(LocalDirectory(source), kcl_version="0.12.4")
-    assert ["kcl", "run", "main.k"] in container.commands
-    key = "unifi_output" if provider == "unifi" else "cf_output"
-    assert ["yq", "eval", f".{key}", "/tmp/kcl-output.yaml"] in container.commands
-    assert container.image == "kcllang/kcl:0.12.4"
+    assert len(container.commands) == 1
+    factory.assert_called_once_with("0.12.4")
+    assert container.image == kcl_image("0.12.4")
     return json.loads(await result.contents())
 
 
@@ -426,14 +430,13 @@ async def test_invalid_json_diagnostic_does_not_echo_payload(
 
     def corrupt_json(container, command):
         result = original_exec(container, command)
-        if command[:3] == ["yq", "eval", "-o=json"]:
-            container.output = '{"SENTINEL_JSON": "SENTINEL_VALUE"'
+        container.files["/tmp/kcl-output.json"] = '{"SENTINEL_JSON": "SENTINEL_VALUE"'
         return result
 
     monkeypatch.setattr(LocalContainer, "with_exec", corrupt_json)
     with pytest.raises(KCLGenerationError) as error:
         await generate_consumer(consumer_source("valid"), provider, tmp_path)
-    assert f"{root}: expected valid JSON" in str(error.value)
+    assert "KCL snapshot: expected valid JSON" in str(error.value)
     assert "line 1, column" in str(error.value)
     assert "SENTINEL" not in str(error.value)
     assert not list((tmp_path / "generated").iterdir())
@@ -512,6 +515,170 @@ async def test_optional_fields_can_be_omitted(malformed_source, tmp_path, provid
     for part in path[:-1]:
         output = output[part]
     assert path[-1] not in output
+
+
+def test_native_kcl_release_is_the_qualified_version():
+    result = subprocess.run(["kcl", "version"], capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == "0.12.4"
+
+
+@pytest.mark.parametrize("provider,key", [("unifi", "unifi_output"), ("cloudflare", "cf_output")])
+@pytest.mark.parametrize("unrelated", ["missing", "malformed"])
+async def test_only_selected_provider_is_required(
+    consumer_source, tmp_path, provider, key, unrelated
+):
+    source = consumer_source("valid")
+    selected = run_kcl(source / "main.k")[key]
+    other = "cf_output" if provider == "unifi" else "unifi_output"
+    (source / "main.k").write_text(
+        f"{key} = {selected!r}\n" + (f"{other} = 17\n" if unrelated == "malformed" else "")
+    )
+    assert await generate_consumer(source, provider, tmp_path) == selected
+
+
+@pytest.mark.parametrize("provider", ["unifi", "cloudflare"])
+async def test_validation_substring_is_valid_data(malformed_source, tmp_path, provider):
+    path = ("site",) if provider == "unifi" else ("account_id",)
+    result = await generate_consumer(
+        malformed_source(provider, path, "VALIDATION is ordinary data"), provider, tmp_path
+    )
+    assert result[path[0]] == "VALIDATION is ordinary data"
+
+
+async def test_both_outputs_share_one_native_execution(consumer_source):
+    source = consumer_source("valid")
+    expected = run_kcl(source / "main.k")
+    container = LocalContainer()
+    dag = Mock(container=Mock(return_value=container))
+    with patch("main.dagger.dag", new=dag), patch("main.kcl_container", return_value=container):
+        results = await _generate_configs(LocalDirectory(source))
+    assert len(container.commands) == 1
+    assert set(results) == {"unifi", "cloudflare"}
+    assert dag.file.call_count == 2
+    for call in dag.file.call_args_list:
+        name, contents = call.args
+        key = "unifi_output" if name == "unifi.json" else "cf_output"
+        assert json.loads(contents) == expected[key]
+        assert contents == json.dumps(expected[key], sort_keys=True, indent=2) + "\n"
+
+
+async def test_both_selected_outputs_validate_before_any_publication(consumer_source):
+    source = consumer_source("valid")
+    selected = run_kcl(source / "main.k")["unifi_output"]
+    (source / "main.k").write_text(f"unifi_output = {selected!r}\ncf_output = 17\n")
+    dag = Mock()
+    with (
+        patch("main.dagger.dag", new=dag),
+        patch("main.kcl_container", return_value=LocalContainer()),
+    ):
+        with pytest.raises(KCLGenerationError, match="cf_output: expected object"):
+            await _generate_configs(LocalDirectory(source))
+    dag.file.assert_not_called()
+
+
+async def test_file_transport_errors_do_not_disclose_payload(consumer_source, monkeypatch):
+    class FailedFile:
+        async def contents(self):
+            raise RuntimeError("SENTINEL_TRANSPORT_VALUE")
+
+    monkeypatch.setattr(LocalContainer, "file", lambda *args: FailedFile())
+    dag = Mock()
+    with (
+        patch("main.dagger.dag", new=dag),
+        patch("main.kcl_container", return_value=LocalContainer()),
+    ):
+        with pytest.raises(KCLGenerationError) as error:
+            await _generate_configs(LocalDirectory(consumer_source("valid")))
+    assert str(error.value) == (
+        "KCL execution failed; check source syntax, validation and locked dependencies"
+    )
+    assert "SENTINEL" not in str(error.value)
+    dag.file.assert_not_called()
+
+
+@pytest.mark.parametrize("version", ["latest", "", "v0.12.4", "0.12.3", "0.12.5"])
+async def test_unreviewed_kcl_overrides_fail_before_execution(consumer_source, version):
+    dag = Mock()
+    with patch("main.dagger.dag", new=dag):
+        with pytest.raises(KCLGenerationError, match="no reviewed image pin"):
+            await _generate_configs(LocalDirectory(consumer_source("valid")), version)
+    dag.container.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "payload,message",
+    [("", "empty output"), ("[]", "expected object"), ("null", "expected object")],
+)
+async def test_empty_and_non_object_snapshots_fail_safely(
+    consumer_source, tmp_path, monkeypatch, payload, message
+):
+    original_exec = LocalContainer.with_exec
+
+    def replace_snapshot(container, command):
+        result = original_exec(container, command)
+        container.files["/tmp/kcl-output.json"] = payload
+        return result
+
+    monkeypatch.setattr(LocalContainer, "with_exec", replace_snapshot)
+    with pytest.raises(KCLGenerationError, match=message):
+        await generate_consumer(consumer_source("valid"), "unifi", tmp_path)
+    assert not list((tmp_path / "generated").iterdir())
+
+
+@pytest.mark.parametrize(
+    "declaration,lock",
+    [
+        ('"latest"', '[dependencies.frozen]\nversion = "latest"'),
+        ('"0.1.0"', ""),
+        (
+            '{ git = "file:///unused", branch = "main" }',
+            '[dependencies.frozen]\ngit_branch = "main"',
+        ),
+        ('{ git = "file:///unused", tag = "latest" }', '[dependencies.frozen]\ngit_tag = "latest"'),
+    ],
+)
+async def test_missing_or_moving_dependency_resolutions_fail_before_execution(
+    consumer_source, declaration, lock
+):
+    source = consumer_source("valid")
+    with (source / "kcl.mod").open("a") as manifest:
+        manifest.write(f"\n[dependencies]\nfrozen = {declaration}\n")
+    if lock:
+        (source / "kcl.mod.lock").write_text(lock)
+    dag = Mock()
+    with patch("main.dagger.dag", new=dag):
+        with pytest.raises(KCLGenerationError, match="KCL dependenc"):
+            await _generate_configs(LocalDirectory(source))
+    dag.container.assert_not_called()
+
+
+def test_native_kcl_resolves_snapshot_dependency_without_routine_update(tmp_path, monkeypatch):
+    # Self-contained even when the verification source deliberately excludes .git.
+    dependency = tmp_path / "dependency"
+    dependency.mkdir()
+    (dependency / "kcl.mod").write_text('[package]\nname = "frozen"\nversion = "0.0.1"\n')
+    (dependency / "main.k").write_text("answer = 42\n")
+    monkeypatch.setenv("KCL_PKG_PATH", str(tmp_path / "packages"))
+    (tmp_path / "kcl.mod").write_text(
+        '[package]\nname = "qualification"\nversion = "0.0.1"\n'
+        '[dependencies]\nfrozen = { path = "./dependency" }\n'
+    )
+    (tmp_path / "main.k").write_text("import frozen\nanswer = frozen.answer\n")
+    output = tmp_path / "native.json"
+    result = subprocess.run(
+        ["kcl", "run", "main.k", "--format", "json", "--output", str(output)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    assert not result.stdout.strip()
+    assert json.loads(output.read_text()) == {"answer": 42}
+    lock = (tmp_path / "kcl.mod.lock").read_text()
+    assert "frozen" in lock
+    assert run_kcl(tmp_path / "main.k") == {"answer": 42}
+    assert (tmp_path / "kcl.mod.lock").read_text() == lock
 
 
 @pytest.mark.parametrize(

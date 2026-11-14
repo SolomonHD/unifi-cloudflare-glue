@@ -4,13 +4,13 @@ The module's v0.19.8-era execution layer mixes deterministic KCL generation with
 
 ## What Changes
 
-- Qualify one exact Dagger 1.0 beta CLI/engine/Python SDK combination first, including remote consumer loading; record v0.21.11 only as an explicit fallback if beta qualification fails. Keep Python.
+- Qualify Dagger v1.0.0-beta.27 as the primary CLI/engine candidate and resolve its compatible exact Python SDK identity, including remote consumer loading; use v0.21.11 only as an explicitly accepted and separately tested fallback if beta qualification fails. Keep Python. Installed CLI/version checks do not constitute runtime acceptance; do not follow a moving latest/beta label or change global tool selection.
 - Establish a small shared execution path for generation, Terraform root/backend preparation, fresh live operations, and sanitized outcomes while retaining current provider versions and resource addresses.
 - Cache deterministic generation, automatically freshen live plan/apply/destroy and verification operations, and retire command-string/cache-source hacks only after repeated-call tests prove the replacement.
 - Pin execution tools and dependency resolutions; replace duplicated YAML/stdout/yq round trips with one validated machine-readable generation result, subject to exact KCL qualification.
 - **BREAKING**: Fail unsuccessful commands with sanitized exceptions/nonzero exit status instead of successful strings containing failure text. Correct selective plan/execution root agreement and structured plan counts.
 - **BREAKING**: Replace credential-bearing backend File ingestion with Secret-typed transport and an explicit consumer migration. Preserve YAML/HCL semantics, backend address/key and locking; never silently fall back to local state.
-- Correct local-state persistence through explicit protected state output/recovery rather than implying that a Dagger Directory writes back to the host; reject unsupported persistent-local calls before mutation.
+- **BREAKING**: Restrict public deploy/destroy to explicit remote backends; reject local-state or missing durable-state selections before mutation. Read-only local previews never imply Directory host write-through. Per the operator's 2026-11-14 scope decision, durable local-state output/recovery is tracked separately as DLR-1 in the design, not claimed complete here.
 - Expose credential-free offline verification through the accepted Dagger release; provide Changeset generation only for intentional checkout outputs, not raw plans/state.
 - Reconcile contradictory legacy cache, plan, orchestration, and state requirements as part of this change, preserving security invariants and unfinished acceptance work.
 
@@ -26,7 +26,7 @@ The module's v0.19.8-era execution layer mixes deterministic KCL generation with
 - `config-generation`: A shared deterministic KCL execution and validated output boundary, independent of yq implementation details.
 - `orchestration`: Common execution preparation, truthful failure status, preserved post-execution snapshots, and explicit partial/unknown outcomes.
 - `plan-generation`: Root agreement, reliable action summaries, and clear separation between preview and approved execution artifacts.
-- `state-management`: Explicit local-state recovery and backend identity/locking preservation.
+- `state-management`: Fail-closed remote-only effects, read-only preview custody, backend identity/locking preservation, and uncertain-effect reconciliation.
 - `secret-safe-execution`: Secret-typed backend ingestion, protected sensitive outputs, and behavioral disclosure regression coverage.
 
 ## Impact

@@ -1,9 +1,15 @@
 """Unit tests for YAML to HCL backend config conversion."""
 
+import datetime
 import importlib.util
+import json
 import os
+import shutil
+import subprocess
 import sys
+import traceback
 
+import hcl2
 import pytest
 import yaml
 
@@ -20,6 +26,7 @@ spec.loader.exec_module(backend_config)
 _yaml_to_hcl_value = backend_config._yaml_to_hcl_value
 yaml_to_hcl = backend_config.yaml_to_hcl
 process_backend_config_content = backend_config.process_backend_config_content
+BackendConfigError = backend_config.BackendConfigError
 
 
 class TestYamlToHclValue:
@@ -97,11 +104,14 @@ class TestYamlToHclValue:
         assert "enabled = true" in result
         assert "count = 5" in result
 
-    def test_unknown_type_fallback(self):
-        """Test that unknown types are converted to string."""
-        # Test with None (should be quoted string)
-        result = _yaml_to_hcl_value(None)
-        assert result == '"None"'
+    @pytest.mark.parametrize(
+        "value",
+        [None, b"synthetic", {"synthetic"}, (1, 2), datetime.date(2026, 1, 1), object()],
+    )
+    def test_unknown_types_are_rejected(self, value):
+        """Unsupported types are never silently stringified."""
+        with pytest.raises(BackendConfigError, match="null values|unsupported value type"):
+            _yaml_to_hcl_value(value)
 
 
 class TestYamlToHcl:
@@ -152,9 +162,9 @@ tags:
         assert '"team:platform"' in result
 
     def test_empty_yaml(self):
-        """Test empty YAML content."""
-        result = yaml_to_hcl("")
-        assert result == ""
+        """An empty configuration cannot accidentally select local state."""
+        with pytest.raises(BackendConfigError, match="must not be empty"):
+            yaml_to_hcl("")
 
     def test_yaml_with_nested_objects(self):
         """Test YAML with nested object values."""
@@ -182,7 +192,7 @@ region: us-east-1
 encrypt: true
 dynamodb_table: terraform-state-lock
 """
-        content, ext = process_backend_config_content(yaml_content)
+        content, ext = process_backend_config_content(yaml_content, "yaml")
 
         assert ext == ".tfbackend"
         assert 'bucket = "my-terraform-state-bucket"' in content
@@ -199,7 +209,7 @@ container_name: terraform-state
 key: unifi-cloudflare-glue/terraform.tfstate
 resource_group_name: my-resource-group
 """
-        content, ext = process_backend_config_content(yaml_content)
+        content, ext = process_backend_config_content(yaml_content, "yaml")
 
         assert ext == ".tfbackend"
         assert 'storage_account_name = "myterraformstate"' in content
@@ -211,31 +221,29 @@ resource_group_name: my-resource-group
 bucket: my-terraform-state-bucket
 prefix: unifi-cloudflare-glue/terraform
 """
-        content, ext = process_backend_config_content(yaml_content)
+        content, ext = process_backend_config_content(yaml_content, "yaml")
 
         assert ext == ".tfbackend"
         assert 'bucket = "my-terraform-state-bucket"' in content
         assert 'prefix = "unifi-cloudflare-glue/terraform"' in content
 
-    def test_hcl_fallback(self):
-        """Test that HCL files are passed through unchanged."""
+    def test_explicit_hcl(self):
+        """Explicit HCL is parsed and preserved without YAML detection."""
         hcl_content = """
 bucket = "my-bucket"
 key    = "path/to/state"
 region = "us-east-1"
 """
-        content, ext = process_backend_config_content(hcl_content)
+        content, ext = process_backend_config_content(hcl_content, "hcl")
 
         assert ext == ".tfbackend"
-        # HCL should pass through (YAML parse will fail, so original content returned)
         assert content == hcl_content
 
-    def test_empty_content(self):
-        """Test handling of empty content."""
-        content, ext = process_backend_config_content("")
-
-        assert ext == ".tfbackend"
-        assert content == ""
+    @pytest.mark.parametrize("format", ["yaml", "hcl"])
+    def test_empty_content(self, format):
+        """Both explicit formats reject missing settings."""
+        with pytest.raises(BackendConfigError, match="must not be empty"):
+            process_backend_config_content("", format)
 
     def test_yaml_with_list_values(self):
         """Test YAML with list values."""
@@ -245,7 +253,7 @@ endpoints:
   - https://s3.amazonaws.com
   - https://s3.us-east-1.amazonaws.com
 """
-        content, ext = process_backend_config_content(yaml_content)
+        content, ext = process_backend_config_content(yaml_content, "yaml")
 
         assert ext == ".tfbackend"
         assert 'bucket = "my-bucket"' in content
@@ -261,7 +269,7 @@ workspaces:
     - env:dev
     - team:platform
 """
-        content, ext = process_backend_config_content(yaml_content)
+        content, ext = process_backend_config_content(yaml_content, "yaml")
 
         assert ext == ".tfbackend"
         assert "workspaces =" in content
@@ -344,7 +352,6 @@ class TestYamlToHclFormatting:
     def test_multiple_keys(self):
         """Test formatting with multiple keys."""
         result = _yaml_to_hcl_value({"bucket": "my-bucket", "key": "my-key", "region": "us-east-1"})
-        lines = result.strip().split("\n")
         # Check it's formatted as HCL object
         assert result.startswith("{")
         assert result.endswith("}")
@@ -357,12 +364,181 @@ key: path/to/state
 region: us-east-1
 encrypt: true
 """
-        content, _ = process_backend_config_content(yaml_content)
+        content, _ = process_backend_config_content(yaml_content, "yaml")
+        parsed = hcl2.loads(content)
+        assert set(parsed) == {"bucket", "key", "region", "encrypt"}
+        assert parsed["encrypt"] is True
 
-        # Basic syntax checks
-        assert "=" in content  # Has key=value pairs
-        assert content.count('"') % 2 == 0  # Quotes are balanced
-        lines = [l.strip() for l in content.split("\n") if l.strip()]
-        for line in lines:
-            # Each non-empty line should have an equals sign (key = value)
-            assert "=" in line
+
+class TestBackendValidation:
+    @pytest.mark.parametrize("format", [None, "", "auto", "YAML", "json", "SYNTHETIC_CANARY"])
+    def test_format_is_explicit_and_constrained(self, format):
+        with pytest.raises(BackendConfigError, match="format must be yaml or hcl") as error:
+            process_backend_config_content("bucket: synthetic", format)
+        assert "SYNTHETIC_CANARY" not in str(error.value)
+
+    def test_missing_format_is_a_signature_error(self):
+        with pytest.raises(TypeError):
+            process_backend_config_content("bucket: synthetic")
+
+    @pytest.mark.parametrize("format", ["yaml", "hcl"])
+    @pytest.mark.parametrize("content", [None, b"synthetic", {}, 42])
+    def test_content_must_be_text(self, content, format):
+        with pytest.raises(BackendConfigError, match="content must be text"):
+            process_backend_config_content(content, format)
+
+    @pytest.mark.parametrize("content", ["{}", "# synthetic comment", "---\n# comment", "null"])
+    def test_empty_yaml_is_rejected(self, content):
+        with pytest.raises(BackendConfigError, match="must not be empty"):
+            process_backend_config_content(content, "yaml")
+
+    @pytest.mark.parametrize("content", ["[]", "- synthetic", "synthetic", "42", "true"])
+    def test_non_mapping_yaml_is_not_hcl(self, content):
+        with pytest.raises(BackendConfigError, match="YAML must be a mapping"):
+            process_backend_config_content(content, "yaml")
+
+    @pytest.mark.parametrize(
+        "content,category",
+        [
+            ("bucket: [SYNTHETIC_CANARY", "invalid YAML syntax"),
+            ('bucket = "SYNTHETIC_CANARY"', "YAML must be a mapping"),
+            ("bucket: !!python/object:SYNTHETIC_CANARY {}", "invalid YAML syntax"),
+            ("bucket: synthetic\n---\nbucket: SYNTHETIC_CANARY", "invalid YAML syntax"),
+            ("bucket: synthetic\nbucket: SYNTHETIC_CANARY", "duplicate YAML keys"),
+            ("nested: {bucket: synthetic, bucket: SYNTHETIC_CANARY}", "duplicate YAML keys"),
+            ("bucket: null\nother: SYNTHETIC_CANARY", "null values"),
+            ("bucket: 2026-01-01\nother: SYNTHETIC_CANARY", "unsupported value type"),
+            ("bucket: 2026-01-01T01:02:03Z\nother: SYNTHETIC_CANARY", "unsupported value type"),
+            ("bucket: !!binary c3ludGhldGlj\nother: SYNTHETIC_CANARY", "unsupported value type"),
+            ("bucket: !!set {synthetic: null}\nother: SYNTHETIC_CANARY", "unsupported value type"),
+            ("bucket: .nan\nother: SYNTHETIC_CANARY", "finite numbers"),
+            ("bucket: .inf\nother: SYNTHETIC_CANARY", "finite numbers"),
+            ("bucket: -.inf\nother: SYNTHETIC_CANARY", "finite numbers"),
+            ("bucket: &loop [*loop]\nother: SYNTHETIC_CANARY", "nesting limit"),
+            ("SYNTHETIC_CANARY.bad: synthetic", "invalid mapping key"),
+            ("nested: {SYNTHETIC_CANARY.bad: synthetic}", "invalid mapping key"),
+            ("? [SYNTHETIC_CANARY]\n: synthetic", "invalid mapping key"),
+        ],
+    )
+    def test_yaml_errors_keep_categories_not_content(self, content, category, capsys):
+        with pytest.raises(BackendConfigError, match=category) as error:
+            process_backend_config_content(content, "yaml")
+        assert "SYNTHETIC_CANARY" not in str(error.value)
+        assert "SYNTHETIC_CANARY" not in "".join(traceback.format_exception(error.value))
+        captured = capsys.readouterr()
+        assert captured.out == captured.err == ""
+
+    @pytest.mark.parametrize(
+        "content", ['bucket = ["SYNTHETIC_CANARY"', 'bucket: "SYNTHETIC_CANARY"']
+    )
+    def test_hcl_errors_are_sanitized(self, content, capsys):
+        with pytest.raises(BackendConfigError, match="invalid HCL syntax") as error:
+            process_backend_config_content(content, "hcl")
+        assert "SYNTHETIC_CANARY" not in "".join(traceback.format_exception(error.value))
+        captured = capsys.readouterr()
+        assert captured.out == captured.err == ""
+
+    def test_comments_only_hcl_is_empty(self):
+        with pytest.raises(BackendConfigError, match="must not be empty"):
+            process_backend_config_content("# comment\n/* comment */", "hcl")
+
+    @pytest.mark.parametrize(
+        "content,category",
+        [
+            ("bucket = null", "null values"),
+            ("config = { values = [null] }", "null values"),
+            ("value = 1e999", "finite numbers"),
+            ("config = { value = -1e999 }", "finite numbers"),
+        ],
+    )
+    def test_hcl_rejects_null_and_non_finite_values(self, content, category):
+        with pytest.raises(BackendConfigError, match=category):
+            process_backend_config_content(content, "hcl")
+
+    def test_hcl_preserves_comments_heredoc_and_finite_exponents(self):
+        content = "# synthetic\nbucket = <<EOF\nsynthetic\nEOF\nvalue = 1.0e-20\n"
+        assert process_backend_config_content(content, "hcl") == (content, ".tfbackend")
+
+    @pytest.mark.parametrize("key", ["", "bad.key", "bad key", 'bad"key', "1key", 1, True, None])
+    def test_invalid_keys_are_rejected_at_every_depth(self, key):
+        with pytest.raises(BackendConfigError, match="invalid mapping key"):
+            _yaml_to_hcl_value({"nested": {key: "synthetic"}})
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+    def test_non_finite_python_values_are_rejected(self, value):
+        with pytest.raises(BackendConfigError, match="finite numbers"):
+            _yaml_to_hcl_value(value)
+
+    def test_invalid_unicode_is_rejected(self):
+        with pytest.raises(BackendConfigError, match="invalid Unicode"):
+            _yaml_to_hcl_value("synthetic\ud800")
+
+    def test_mapping_alias_is_rejected_without_recursing_forever(self):
+        with pytest.raises(BackendConfigError, match="nesting limit"):
+            yaml_to_hcl("bucket: &loop {again: *loop}")
+
+    def test_ordinary_alias_preserves_values(self):
+        converted = yaml_to_hcl("bucket: &value synthetic\nkey: *value")
+        assert converted == 'bucket = "synthetic"\nkey = "synthetic"'
+
+
+class TestRealHclSemantics:
+    @pytest.mark.parametrize(
+        "value",
+        [
+            'say "hello" at C:\\synthetic\\state\nnext\rline\tend',
+            "${synthetic.token} %{ if true }literal%{ endif } $${already} %%{already}",
+            "\x00\x01\b\f\x1f snowman \u2603 smile \U0001f600",
+            {"enabled": True, "count": -5, "ratio": 1e-20, "empty_map": {}, "empty_list": []},
+            {"workspaces": {"name": "synthetic"}, "tags": ["a", {"key-name": [False, 0, 3.14]}]},
+        ],
+    )
+    def test_terraform_evaluates_literal_values_exactly(self, value, tmp_path):
+        """Terraform's own HCL parser/evaluator proves literal escaping, not quote counts."""
+        terraform = shutil.which("terraform")
+        if terraform is None:
+            pytest.skip("Terraform parser/evaluator is not installed")
+        expression = _yaml_to_hcl_value(value)
+        # All inputs are synthetic. No backend, providers, or external credentials are used.
+        formatted = subprocess.run(
+            [terraform, "fmt", "-write=false", "-no-color", "-"],
+            input=f"value = {expression}\n",
+            text=True,
+            capture_output=True,
+            timeout=30,
+            env={"PATH": os.environ["PATH"], "CHECKPOINT_DISABLE": "1"},
+        )
+        assert formatted.returncode == 0, formatted.stderr
+        # Console reads one expression per line; literal newlines are already escaped.
+        console_expression = expression.replace("\n", " ")
+        result = subprocess.run(
+            [terraform, "console", "-no-color"],
+            input=f"jsonencode({console_expression})\n",
+            text=True,
+            capture_output=True,
+            cwd=tmp_path,
+            timeout=30,
+            env={"PATH": os.environ["PATH"], "TF_IN_AUTOMATION": "1", "CHECKPOINT_DISABLE": "1"},
+        )
+        assert result.returncode == 0, result.stderr
+        assert json.loads(json.loads(result.stdout)) == value
+
+    def test_yaml_backend_identity_and_locking_parse(self):
+        data = {
+            "bucket": "synthetic-state",
+            "key": "synthetic/terraform.tfstate",
+            "region": "us-east-1",
+            "workspace_key_prefix": "synthetic-workspaces",
+            "encrypt": True,
+            "use_lockfile": True,
+            "endpoints": {"s3": "https://synthetic.invalid"},
+        }
+        hcl, suffix = process_backend_config_content(yaml.safe_dump(data), "yaml")
+        from hcl2.utils import SerializationOptions
+
+        assert (
+            hcl2.loads(hcl, serialization_options=SerializationOptions(strip_string_quotes=True))
+            == data
+        )
+        assert suffix == ".tfbackend"
+        assert process_backend_config_content(hcl, "hcl") == (hcl, suffix)

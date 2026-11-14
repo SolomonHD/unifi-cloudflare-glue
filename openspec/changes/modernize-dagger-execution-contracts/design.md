@@ -18,7 +18,9 @@ Upstream evidence checked on 2026-11-14: [latest stable v0.21.11](https://github
 
 ### 1. Qualify 1.0 first; do not upgrade production first
 
-The first implementation stage resolves an immutable exact beta release and verifies release assets, CLI/engine/Python SDK agreement, manifest migration, dependency loading from another repository, and cache/Secret APIs. Use isolated local test inputs and no production credentials. Capture the selected release tuple and reproducible qualification evidence. Do not guess beta syntax from v0.21 examples or assume `dagger.toml`, `dagger-module.toml`, and lock paths across release tracks.
+The primary qualification candidate is Dagger v1.0.0-beta.27 for the CLI and engine; resolve and record the compatible exact Python SDK identity rather than assuming its package version matches the CLI. The first implementation stage verifies release assets, CLI/engine/Python SDK agreement, manifest migration, dependency loading from another repository, and cache/Secret APIs. Use isolated local test inputs and no production credentials. Capture the selected release tuple and reproducible qualification evidence. Do not guess beta syntax from v0.21 examples or assume `dagger.toml`, `dagger-module.toml`, and lock paths across release tracks. Do not replace this candidate with a moving latest/beta label.
+
+On 2026-11-14, workstation SOL-3D-MIDSEASON (account solomong) installed the candidate through the [official installer](https://docs.dagger.io/getting-started/install/) at `/home/solomong/.local/opt/dagger/1.0.0-beta.27/bin/dagger`, with the installer's SHA-256 archive check. Its version output reports v1.0.0-beta.27, commit `400b82d6`, linux/amd64, and engine reference `registry.dagger.io/engine:v1.0.0-beta.27`. The fallback CLI v0.21.11 is installed through `aqua:dagger/dagger` and can be invoked with `mise exec aqua:dagger/dagger@0.21.11 -- dagger`. The active mise selection remains v0.20.5. These observations establish CLI installation/version checks only, not engine execution, SDK compatibility, manifest migration, project tests or consumer acceptance. Invoke the beta by its explicit path and the fallback by its exact mise version; preserve global selection. Retain full immutable release identities during qualification; the displayed short commit and engine tag alone are not that receipt.
 
 If beta qualification fails, retain its evidence and stop target-dependent implementation until a deliberate v0.21.11 fallback is recorded and accepted. Do not silently switch tracks. The stable track keeps only supported APIs/manifests. Keep host-global mise declarations unchanged; the consumer coordinates external host/toolchain ownership separately.
 
@@ -48,7 +50,7 @@ Parse Terraform action arrays as strings. Replacement counts contribute create a
 
 Provider credentials remain Secret environment variables. Change backend ingestion to a Secret input with explicit YAML/HCL format selection; do any necessary transformation inside a non-logged secret-aware path and mount the result owner-only. Avoid exposing plaintext through Python File reads, ordinary files, exec arguments or returned values. Use a robust constrained serializer/parser with synthetic escaping failures rather than silently interpreting malformed YAML as HCL. Consumer callers must migrate explicitly; there is no automatic secret-to-plain fallback.
 
-Remote backend acceptance preserves bucket/address, key, workspace, locking and state lineage. Backend/config failure stops before mutation instead of selecting ephemeral state. Local state support must expose a protected explicit handoff and recover updated state after partial effects, not assume host write-back. Unsupported local combinations fail before dispatch until this handoff exists. Ephemeral state remains appropriate only for disposable owned lifecycles with cleanup/recovery evidence, not production.
+Remote backend acceptance preserves bucket/address, key, workspace, locking and state lineage. Backend/config failure stops before mutation instead of selecting ephemeral state. On 2026-11-14 the operator explicitly chose remote-only public effects: deploy/destroy reject local-state inputs and missing remote-backend selection before generation, initialization or effects. Read-only local previews may consume protected input but promise neither host write-back nor updated effectful state. Durable local-state handoff is moved to separately tracked follow-up DLR-1 below; it is not implemented or waived as completed by this change. Ephemeral state remains appropriate only for the separately explicit disposable integration lifecycle with cleanup/recovery evidence, not general deployment.
 
 Newly generated tunnel credentials need secret-oriented output/explicit disclosure, not ordinary default reports. A raw plan/state is sensitive regardless of whether provider credentials were supplied via environment variables. Scan normal and failure output with synthetic canaries, including returned exceptions, traces and default artifacts.
 
@@ -64,7 +66,7 @@ Expose the early runtime-qualification/candidate-contract receipt before final a
 
 - Beta CLI/schema drift: exact release qualification and a recorded hold/fallback decision before dependent refactoring.
 - Cached live effects: repeat-call behavioral evidence for function and exec boundaries, including fresh post-effect reads.
-- State loss after a failed apply: preserve inspectable execution snapshots and protected recovery; keep unknown effects unresolved until reconciliation.
+- State loss after a failed apply: require a remote backend for public effects, preserve inspectable execution snapshots and non-secret recovery identity, and keep unknown effects unresolved until backend reconciliation.
 - Incorrect partial-scope root: assert root/backend/address equality and stop before applying to another state.
 - Security regressions during simplification: use sentinel credentials through real success/failure/timeout/cleanup paths; never rely only on source-substring assertions.
 - Backend format conversion changes: synthetic YAML/HCL equivalence and escaping tests, plus authorized same-backend zero-drift acceptance.
@@ -77,6 +79,24 @@ Expose the early runtime-qualification/candidate-contract receipt before final a
 3. Publish a feature revision only under separate Git authorization, then qualify remote dependency consumption and matching KCL inputs in the sibling consumer.
 4. With explicit production-read authorization, obtain a fresh zero-drift plan using unchanged remote backend and provider identity. Any unexpected delta stops adoption; no apply is authorized by this plan.
 5. Preserve original pins and accepted runtime tuple for rollback. Restore code/tool selection only when state schema/identity is unchanged; a future provider rollback has its own migration procedure.
+
+## Follow-up DLR-1: Durable Local State Custody
+
+Status: deferred by explicit operator decision on 2026-11-14, not implemented
+or accepted. This follow-up is distinct from the current implementation task
+count. Public local-state effects remain rejected until its acceptance passes.
+
+- Define an explicitly authorized, owner-only durable custody destination and
+  operation identity before any local-state provider effect.
+- Preserve the selected Terraform root/sibling layout and updated state after
+  successful or partial apply/destroy; never model Directory input as host
+  write-through or cache retention alone as durable handoff.
+- Prove a second invocation consumes the handed-off state with unchanged
+  backend/resource identity and no raw-state disclosure.
+- Inject cancellation, disconnect, failed handoff and partial cleanup; preserve
+  unknown installation/custody/effect identity and block replay until reconciled.
+- Review the destination, privileges, retention, encryption and recovery API
+  before implementation. No destination or new service is provisioned here.
 
 ## Closeout
 

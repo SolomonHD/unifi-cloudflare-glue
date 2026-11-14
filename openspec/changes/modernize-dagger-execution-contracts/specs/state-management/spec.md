@@ -1,11 +1,11 @@
 ## MODIFIED Requirements
 
 ### Requirement: Persistent Local State Directory Parameter
-Supported plan, deploy and destroy operations SHALL accept protected local-state input only with an explicit output/recovery contract. Unsupported persistent-local combinations SHALL fail before mutation rather than promise automatic host write-back.
+Plan MAY consume protected local-state input for a read-only preview. Public deploy and destroy SHALL require an explicit remote backend and SHALL reject local-state input or missing durable-state selection before generation, initialization or mutation. No operation SHALL promise automatic Directory host write-back. Durable local effects are deferred to separately tracked DLR-1 by operator decision.
 
 #### Scenario: User provides state directory for persistent storage
-- **WHEN** local state is selected for a supported operation
-- **THEN** the operation identifies its protected state input and explicit updated-state handoff
+- **WHEN** local state is selected for a preview
+- **THEN** the operation identifies its protected read-only state input and does not claim updated effectful state handoff
 - **AND** the interface does not describe a Directory copy as a writable host bind mount
 
 #### Scenario: User omits state directory for ephemeral storage
@@ -14,11 +14,11 @@ Supported plan, deploy and destroy operations SHALL accept protected local-state
 - **AND** it does not silently deploy production resources with disposable state
 
 ### Requirement: State Directory Mounting and Setup
-Local-state execution SHALL preserve the selected root and sibling module layout, and SHALL return or durably retain protected updated state following successful or partial effects.
+Read-only local preview preparation SHALL preserve the selected root and sibling module layout. Public local apply/destroy SHALL fail before effects; it SHALL NOT replace a durable recovery contract with a returned Secret, Directory copy or cache-retention claim.
 
 #### Scenario: Mount state directory to container
 - **WHEN** protected local state is supplied
-- **THEN** it becomes an execution input with an explicit output contract rather than implied host write-through
+- **THEN** it becomes a read-only preview input rather than implied host write-through
 
 #### Scenario: Copy module files to state directory
 - **WHEN** a combined root references sibling modules
@@ -26,7 +26,7 @@ Local-state execution SHALL preserve the selected root and sibling module layout
 - **AND** state contents are not listed or logged as diagnostics
 
 #### Scenario: Set working directory to state directory
-- **WHEN** local-state execution begins
+- **WHEN** a local-state preview begins
 - **THEN** the selected working root can resolve all module dependencies and state location explicitly
 
 ### Requirement: Mutual Exclusion Validation
@@ -41,8 +41,9 @@ Local-state input and remote backend selection SHALL remain mutually exclusive. 
 - **THEN** initialization uses that backend without requiring local state
 
 #### Scenario: User uses only local state directory
-- **WHEN** a caller selects a supported protected local-state mode
-- **THEN** the explicit input/output recovery contract applies without requiring a remote backend
+- **WHEN** a caller selects local state for public deploy or destroy
+- **THEN** validation fails nonzero before generation, initialization or provider mutation
+- **AND** the diagnostic points to a remote backend without claiming DLR-1 is complete
 
 #### Scenario: User provides neither (default ephemeral)
 - **WHEN** a caller omits durable state selection
@@ -50,7 +51,7 @@ Local-state input and remote backend selection SHALL remain mutually exclusive. 
 - **AND** production mutation fails before dispatch rather than silently creating empty state
 
 ### Requirement: Consistent Implementation Across Functions
-The current combined deploy, selective modes, plan and destroy SHALL use the same state selection, protection and recovery contract without requiring removed standalone deployment APIs.
+The current combined deploy, selective modes and destroy SHALL enforce the same remote-only effect contract without requiring removed standalone deployment APIs. Plan SHALL preserve remote root/backend equivalence; local previews remain read-only and do not authorize local effects.
 
 #### Scenario: deploy-unifi supports state directory
 - **WHEN** UniFi-only execution uses the current combined interface
@@ -61,12 +62,13 @@ The current combined deploy, selective modes, plan and destroy SHALL use the sam
 - **THEN** it obeys that same state contract without restoring deploy_cloudflare
 
 #### Scenario: deploy orchestration function supports state directory
-- **WHEN** full deployment uses local state
-- **THEN** one explicit root/state ownership contract covers both components and produces protected updated state
+- **WHEN** full deployment supplies local state
+- **THEN** it rejects that selection before generation, initialization or effects for either component
 
 #### Scenario: destroy function supports state directory
-- **WHEN** cleanup uses the updated state from an earlier operation
-- **THEN** it targets that state identity and preserves recoverable state after partial cleanup
+- **WHEN** cleanup selects the remote backend from an earlier operation
+- **THEN** it targets that state identity and preserves recovery metadata after partial cleanup
+- **AND** local-state cleanup through the public destroy interface is rejected
 
 ### Requirement: Working Directory Behavior
 Execution SHALL resolve working roots from scope and state ownership consistently, preserving relative module references and explicit backend paths.
@@ -81,7 +83,7 @@ Execution SHALL resolve working roots from scope and state ownership consistentl
 
 #### Scenario: Working directory for persistent local mode
 - **WHEN** local state is selected
-- **THEN** the working root retains module dependencies and state is explicitly handed back or retained for recovery
+- **THEN** only a read-only preview is accepted, retaining module dependencies without an updated-state or host-writeback promise
 
 ### Requirement: Backend compatibility is preserved
 Secret-input migration SHALL preserve supported YAML/HCL configuration semantics, remote address/key/workspace, state lineage and locking behavior without treating malformed input or failed authentication as a reason to select another backend.
@@ -98,11 +100,12 @@ Secret-input migration SHALL preserve supported YAML/HCL configuration semantics
 ## ADDED Requirements
 
 ### Requirement: Partial effects retain recoverable state
-Failed or uncertain effects SHALL retain a protected recovery identity and available updated state; state custody failure SHALL not be reported as successful completion.
+Failed or uncertain remote effects SHALL retain a non-secret operation/recovery identity and preserve the configured remote backend as state authority. Unconfirmed remote custody SHALL NOT be reported as successful completion or trigger automatic retry. DLR-1 owns future durable local-state handoff acceptance.
 
 #### Scenario: Apply fails after creating a resource
 - **WHEN** execution partially succeeds before failure
-- **THEN** updated state is available through the documented protected handoff or durable recovery path
+- **THEN** reconciliation uses the same remote backend and retained operation identity
+- **AND** the operation does not claim remote state recovery succeeded without evidence
 - **AND** ordinary summaries and CI artifacts do not expose raw state
 
 #### Scenario: State recovery cannot be confirmed

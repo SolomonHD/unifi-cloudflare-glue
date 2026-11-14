@@ -5,10 +5,15 @@ Define the qualified runtime and reproducibility contract shared by reusable DNS
 ## ADDED Requirements
 
 ### Requirement: Exact runtime qualification precedes adoption
-The module SHALL qualify an exact Dagger 1.0 beta CLI, engine and Python SDK combination before target-dependent modernization. A stable fallback SHALL require an explicit recorded decision, not silent substitution.
+The module SHALL qualify Dagger v1.0.0-beta.27 as its primary CLI/engine candidate and resolve its compatible exact Python SDK identity before target-dependent modernization. The v0.21.11 fallback SHALL require failed beta evidence, explicit recorded acceptance and separate compatibility checks. Installation alone SHALL NOT count as runtime acceptance; qualification SHALL preserve host-global selection and use exact versions.
+
+#### Scenario: Candidate CLI is installed
+- **WHEN** the candidate CLI is installed and its version output is verified
+- **THEN** engine execution, SDK compatibility, manifest migration and consumer acceptance remain unverified until their checks pass
+- **AND** qualification uses an explicit versioned invocation without changing host-global tool selection or following moving latest/beta labels
 
 #### Scenario: Beta qualification succeeds
-- **WHEN** an exact beta passes isolated schema loading, Python execution, secret-channel, cache and cross-repository consumption tests
+- **WHEN** the v1.0.0-beta.27 candidate and its resolved exact Python SDK pass isolated schema loading, Python execution, secret-channel, cache and cross-repository consumption tests
 - **THEN** its immutable identity and supported manifest/lock formats are recorded as the modernization target
 - **AND** production adoption remains gated on separate consumer acceptance
 

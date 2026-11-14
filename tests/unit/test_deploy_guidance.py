@@ -1,329 +1,354 @@
-"""Supported combined deploy API, selection, and secret-safe retrieval guidance."""
+"""Public execution contracts tested against an immutable synthetic Dagger graph."""
 
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, call, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import dagger
 import pytest
-from dagger._exceptions import QueryErrorValue
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src/main"))
 
-from main import BACKEND_SECRET_PATH, UnifiCloudflareGlue
+from main import UnifiCloudflareGlue
 
-GUIDANCE = "Next Step: Retrieve Tunnel Credentials"
-RAW_OUTPUT = 'SENTINEL_PROVIDER_OUTPUT {"resources": ["raw-state"]}'
+RAW_OUTPUT = 'CANARY_PROVIDER_OUTPUT {"resources": ["raw-state"]}'
+
+
+class Graph:
+    """Every graph change produces a child; dependent execs must retain ancestry."""
+
+    def __init__(self, calls, history=(), failure=None):
+        self.calls = calls
+        self.history = history
+        self.failure = failure
+
+    def __getattr__(self, method):
+        if method in {
+            "from_",
+            "with_directory",
+            "with_new_file",
+            "with_file",
+            "with_workdir",
+            "with_secret_variable",
+            "with_env_variable",
+        }:
+
+            def change(*args, **kwargs):
+                return Graph(self.calls, (*self.history, (method, args, kwargs)), self.failure)
+
+            return change
+        raise AttributeError(method)
+
+    def with_exec(self, argv, **kwargs):
+        self.calls.append((list(argv), self.history, kwargs))
+        return Graph(self.calls, (*self.history, ("exec", list(argv), kwargs)), self.failure)
+
+    async def stdout(self):
+        last = [item for item in self.history if item[0] == "exec"][-1]
+        if last[1][0] == "python":
+            return json.dumps({"add": 1, "change": 1, "destroy": 1, "replace": 1})
+        if self.failure == "timeout" and last[1][1] == "apply":
+            raise TimeoutError("CANARY_TIMEOUT")
+        if self.failure and last[1][1] == self.failure:
+            if last[2].get("expect") == dagger.ReturnType.ANY:
+                return RAW_OUTPUT
+            error = RuntimeError(RAW_OUTPUT)
+            error.exit_code = 17
+            raise error
+        return RAW_OUTPUT
+
+    async def exit_code(self):
+        last = [item for item in self.history if item[0] == "exec"][-1]
+        return 17 if last[1][1] == self.failure else 0
+
+    def file(self, path):
+        file = Mock(spec=dagger.File)
+        file.sync = AsyncMock(return_value=file)
+        file.contents = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "resource_changes": [
+                        {"change": {"actions": ["delete", "create"]}},
+                        {"change": {"actions": ["update"]}},
+                    ]
+                }
+            )
+        )
+        return file
 
 
 @pytest.fixture
 def deployment():
-    """Mock the Dagger boundary, leaving deployment orchestration under test."""
+    calls = []
+    graph = Graph(calls)
+    directories = []
+
+    def new_directory():
+        directory = Mock(spec=dagger.Directory)
+        directory.with_file.return_value = directory
+        directory.with_new_file.return_value = directory
+        directories.append(directory)
+        return directory
+
     source = Mock(spec=dagger.Directory)
-    generated = Mock(spec=dagger.File)
-    directory = Mock(spec=dagger.Directory)
-    directory.with_file.return_value = directory
-    container = Mock(spec=dagger.Container)
-    for method in (
-        "from_",
-        "with_directory",
-        "with_new_file",
-        "with_env_variable",
-        "with_secret_variable",
-        "with_mounted_secret",
-        "with_workdir",
-        "with_exec",
-    ):
-        getattr(container, method).return_value = container
-    container.stdout = AsyncMock(return_value=RAW_OUTPUT)
-    cf_token = Mock(spec=dagger.Secret)
-    cf_token.plaintext = AsyncMock(return_value="SENTINEL_CF_TOKEN")
-    unifi_key = Mock(spec=dagger.Secret)
-    unifi_key.plaintext = AsyncMock(return_value="SENTINEL_UNIFI_KEY")
+    secret = Mock(spec=dagger.Secret)
+    secret.plaintext = AsyncMock(return_value="CANARY_SECRET")
+    generated = {"unifi": Mock(spec=dagger.File), "cloudflare": Mock(spec=dagger.File)}
     with (
-        patch("main.dagger.dag") as dag,
-        patch.object(
-            UnifiCloudflareGlue, "generate_unifi_config", new_callable=AsyncMock
-        ) as generate_unifi,
-        patch.object(
-            UnifiCloudflareGlue, "generate_cloudflare_config", new_callable=AsyncMock
-        ) as generate_cloudflare,
+        patch("main.dagger.dag", new=Mock()) as dag,
+        patch("main._generate_configs", new=AsyncMock(return_value=generated)) as generation,
+        patch("main.prepare_root", return_value=(graph, "/module/glue")) as prepare,
+        patch(
+            "main._with_backend_secret", new=AsyncMock(side_effect=lambda ctr, *_: ctr)
+        ) as backend,
     ):
-        dag.container.return_value = container
-        dag.directory.return_value = directory
-        generate_unifi.return_value = generated
-        generate_cloudflare.return_value = generated
+        dag.directory.side_effect = new_directory
         yield SimpleNamespace(
             module=UnifiCloudflareGlue(),
+            calls=calls,
+            graph=graph,
             source=source,
-            container=container,
+            secret=secret,
+            prepare=prepare,
+            backend=backend,
+            generation=generation,
             dag=dag,
-            generate_unifi=generate_unifi,
-            generate_cloudflare=generate_cloudflare,
-            cf_token=cf_token,
-            unifi_key=unifi_key,
+            directories=directories,
         )
 
 
-def deploy_arguments(deployment, scope):
-    """Omit credentials entirely for an unselected provider."""
-    arguments = {"kcl_source": deployment.source, "kcl_version": "0.11.0"}
+def arguments(case, scope="full"):
+    result = dict(
+        kcl_source=case.source,
+        state_scope=scope,
+        backend_type="s3",
+        backend_config_file=case.secret,
+        backend_config_format="hcl",
+    )
     if scope != "cloudflare":
-        arguments.update(
-            unifi_url="https://unifi.example.test:8443",
-            unifi_api_key=deployment.unifi_key,
-        )
+        result.update(unifi_url="https://unifi.example.test:8443", unifi_api_key=case.secret)
     if scope != "unifi":
-        arguments.update(
-            cloudflare_token=deployment.cf_token,
+        result.update(
+            cloudflare_token=case.secret,
             cloudflare_account_id="account-actual-123",
             zone_name="actual.example.test",
         )
-    if scope == "cloudflare":
-        arguments["cloudflare_only"] = True
-    elif scope == "unifi":
-        arguments["unifi_only"] = True
-    return arguments
+    result.update(unifi_only=scope == "unifi", cloudflare_only=scope == "cloudflare")
+    return result
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("scope", ["full", "cloudflare", "unifi"])
-async def test_selection_runs_one_terraform_cycle_with_only_selected_inputs(deployment, scope):
-    result = await deployment.module.deploy(**deploy_arguments(deployment, scope))
+@pytest.mark.parametrize("operation", ["deploy", "destroy", "plan"])
+@pytest.mark.parametrize(
+    "scope,root", [("full", "glue"), ("unifi", "unifi-dns"), ("cloudflare", "cloudflare-tunnel")]
+)
+async def test_public_operations_share_roots_and_preserve_initialization(
+    deployment, operation, scope, root
+):
+    result = await getattr(deployment.module, operation)(**arguments(deployment, scope))
+    assert deployment.prepare.call_args.args[2:] == (root, "s3")
+    assert deployment.backend.call_args.args[1:] == (deployment.secret, "hcl")
+    providers = ("unifi", "cloudflare") if scope == "full" else (scope,)
+    deployment.generation.assert_awaited_once_with(deployment.source, "0.12.4", providers)
+    commands = [call[0] for call in deployment.calls]
+    assert commands[0][0:2] == ["terraform", "init"]
+    assert commands[1][0:2] == ["terraform", "apply" if operation == "deploy" else operation]
+    assert any(item[0] == "exec" and item[1] == commands[0] for item in deployment.calls[1][1])
+    assert all(command[0] in {"terraform", "python"} for command in commands)
+    if operation == "plan":
+        assert commands[-1][0] == "python"
+        assert "plan_counts" in commands[-1][-1]
+    if operation != "plan":
+        assert "successfully" in result
+        assert RAW_OUTPUT not in result
+        assert "CANARY_SECRET" not in result
+    else:
+        output = deployment.directories[-1]
+        assert result is output
+        files = {c.args[0] for c in output.with_file.call_args_list}
+        assert files == {"plan.txt"}
+        summary = output.with_new_file.call_args.args[1]
+        assert "Resources to add:     1" in summary
+        assert "Resources to change:  1" in summary
+        assert "Resources to destroy: 1" in summary
+        assert "requires separate authorization" in summary
+        assert "CANARY" not in summary
+    deployment.secret.plaintext.assert_not_awaited()
 
-    assert "deployment" in result.lower()
-    assert "completed successfully" in result
-    assert (GUIDANCE in result) == (scope != "unifi")
-    assert deployment.container.with_exec.call_args_list == [
-        call(["terraform", "init"]),
-        call(["terraform", "apply", "-auto-approve"]),
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["deploy", "destroy", "plan"])
+@pytest.mark.parametrize("label", ["x\nterraform destroy", "$(id)", ";echo bad", "x" * 81])
+async def test_invalid_labels_fail_before_generation_or_provider_access(
+    deployment, operation, label
+):
+    with pytest.raises(ValueError, match="run label"):
+        await getattr(deployment.module, operation)(**arguments(deployment), cache_buster=label)
+    deployment.prepare.assert_not_called()
+    deployment.generation.assert_not_awaited()
+    assert deployment.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["deploy", "destroy", "plan"])
+async def test_incompatible_state_root_fails_before_backend_access(deployment, operation):
+    args = arguments(deployment, "unifi")
+    args["state_scope"] = "full"
+    with pytest.raises(ValueError, match="incompatible"):
+        await getattr(deployment.module, operation)(**args)
+    deployment.prepare.assert_not_called()
+    deployment.generation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["deploy", "destroy", "plan"])
+@pytest.mark.parametrize("phase", ["init", "effect"])
+async def test_failure_is_nonzero_sanitized_and_stops_dependents(deployment, operation, phase):
+    failed = "init" if phase == "init" else "apply" if operation == "deploy" else operation
+    deployment.prepare.return_value = (Graph(deployment.calls, failure=failed), "/module/glue")
+    with pytest.raises(RuntimeError) as captured:
+        await getattr(deployment.module, operation)(**arguments(deployment))
+    assert "exit code 17" in str(captured.value)
+    assert "CANARY" not in str(captured.value)
+    assert "raw-state" not in str(captured.value)
+    assert captured.value.__suppress_context__
+    assert len(deployment.calls) == (1 if phase == "init" else 2)
+
+
+@pytest.mark.asyncio
+async def test_repeated_identical_deployments_have_independent_live_nonces(deployment):
+    await deployment.module.deploy(**arguments(deployment))
+    await deployment.module.deploy(**arguments(deployment))
+    nonces = [
+        next(
+            item[1][1]
+            for item in reversed(history)
+            if item[0] == "with_env_variable" and item[1][0] == "EXECUTION_NONCE"
+        )
+        for _, history, _ in deployment.calls
     ]
-    module_path = {
-        "full": "terraform/modules",
-        "cloudflare": "terraform/modules/cloudflare-tunnel",
-        "unifi": "terraform/modules/unifi-dns",
-    }[scope]
-    deployment.dag.current_module.return_value.source.return_value.directory.assert_called_once_with(
-        module_path
-    )
-    deployment.container.with_workdir.assert_called_once_with(
-        "/module/glue" if scope == "full" else "/module"
-    )
-    if scope != "cloudflare":
-        deployment.generate_unifi.assert_awaited_once_with(deployment.source, "0.11.0")
-    else:
-        deployment.generate_unifi.assert_not_awaited()
-    if scope != "unifi":
-        deployment.generate_cloudflare.assert_awaited_once_with(deployment.source, "0.11.0")
-    else:
-        deployment.generate_cloudflare.assert_not_awaited()
-    expected_secrets = []
-    if scope != "cloudflare":
-        expected_secrets.append(call("UNIFI_API_KEY", deployment.unifi_key))
-    if scope != "unifi":
-        expected_secrets.append(call("CLOUDFLARE_API_TOKEN", deployment.cf_token))
-    assert deployment.container.with_secret_variable.call_args_list == expected_secrets
-    deployment.cf_token.plaintext.assert_not_awaited()
-    deployment.unifi_key.plaintext.assert_not_awaited()
-    assert RAW_OUTPUT not in result
+    assert len(nonces) == 4
+    assert len(set(nonces)) == 4
+    assert all(call.args[0] is deployment.source for call in deployment.generation.call_args_list)
+    deployment.source.with_new_file.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_conflicting_selection_fails_before_generation_or_deployment(deployment):
-    result = await deployment.module.deploy(
-        kcl_source=deployment.source, unifi_only=True, cloudflare_only=True
-    )
+async def test_generation_failure_prevents_all_terraform_work(deployment):
+    deployment.generation.side_effect = RuntimeError("CANARY_GENERATION_ERROR")
+    with pytest.raises(RuntimeError, match="Configuration generation") as captured:
+        await deployment.module.deploy(**arguments(deployment))
+    assert "CANARY" not in str(captured.value)
+    deployment.prepare.assert_not_called()
 
-    assert "Cannot use both --unifi-only and --cloudflare-only" in result
-    assert GUIDANCE not in result
-    deployment.generate_unifi.assert_not_awaited()
-    deployment.generate_cloudflare.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_selected_credentials_required_before_generation(deployment):
+    args = arguments(deployment)
+    args.pop("cloudflare_token")
+    with pytest.raises(ValueError, match="--cloudflare-token"):
+        await deployment.module.deploy(**args)
+    deployment.generation.assert_not_awaited()
+    deployment.prepare.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_credentials_are_not_default_string_outputs(deployment):
+    with pytest.raises(ValueError, match="protected-disclosure acknowledgement"):
+        await deployment.module.get_tunnel_secrets(
+            source=deployment.source,
+            cloudflare_token=deployment.secret,
+            cloudflare_account_id="account",
+            zone_name="example.test",
+        )
     deployment.dag.container.assert_not_called()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "scope,missing,message",
-    [
-        ("cloudflare", "cloudflare_token", "--cloudflare-token"),
-        ("cloudflare", "cloudflare_account_id", "--cloudflare-account-id"),
-        ("cloudflare", "zone_name", "--zone-name"),
-        ("unifi", "unifi_api_key", "--unifi-api-key"),
-        ("unifi", "unifi_url", "--unifi-url"),
-        ("full", "unifi_api_key", "--unifi-api-key"),
-        ("full", "cloudflare_token", "--cloudflare-token"),
-    ],
+    "failure", [None, "apply", "timeout", "credential-schema", "credential-timeout"]
 )
-async def test_missing_selected_credentials_fail_without_execution(
-    deployment, scope, missing, message
+async def test_disposable_integration_preserves_init_state_and_never_replays_unknown_effects(
+    deployment, failure
 ):
-    arguments = deploy_arguments(deployment, scope)
-    arguments.pop(missing)
+    deployment.dag.container.return_value = Graph(deployment.calls, failure=failure)
 
-    result = await deployment.module.deploy(**arguments)
+    artifact = Mock(spec=dagger.Directory)
+    artifact.file.return_value.contents = AsyncMock(
+        side_effect=AssertionError("Raw credential read forbidden")
+    )
+    summary = {
+        "count": 1,
+        "ids_valid": True,
+        "tokens_valid": True,
+        "credentials_valid": True,
+        "format_valid": True,
+        "permissions_valid": True,
+    }
+    verifier = AsyncMock(return_value=summary)
+    if failure == "credential-schema":
+        verifier.side_effect = ValueError("CANARY_GENERATED_TOKEN invalid schema")
+    elif failure == "credential-timeout":
+        verifier.side_effect = TimeoutError("CANARY_GENERATED_SECRET deadline")
 
-    assert "Failed" in result
-    assert message in result
-    assert GUIDANCE not in result
-    deployment.generate_unifi.assert_not_awaited()
-    deployment.generate_cloudflare.assert_not_awaited()
-    deployment.dag.container.assert_not_called()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("scope", ["full", "cloudflare"])
-@pytest.mark.parametrize("storage", ["local", "s3", "gcs", "persistent"])
-async def test_success_guidance_reflects_parameters_and_storage(deployment, scope, storage):
-    arguments = deploy_arguments(deployment, scope)
-    backend = Mock(spec=dagger.File)
-    backend.contents = AsyncMock(return_value='bucket = "state"\naccess_key = "SENTINEL_BACKEND"')
-    state = Mock(spec=dagger.Directory)
-    if storage in ("s3", "gcs"):
-        arguments.update(backend_type=storage, backend_config_file=backend)
-    elif storage == "persistent":
-        arguments["state_dir"] = state
-
-    result = await deployment.module.deploy(**arguments)
-
-    assert "completed successfully" in result
-    assert f"{'-' * 60}\n{GUIDANCE}\n{'-' * 60}" in result
-    assert "Option 1: Using Dagger (recommended):" in result
-    assert "dagger call get-tunnel-secrets \\\n" in result
-    assert "    --source='<kcl-source>' \\\n" in result
-    assert "Replace the quoted path placeholders" in result
-    assert "Reuse the same source" in result
-    assert "original host paths are unavailable" in result
-    assert "--source=./kcl" not in result
-    assert "--source=. " not in result
-    assert "./backend.hcl" not in result
-    assert "./terraform-state" not in result
-    assert "--cloudflare-account-id=account-actual-123" in result
-    assert "--zone-name=actual.example.test" in result
-    assert "--cloudflare-token=env:CF_TOKEN" in result
-    assert "Option 2: Install cloudflared service directly:" in result
-    assert "cloudflared service install <tunnel-token-from-option-1>" in result
-    assert "examples/homelab-media-stack/README.md" in result
-    if storage in ("s3", "gcs"):
-        assert f"--backend-type={storage}" in result
-        assert "--backend-config-file='<backend-config-file>'" in result
-        assert "--state-dir" not in result
-        deployment.container.with_mounted_secret.assert_called_once_with(
-            BACKEND_SECRET_PATH,
-            deployment.dag.set_secret.return_value,
-            owner="root",
-            mode=0o600,
+    with (
+        patch.object(UnifiCloudflareGlue, "_generate_test_id", return_value="test-abc12"),
+        patch.object(
+            UnifiCloudflareGlue, "get_tunnel_secrets", new=AsyncMock(return_value=artifact)
+        ) as retrieval,
+        patch("main.verify_tunnel_artifact", new=verifier),
+        patch("main.terraform_runtime", return_value=deployment.graph),
+        patch.object(
+            UnifiCloudflareGlue,
+            "_cloudflare_resource_counts",
+            new=AsyncMock(side_effect=[(1, 1), (0, 0)]),
+        ),
+        patch.object(
+            UnifiCloudflareGlue, "_unifi_dns_exists", new=AsyncMock(side_effect=[True, False])
+        ),
+    ):
+        invocation = deployment.module.test_integration(
+            source=deployment.source,
+            cloudflare_zone="example.test",
+            cloudflare_token=deployment.secret,
+            cloudflare_account_id="account",
+            unifi_url="https://unifi.test",
+            api_url="https://unifi.test",
+            unifi_api_key=deployment.secret,
         )
-        deployment.container.with_exec.assert_any_call(
-            ["terraform", "init", f"-backend-config={BACKEND_SECRET_PATH}"]
-        )
+        if failure:
+            with pytest.raises(RuntimeError) as error:
+                await invocation
+            result = str(error.value)
+            assert (
+                "outcome unknown"
+                if failure == "timeout"
+                else (
+                    "secrets_retrieval=failed"
+                    if failure.startswith("credential-")
+                    else "exit code 17"
+                )
+            ) in result
+        else:
+            result = await invocation
+            assert "ALL RESOURCES VALIDATED" in result
+        assert "CANARY" not in result
+        artifact.file.return_value.contents.assert_not_awaited()
+        for call in retrieval.call_args_list:
+            assert call.kwargs["protected_disclosure"] is True
+        if failure is None:
+            assert [call.args[2] for call in verifier.call_args_list] == ["json", "human"]
+    effects = [
+        (argv, history) for argv, history, _ in deployment.calls if argv[1] in {"apply", "destroy"}
+    ]
+    for argv, history in effects:
+        assert any(item[0] == "exec" and item[1][1] == "init" for item in history)
+    commands = [argv[1] for argv, _ in effects]
+    if failure == "timeout":
+        assert commands == ["apply"]
+    elif failure == "apply":
+        assert commands == ["apply", "destroy"]
     else:
-        assert "--backend-type" not in result
-        assert "--backend-config-file" not in result
-        deployment.container.with_mounted_secret.assert_not_called()
-    if storage == "persistent":
-        assert "--state-dir='<state-dir>'" in result
-        deployment.container.with_directory.assert_any_call("/state", state)
-        deployment.container.with_workdir.assert_called_once_with("/state")
-    else:
-        assert "--state-dir" not in result
-    assert RAW_OUTPUT not in result
-    assert "SENTINEL_BACKEND" not in result
-    assert "SENTINEL_CF_TOKEN" not in result
-    assert "SENTINEL_UNIFI_KEY" not in result
-    deployment.cf_token.plaintext.assert_not_awaited()
-    deployment.unifi_key.plaintext.assert_not_awaited()
-    assert all(
-        "output" not in invocation.args[0]
-        for invocation in deployment.container.with_exec.call_args_list
-    )
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("scope", ["full", "cloudflare", "unifi"])
-@pytest.mark.parametrize("failure_phase", ["init", "apply"])
-async def test_terraform_failure_omits_guidance_and_raw_error_output(
-    deployment, scope, failure_phase
-):
-    failure = dagger.ExecError(
-        [
-            QueryErrorValue(
-                "SENTINEL_EXCEPTION",
-                extensions={
-                    "_type": "EXEC_ERROR",
-                    "cmd": ["terraform", failure_phase],
-                    "exitCode": 17,
-                    "stdout": RAW_OUTPUT,
-                    "stderr": "SENTINEL_STDERR",
-                },
-            )
-        ],
-        Mock(document=None),
-    )
-    deployment.container.stdout.side_effect = (
-        [failure] if failure_phase == "init" else ["Init complete", failure]
-    )
-
-    result = await deployment.module.deploy(**deploy_arguments(deployment, scope))
-
-    assert "Failed" in result
-    assert f"Terraform {failure_phase}" in result
-    assert "exit code 17" in result
-    assert GUIDANCE not in result
-    assert "completed successfully" not in result
-    assert "SENTINEL" not in result
-    assert "raw-state" not in result
-    expected = [call(["terraform", "init"])]
-    if failure_phase == "apply":
-        expected.append(call(["terraform", "apply", "-auto-approve"]))
-    assert deployment.container.with_exec.call_args_list == expected
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("provider", ["unifi", "cloudflare"])
-async def test_generation_failure_omits_guidance_and_prevents_terraform(deployment, provider):
-    getattr(deployment, f"generate_{provider}").side_effect = ValueError("invalid generated config")
-
-    result = await deployment.module.deploy(**deploy_arguments(deployment, "full"))
-
-    assert "Could not generate" in result
-    assert "invalid generated config" in result
-    assert GUIDANCE not in result
-    deployment.dag.container.assert_not_called()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("invalid_storage", ["missing-config", "remote-and-state"])
-async def test_invalid_backend_or_state_omits_guidance_and_prevents_terraform(
-    deployment, invalid_storage
-):
-    arguments = deploy_arguments(deployment, "cloudflare")
-    arguments["backend_type"] = "s3"
-    if invalid_storage == "remote-and-state":
-        arguments.update(
-            backend_config_file=Mock(spec=dagger.File), state_dir=Mock(spec=dagger.Directory)
-        )
-
-    result = await deployment.module.deploy(**arguments)
-
-    assert "Failed" in result
-    assert GUIDANCE not in result
-    deployment.dag.container.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_unreadable_backend_omits_guidance_and_sensitive_error(deployment):
-    backend = Mock(spec=dagger.File)
-    backend.contents = AsyncMock(side_effect=RuntimeError("SENTINEL_BACKEND_FAILURE"))
-
-    result = await deployment.module.deploy(
-        **deploy_arguments(deployment, "cloudflare"),
-        backend_type="s3",
-        backend_config_file=backend,
-    )
-
-    assert "Failed" in result
-    assert "Backend configuration processing" in result
-    assert GUIDANCE not in result
-    assert "SENTINEL" not in result
-    deployment.container.with_exec.assert_not_called()
+        assert commands == ["apply", "apply", "destroy", "destroy"]

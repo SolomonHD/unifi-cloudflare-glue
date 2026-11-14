@@ -1,6 +1,6 @@
 ## 1. Prerequisites and Credential Boundary
 
-- [ ] 1.1 Record accepted repaired baseline and execution-foundation evidence, including the parent's exact beta-first CLI/engine/Python SDK tuple or explicit 0.21.11 fallback; verify no UniFi-migration dependency
+- [ ] 1.1 Record accepted repaired baseline and execution-foundation evidence from `docs/dagger-runtime-qualification.md` / `docs/execution-contracts.md`: beta27 CLI checksum/engine digest, Python SDK full SHA, native KCL 0.12.4 checksum and Terraform 1.13.5 digest, not a moving beta label. Require the foundation's feature-consumer/production-read gates; fallback remains unaccepted unless separately qualified. Verify no dependency on `migrate-to-ubiquiti-community-unifi` completion.
 - [ ] 1.2 Document token creation/independent rotation for Zone Read and DNS Edit on only `solomonhd.ai`, and verify credential policy excludes Tunnel and production-zone permissions
 - [ ] 1.3 Define the `cloudflare-live-ci` environment, trusted-ref/access policy, runtime secret bindings, and non-secret zone metadata; verify available GitHub enforcement rather than assume environment naming provides protection
 - [ ] 1.4 Add passing offline tests rejecting PR/fork/`pull_request_target` secret execution and untrusted manual-dispatch refs before requesting credentials

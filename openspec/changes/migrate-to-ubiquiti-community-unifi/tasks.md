@@ -1,6 +1,6 @@
 ## 1. Prerequisites and Compatibility Discovery
 
-- [ ] 1.1 Record accepted hardening/normalized-provider evidence, repaired offline baseline, and execution-foundation runtime tuple; verify the existing consumer baseline has a secret-safe zero-drift plan under qualified read behavior
+- [ ] 1.1 Record accepted hardening/normalized-provider evidence, repaired offline baseline, and the exact execution-foundation tuple in `docs/dagger-runtime-qualification.md` / `docs/execution-contracts.md` (beta27 engine digest, Python SDK full SHA, native KCL 0.12.4 checksum, Terraform 1.13.5 digest; no moving beta label); require the foundation's feature-consumer/production-read gates and verify the existing consumer baseline has a secret-safe zero-drift plan under qualified read behavior. This does not depend on `add-cloudflare-live-ci-canary` completion.
 - [ ] 1.2 Pin and inspect exactly `ubiquiti-community/unifi` 0.65.0 schema and source for auth, `unifi_client`, IP attributes, DNS schema, import/site resolution, and Read calling `CreateClient` on missing clients; retain version-qualified evidence
 - [ ] 1.3 Deliver a secret-free mapping table for every current resource, data source, attribute, output, and import identity and verify complete coverage against inventory
 - [ ] 1.4 Qualify active/offline/null/stale `last_ip` in fixtures and separately authorized guarded production evidence, avoiding unsafe discovery imports; verify all production IPs are usable and match intended legacy semantics before removal

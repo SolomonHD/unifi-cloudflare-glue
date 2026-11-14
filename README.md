@@ -1,400 +1,149 @@
 # unifi-cloudflare-glue
 
-A hybrid DNS infrastructure tool that bridges UniFi network DNS with Cloudflare Tunnel edge DNS. This project enables seamless DNS management for services that need to be accessible both locally (via UniFi) and remotely (via Cloudflare Tunnel).
+Define hybrid DNS services in KCL and generate UniFi DNS and Cloudflare Tunnel
+configuration through a Python Dagger module. Terraform manages infrastructure
+using the existing provider constraints and resource addresses.
 
-## Purpose
+## Supported Execution Path
 
-`unifi-cloudflare-glue` solves the challenge of managing DNS records for hybrid infrastructure. Define your services once in KCL, and the tool generates configurations for both UniFi (local DNS) and Cloudflare (remote access via Tunnels).
+This checkout uses the qualified Dagger **1.0.0-beta.27** CLI/engine and pinned
+Python authoring SDK, not the old standalone deployment APIs. Read the
+[runtime receipt](docs/dagger-runtime-qualification.md) for exact identities,
+qualification evidence and outstanding acceptance gates. Installation or a
+successful no-op is not full-pipeline or production acceptance.
 
-## Quick Start
+From this repository root, use the wrapper that verifies the CLI checksum and
+selects the immutable engine without changing the globally selected CLI:
 
 ```bash
-# 1. Install the Dagger module
-dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.14.0
-
-# 2. Deploy both UniFi DNS and Cloudflare Tunnel
-dagger call -m unifi-cloudflare-glue deploy \
-    --kcl-source=./kcl \
-    --unifi-url=https://unifi.local:8443 \
-    --unifi-api-key=env:UNIFI_API_KEY \
-    --cloudflare-token=env:CF_TOKEN \
-    --cloudflare-account-id=your-account-id \
-    --zone-name=example.com
+bash scripts/dagger-qualified.sh api call -m . hello
+bash scripts/dagger-qualified.sh api call -m . verify-offline --source=.
 ```
 
-See the [examples/homelab-media-stack/](examples/homelab-media-stack/) directory for a complete working configuration.
+Generated `sdk/`, `clients/core/`, workspace/module manifests, `dagger.lock`
+and `uv.lock` belong to this runtime contract. Do not run legacy `dagger
+develop` or silently select a stable fallback. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for bootstrap and local verification.
+
+## Configuration And Preview
+
+Supply a consumer KCL directory containing `kcl.mod` and `main.k`. Its selected
+exports must be `unifi_output` and/or `cf_output`; the root library `main.k`
+is not a consumer configuration. Full operations select both outputs from one
+validated native JSON snapshot. Dependencies require exact declarations and a
+matching committed `kcl.mod.lock`; ordinary generation does not update them.
+
+For an explicitly authorized remote-state read, the full-scope preview is:
+
+```bash
+bash scripts/dagger-qualified.sh api call -m . plan \
+  --kcl-source=./kcl \
+  --unifi-url=https://unifi.local:8443 \
+  --unifi-api-key=env://UNIFI_API_KEY \
+  --cloudflare-token=env://CF_TOKEN \
+  --cloudflare-account-id=your-account-id \
+  --zone-name=example.com \
+  --state-scope=full \
+  --backend-type=s3 \
+  --backend-config-file=env://TF_BACKEND_CONFIG \
+  --backend-config-format=hcl \
+  export --path=./plans
+```
+
+`TF_BACKEND_CONFIG` must be supplied by the caller's approved secret workflow;
+it contains the backend configuration, not a host filename. The parameter is a
+Dagger **Secret URI**, not an ordinary File path. Select `yaml` for YAML or
+`hcl` for HCL explicitly. Preserve the existing backend bucket/address, key,
+workspace, state lineage and locking. Failed parsing/authentication never
+authorizes fallback to local state.
+
+Default preview exports contain `plan.txt` and `plan-summary.txt`, not raw
+JSON/binary plans. Review and protect text output too: Terraform's sensitive
+markers are not a guarantee that every application value is classified.
+`--sensitive-artifacts` is a separate, explicit opt-in for credential-bearing
+raw plans and requires protected storage. A preview never authorizes effects;
+`deploy` replans rather than executing this saved preview.
+
+## Scope And Effects
+
+| Selection | Flags | Terraform root |
+| --- | --- | --- |
+| Both providers | `--state-scope=full` | `terraform/modules/glue` |
+| Independently managed UniFi state | `--unifi-only --state-scope=unifi` | `terraform/modules/unifi-dns` |
+| Independently managed Cloudflare state | `--cloudflare-only --state-scope=cloudflare` | `terraform/modules/cloudflare-tunnel` |
+
+The flags are mutually exclusive and must match the existing state's root.
+Selective flags are not a way to split or migrate combined state. Full scope
+retains the glue root and its sibling modules; plan, deploy and destroy must
+use the same backend/root/address identity.
+
+After separate authorization for the named target, use `deploy` or `destroy`
+in place of `plan` with the same selected scope, credentials and remote-backend
+arguments, and omit `export`. These commands can create or delete real
+resources. They require an **explicit remote backend** and reject local-state
+selections at entry before generation, initialization or effects. The default
+`backend_type="local"` in the signature is not a working deployment default.
+
+Local `plan` previews may consume `--state-dir` as a protected input snapshot.
+They do not write back to the host, persist updates or enable local effects.
+Durable local-state custody/recovery **DLR-1 is deferred by explicit operator
+decision**, not implemented or accepted. Disposable live integration lifecycles
+are separate, explicitly authorized tests, not a general ephemeral deployment
+path.
+
+## Freshness And Failures
+
+Live functions use `cache="never"` and each live exec receives a fresh UUID.
+Deterministic generation/tool setup remain reusable. No shell timestamp or
+caller cache buster is required for correctness. The optional `cache_buster`
+is only a non-secret run label: at most 80 letters, digits, dots, underscores
+or hyphens. Never place a credential or shell expression in it.
+
+Unsuccessful operations raise sanitized failures with phase/exit/recovery
+metadata rather than returning a successful failure string. After a timeout,
+cancellation, disconnect or partial effect, retain the operation identity and
+reconcile process termination, remote resources and authoritative backend state
+before retrying. Restoring source or state is not remote rollback.
+
+## Credentials And Tool Pins
+
+- Provider inputs use Dagger Secrets, such as `env://UNIFI_API_KEY` and
+  `env://CF_TOKEN`. UniFi accepts an API key or a complete username/password
+  pair, never both methods or a partial pair.
+- `get-tunnel-secrets` requires `--protected-disclosure` before returning
+  a protected credential Directory for explicit export. Its `json` default
+  and optional `human`/`shell` artifacts contain secrets and retain owner-only
+  file permissions. Use a separately authorized protected destination, never
+  ordinary logs, CI artifacts, chat or a source-controlled file.
+- Terraform defaults to **1.13.5** through the digest-pinned helper. KCL is the
+  exact official **0.12.4** release archive with SHA-256 verification on the
+  pinned Python/Git base (qualified Git **2.39.5**). Unsupported version
+  overrides fail rather than resolve `latest`. See `src/main/toolchains.py`
+  and the runtime receipt for immutable identities.
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| **[Architecture](docs/architecture.md)** | Visual diagrams of system components and data flow |
-| **[KCL Configuration Guide](docs/kcl-guide.md)** | Complete KCL schema reference, validation rules, and examples |
-| **[Validation Errors](docs/validation-errors.md)** | Validation error types and how to fix them |
-| **[Deployment Patterns](docs/deployment-patterns.md)** | Environment-specific patterns (dev, staging, production) |
-| **[Getting Started](docs/getting-started.md)** | Installation, prerequisites, and first deployment |
-| **[Dagger Reference](docs/dagger-reference.md)** | Complete function reference with examples |
-| **[Terraform Modules](docs/terraform-modules.md)** | Standalone Terraform module usage |
-| **[State Management](docs/state-management.md)** | State backends: ephemeral, local, and remote |
-| **[Security](docs/security.md)** | Security best practices and credential handling |
-| **[vals Integration](docs/vals-integration.md)** | Secret injection with vals for backend configs |
-| **[Backend Configuration](docs/backend-configuration.md)** | Comprehensive backend and state locking guide |
-| **[Troubleshooting](docs/troubleshooting.md)** | Error references, decision trees, and solutions |
-
-## Architecture
-
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   KCL Config    │────▶│     main.k      │────▶│  JSON Output    │
-│  (services.k)   │     │  (entry point)  │     │ (unifi.json)    │
-└─────────────────┘     └─────────────────┘     └────────┬────────┘
-                                                         │
-                              ┌──────────────────────────┘
-                              ▼
-                    ┌─────────────────┐
-                    │  Dagger Module  │
-                    │ (Orchestration) │
-                    └────────┬────────┘
-                             │
-            ┌────────────────┼────────────────┐
-            ▼                ▼                ▼
-    ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-    │  UniFi DNS   │ │Cloudflare    │ │  Terraform   │
-    │   Records    │ │  Tunnel      │ │   State      │
-    └──────────────┘ └──────────────┘ └──────────────┘
-```
-
-The Dagger module provides containerized, reproducible pipelines that orchestrate KCL configuration generation and Terraform deployments without requiring local tool installation.
-
-## Key Features
-
-- **Unified Configuration**: Define services once in KCL, generate configurations for both UniFi and Cloudflare
-- **DNS Loop Prevention**: Ensures Cloudflare `local_service_url` uses internal domains only
-- **MAC Address Management**: Normalizes and validates MAC addresses across providers
-- **One Tunnel Per Device**: Each physical device gets exactly one tunnel
-- **Flexible State Management**: Ephemeral, persistent local, or remote backends
-- **CI/CD Ready**: Designed for automated deployments with secret management
-
-## Project Structure
-
-```
-unifi-cloudflare-glue/
-├── docs/                       # Documentation
-├── terraform/modules/          # Terraform modules
-│   ├── unifi-dns/              # UniFi DNS management
-│   └── cloudflare-tunnel/      # Cloudflare Tunnel management
-├── main.k                      # KCL entry point (exports unifi_output and cf_output)
-├── schemas/                    # KCL schema definitions
-├── generators/                 # KCL output generators (imported by main.k)
-├── examples/                   # Example configurations
-│   └── homelab-media-stack/    # Complete working example
-└── src/                        # Dagger module source
-```
-
-## Common Commands
-
-### Deploy
-
-```bash
-# Full deployment (UniFi + Cloudflare)
-dagger call -m unifi-cloudflare-glue deploy \
-    --kcl-source=./kcl \
-    --unifi-url=https://unifi.local:8443 \
-    --unifi-api-key=env:UNIFI_API_KEY \
-    --cloudflare-token=env:CF_TOKEN \
-    --cloudflare-account-id=xxx \
-    --zone-name=example.com
-
-# Deploy only UniFi DNS
-dagger call -m unifi-cloudflare-glue deploy \
-    --kcl-source=./kcl \
-    --unifi-url=https://unifi.local:8443 \
-    --unifi-api-key=env:UNIFI_API_KEY \
-    --unifi-only
-
-# Deploy only Cloudflare Tunnels
-dagger call -m unifi-cloudflare-glue deploy \
-    --kcl-source=./kcl \
-    --cloudflare-token=env:CF_TOKEN \
-    --cloudflare-account-id=xxx \
-    --zone-name=example.com \
-    --cloudflare-only
-```
-
-> **Note:** The `--unifi-only` and `--cloudflare-only` flags are mutually exclusive. You cannot use both flags in the same command.
-
-> **API Simplification:** Previous versions had separate `deploy-unifi` and `deploy-cloudflare` functions. These have been unified into the single `deploy` command with selective flags. If you're following external guides or blog posts referencing the old functions, use the examples above instead.
-
-> **Secret transport compatibility:** The plan, deploy, destroy, and
-> get-tunnel-secrets call syntax has not changed. Continue passing provider
-> credentials with `env:` and the backend file with `--backend-config-file`.
-> The module converts the backend file to a Dagger secret mount internally;
-> never paste its contents into a command or ordinary environment variable.
-> The only new plan flag is the optional `--sensitive-artifacts` opt-in below.
-
-### Plan and Destroy
-
-```bash
-# Generate plans without applying (full deployment)
-# Safe default exports only plan.txt and plan-summary.txt.
-dagger call -m unifi-cloudflare-glue plan \
-    --kcl-source=./kcl \
-    --unifi-url=https://unifi.local:8443 \
-    --unifi-api-key=env:UNIFI_API_KEY \
-    --cloudflare-token=env:CF_TOKEN \
-    --cloudflare-account-id=xxx \
-    --zone-name=example.com \
-    export --path=./plans
-
-# Explicit sensitive export (raw binary/JSON plans, owner-only)
-dagger call -m unifi-cloudflare-glue plan \
-    --kcl-source=./kcl \
-    --unifi-url=https://unifi.local:8443 \
-    --unifi-api-key=env:UNIFI_API_KEY \
-    --cloudflare-token=env:CF_TOKEN \
-    --cloudflare-account-id=xxx \
-    --zone-name=example.com \
-    --sensitive-artifacts \
-    export --path=./plans-sensitive
-
-# Plan UniFi-only deployment
-dagger call -m unifi-cloudflare-glue plan \
-    --kcl-source=./kcl \
-    --unifi-url=https://unifi.local:8443 \
-    --unifi-api-key=env:UNIFI_API_KEY \
-    --unifi-only \
-    export --path=./plans
-
-# Plan Cloudflare-only deployment
-dagger call -m unifi-cloudflare-glue plan \
-    --kcl-source=./kcl \
-    --cloudflare-token=env:CF_TOKEN \
-    --cloudflare-account-id=xxx \
-    --zone-name=example.com \
-    --cloudflare-only \
-    export --path=./plans
-
-# Destroy all resources (Cloudflare first, then UniFi)
-dagger call -m unifi-cloudflare-glue destroy \
-    --kcl-source=./kcl \
-    --unifi-url=https://unifi.local:8443 \
-    --unifi-api-key=env:UNIFI_API_KEY \
-    --cloudflare-token=env:CF_TOKEN \
-    --cloudflare-account-id=xxx \
-    --zone-name=example.com
-
-# Destroy only UniFi resources
-dagger call -m unifi-cloudflare-glue destroy \
-    --kcl-source=./kcl \
-    --unifi-url=https://unifi.local:8443 \
-    --unifi-api-key=env:UNIFI_API_KEY \
-    --unifi-only
-
-# Destroy only Cloudflare resources
-dagger call -m unifi-cloudflare-glue destroy \
-    --kcl-source=./kcl \
-    --cloudflare-token=env:CF_TOKEN \
-    --cloudflare-account-id=xxx \
-    --zone-name=example.com \
-    --cloudflare-only
-```
-
-### Generate Configurations
-
-```bash
-# Generate UniFi JSON
-dagger call generate-unifi-config --source=./kcl export --path=./unifi.json
-
-# Generate Cloudflare JSON
-dagger call generate-cloudflare-config --source=./kcl export --path=./cloudflare.json
-```
-
-## Critical: Parameter Differences
-
-> **⚠️ IMPORTANT:** Remote module users must understand the difference between `--source` and `--kcl-source` parameters.
-
-| Parameter | Purpose | When to Use |
-|-----------|---------|-------------|
-| `--source=.` | Reads the **module's** KCL files | ❌ Only for local development within this repository |
-| `--kcl-source=./your-config` | Reads **your project's** KCL files | ✅ Required when using the module remotely |
-
-**Why this matters:**
-- Local development: `--source=.` works because it reads the module's own KCL schemas
-- Remote usage: You **must** use `--kcl-source` to provide your own configuration
-- Using `--source=.` remotely will fail or read the wrong files
-
-## Versioning
-
-This project uses unified versioning where all components (KCL schemas, Terraform modules, and Dagger module) share the same version number.
-
-**Current Version: 0.1.0**
-
-Always pin to specific versions in production:
-
-```bash
-# ✅ Recommended - pinned version
-dagger install github.com/SolomonHD/unifi-cloudflare-glue@v0.14.0
-
-# ⚠️ Not recommended - latest main
-dagger install github.com/SolomonHD/unifi-cloudflare-glue@main
-```
-
-Check the [CHANGELOG](CHANGELOG.md) for version history.
-
-## Prerequisites
-
-- Terraform >= 1.5.0 (only if using standalone modules)
-- KCL (only if using local generation)
-- UniFi controller access with API key or credentials
-- Cloudflare account with API token
-
-## Security
-
-All credentials are handled using Dagger's `Secret` type:
-
-```bash
-# ✅ Correct - use env: prefix
-dagger call deploy --unifi-api-key=env:UNIFI_API_KEY ...
-
-# ❌ Never pass secrets directly
-dagger call deploy --unifi-api-key="actual-secret" ...
-```
-
-See [docs/security.md](docs/security.md) for comprehensive security guidance.
-
-## CI/CD Integration
-
-```yaml
-# GitHub Actions example
-- name: Deploy infrastructure
-  run: |
-    dagger call -m github.com/SolomonHD/unifi-cloudflare-glue@v0.14.0 \
-      unifi-cloudflare-glue deploy \
-      --kcl-source=./kcl \
-      --unifi-url=${{ secrets.UNIFI_URL }} \
-      --unifi-api-key=env:UNIFI_API_KEY \
-      --cloudflare-token=env:CF_TOKEN \
-      --cloudflare-account-id=${{ secrets.CF_ACCOUNT_ID }} \
-      --zone-name=${{ secrets.CF_ZONE }}
-```
-
-See [docs/dagger-reference.md](docs/dagger-reference.md#cicd-integration) for detailed CI/CD patterns.
-
-## State Management
-
-Three modes supported:
-
-| Mode | Use Case | Command |
-|------|----------|---------|
-| **Ephemeral** | Testing, CI/CD | Default (no flags) |
-| **Persistent Local** | Solo development | `--state-dir=./terraform-state` |
-| **Remote Backend** | Production | `--backend-type=s3 --backend-config-file=./backend.hcl` |
-
-See [docs/state-management.md](docs/state-management.md) for detailed configuration.
-
-## Testing
-
-### Generator Validation Tests
-
-The project includes comprehensive validation tests for KCL generator output to ensure compatibility with Terraform modules.
-
-**Run all generator tests:**
-```bash
-pytest tests/unit/test_generator_output.py -v
-```
-
-**Run specific test classes:**
-```bash
-# UniFi generator tests only
-pytest tests/unit/test_generator_output.py::TestUniFiGeneratorOutput -v
-
-# Cloudflare generator tests only
-pytest tests/unit/test_generator_output.py::TestCloudflareGeneratorOutput -v
-
-# Edge case tests
-pytest tests/unit/test_generator_output.py::TestEdgeCases -v
-```
-
-**Run with coverage:**
-```bash
-pytest tests/unit/test_generator_output.py --cov=tests.unit.test_generator_output
-```
-
-### Expected Generator Output Format
-
-**Consumer Contract:** Your [`main.k`](main.k) **MUST** export these public variables:
-- `unifi_output`: UniFi DNS configuration (dict/object)
-- `cf_output`: Cloudflare Tunnel configuration (dict/object)
-
-The Dagger module runs `kcl run main.k`, writes the output to a file, then extracts each section using `yq` (e.g., `yq eval '.unifi_output'`). If either variable is missing, you'll get a clear error message.
-
-**UniFi Output** (extracted from `main.k` as `unifi_output`):
-```json
-{
-  "devices": [
-    {
-      "friendly_hostname": "media-server",
-      "domain": "internal.lan",
-      "service_cnames": ["jellyfin.internal.lan"],
-      "nics": [
-        {
-          "mac_address": "aa:bb:cc:dd:ee:ff",
-          "nic_name": "eth0",
-          "service_cnames": ["nas.internal.lan"]
-        }
-      ]
-    }
-  ],
-  "default_domain": "internal.lan",
-  "site": "default"
-}
-```
-
-**Cloudflare Output** (extracted from `main.k` as `cf_output`):
-```json
-{
-  "zone_name": "example.com",
-  "account_id": "1234567890abcdef1234567890abcdef",
-  "tunnels": {
-    "aa:bb:cc:dd:ee:ff": {
-      "tunnel_name": "media-server",
-      "mac_address": "aa:bb:cc:dd:ee:ff",
-      "services": [
-        {
-          "public_hostname": "jellyfin.example.com",
-          "local_service_url": "http://jellyfin.internal.lan:8096",
-          "no_tls_verify": false
-        }
-      ]
-    }
-  }
-}
-```
-
-### Example Test Failure Output
-
-When a test fails, you'll see detailed error messages like:
-
-```
-✗ Generator Output Validation Failed
-
-Field:      devices[0].nics[0].mac_address
-Expected:   string matching pattern "^[0-9a-f]{2}:[0-9a-f]{2}:..."
-Found:      "AA-BB-CC-DD-EE-FF" (wrong format: uppercase with dashes)
-Hint:       MAC addresses should be normalized to lowercase colon format (aa:bb:cc:dd:ee:ff)
-```
-
-This helps identify issues quickly, such as:
-- Missing required fields (e.g., the `site` field was previously missing)
-- Type mismatches (e.g., `devices` being a string instead of array)
-- Invalid MAC address formats (e.g., uppercase or dashes instead of lowercase colons)
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for:
-- Development setup
-- Running tests
-- Submitting changes
+| Document | Scope |
+| --- | --- |
+| [Execution Contracts](docs/execution-contracts.md) | Current API migration, state custody, output handling and acceptance boundaries |
+| [Runtime Qualification](docs/dagger-runtime-qualification.md) | Exact runtime identities and recorded evidence |
+| [Offline Verification](docs/offline-verification.md) | Credential-free bootstrap/check separation and evidence |
+| [KCL Guide](docs/kcl-guide.md) | Configuration/schema background |
+| [Contributing](CONTRIBUTING.md) | Frozen development setup and verification |
+
+Older topical guides and `README.old.md` may describe pre-migration commands.
+They are historical/background material, not authority for runtime syntax,
+Secret transport, cache correctness, local persistence or artifact defaults.
+Use the current execution contracts and generated API for those interfaces.
+
+## Acceptance Boundaries
+
+Credential-free checks, runtime probes and a zero-change preview are distinct
+evidence. Full pipeline acceptance, published feature-revision consumer loading
+with matching KCL, and separately approved production-read zero-drift acceptance
+must each be recorded. This README establishes none of those gates and records
+no production read, apply or destroy. Provider migration, global tool selection,
+consumer promotion, publication and release remain separately scoped work.
 
 ## License
 
