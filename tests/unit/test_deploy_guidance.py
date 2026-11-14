@@ -1,473 +1,329 @@
-"""Unit tests for deployment success message guidance.
+"""Supported combined deploy API, selection, and secret-safe retrieval guidance."""
 
-This module tests that deploy_cloudflare() and deploy() functions
-include proper tunnel token retrieval guidance in their success messages.
-"""
-
-import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
 import sys
-import os
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, call, patch
 
-# Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src", "main"))
+import dagger
+import pytest
+from dagger._exceptions import QueryErrorValue
 
-from main import UnifiCloudflareGlue
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src/main"))
+
+from main import BACKEND_SECRET_PATH, UnifiCloudflareGlue
+
+GUIDANCE = "Next Step: Retrieve Tunnel Credentials"
+RAW_OUTPUT = 'SENTINEL_PROVIDER_OUTPUT {"resources": ["raw-state"]}'
 
 
-class TestDeployCloudflareGuidance:
-    """Test suite for deploy_cloudflare() success message guidance."""
+@pytest.fixture
+def deployment():
+    """Mock the Dagger boundary, leaving deployment orchestration under test."""
+    source = Mock(spec=dagger.Directory)
+    generated = Mock(spec=dagger.File)
+    directory = Mock(spec=dagger.Directory)
+    directory.with_file.return_value = directory
+    container = Mock(spec=dagger.Container)
+    for method in (
+        "from_",
+        "with_directory",
+        "with_new_file",
+        "with_env_variable",
+        "with_secret_variable",
+        "with_mounted_secret",
+        "with_workdir",
+        "with_exec",
+    ):
+        getattr(container, method).return_value = container
+    container.stdout = AsyncMock(return_value=RAW_OUTPUT)
+    cf_token = Mock(spec=dagger.Secret)
+    cf_token.plaintext = AsyncMock(return_value="SENTINEL_CF_TOKEN")
+    unifi_key = Mock(spec=dagger.Secret)
+    unifi_key.plaintext = AsyncMock(return_value="SENTINEL_UNIFI_KEY")
+    with (
+        patch("main.dagger.dag") as dag,
+        patch.object(
+            UnifiCloudflareGlue, "generate_unifi_config", new_callable=AsyncMock
+        ) as generate_unifi,
+        patch.object(
+            UnifiCloudflareGlue, "generate_cloudflare_config", new_callable=AsyncMock
+        ) as generate_cloudflare,
+    ):
+        dag.container.return_value = container
+        dag.directory.return_value = directory
+        generate_unifi.return_value = generated
+        generate_cloudflare.return_value = generated
+        yield SimpleNamespace(
+            module=UnifiCloudflareGlue(),
+            source=source,
+            container=container,
+            dag=dag,
+            generate_unifi=generate_unifi,
+            generate_cloudflare=generate_cloudflare,
+            cf_token=cf_token,
+            unifi_key=unifi_key,
+        )
 
-    @pytest.fixture
-    def module(self):
-        """Create a fresh module instance for each test."""
-        return UnifiCloudflareGlue()
 
-    @pytest.fixture
-    def mock_secret(self):
-        """Create a mock Secret object."""
-        secret = Mock()
-        secret.plaintext = AsyncMock(return_value="mock-token-value")
-        return secret
+def deploy_arguments(deployment, scope):
+    """Omit credentials entirely for an unselected provider."""
+    arguments = {"kcl_source": deployment.source, "kcl_version": "0.11.0"}
+    if scope != "cloudflare":
+        arguments.update(
+            unifi_url="https://unifi.example.test:8443",
+            unifi_api_key=deployment.unifi_key,
+        )
+    if scope != "unifi":
+        arguments.update(
+            cloudflare_token=deployment.cf_token,
+            cloudflare_account_id="account-actual-123",
+            zone_name="actual.example.test",
+        )
+    if scope == "cloudflare":
+        arguments["cloudflare_only"] = True
+    elif scope == "unifi":
+        arguments["unifi_only"] = True
+    return arguments
 
-    @pytest.fixture
-    def mock_directory(self):
-        """Create a mock Directory object."""
-        mock_dir = Mock()
-        mock_dir.file = Mock(return_value=Mock())
-        mock_dir.file.return_value.contents = AsyncMock(return_value="{}")
-        return mock_dir
 
-    @pytest.mark.asyncio
-    async def test_success_message_contains_guidance_header(self, module, mock_secret, mock_directory):
-        """Test that success message includes 'Next Step: Retrieve Tunnel Credentials' header."""
-        with patch("dagger.dag") as mock_dag:
-            mock_container = Mock()
-            mock_dag.container = Mock(return_value=mock_container)
-            mock_dag.directory = Mock(return_value=mock_directory)
-            mock_container.from_ = Mock(return_value=mock_container)
-            mock_container.with_directory = Mock(return_value=mock_container)
-            mock_container.with_env_variable = Mock(return_value=mock_container)
-            mock_container.with_secret_variable = Mock(return_value=mock_container)
-            mock_container.with_workdir = Mock(return_value=mock_container)
-            mock_container.with_exec = Mock(return_value=mock_container)
-            mock_container.stdout = AsyncMock(return_value="Apply complete!")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["full", "cloudflare", "unifi"])
+async def test_selection_runs_one_terraform_cycle_with_only_selected_inputs(deployment, scope):
+    result = await deployment.module.deploy(**deploy_arguments(deployment, scope))
 
-            result = await module.deploy_cloudflare(
-                source=mock_directory,
-                cloudflare_token=mock_secret,
-                cloudflare_account_id="test-account-id",
-                zone_name="example.com",
+    assert "deployment" in result.lower()
+    assert "completed successfully" in result
+    assert (GUIDANCE in result) == (scope != "unifi")
+    assert deployment.container.with_exec.call_args_list == [
+        call(["terraform", "init"]),
+        call(["terraform", "apply", "-auto-approve"]),
+    ]
+    module_path = {
+        "full": "terraform/modules",
+        "cloudflare": "terraform/modules/cloudflare-tunnel",
+        "unifi": "terraform/modules/unifi-dns",
+    }[scope]
+    deployment.dag.current_module.return_value.source.return_value.directory.assert_called_once_with(
+        module_path
+    )
+    deployment.container.with_workdir.assert_called_once_with(
+        "/module/glue" if scope == "full" else "/module"
+    )
+    if scope != "cloudflare":
+        deployment.generate_unifi.assert_awaited_once_with(deployment.source, "0.11.0")
+    else:
+        deployment.generate_unifi.assert_not_awaited()
+    if scope != "unifi":
+        deployment.generate_cloudflare.assert_awaited_once_with(deployment.source, "0.11.0")
+    else:
+        deployment.generate_cloudflare.assert_not_awaited()
+    expected_secrets = []
+    if scope != "cloudflare":
+        expected_secrets.append(call("UNIFI_API_KEY", deployment.unifi_key))
+    if scope != "unifi":
+        expected_secrets.append(call("CLOUDFLARE_API_TOKEN", deployment.cf_token))
+    assert deployment.container.with_secret_variable.call_args_list == expected_secrets
+    deployment.cf_token.plaintext.assert_not_awaited()
+    deployment.unifi_key.plaintext.assert_not_awaited()
+    assert RAW_OUTPUT not in result
+
+
+@pytest.mark.asyncio
+async def test_conflicting_selection_fails_before_generation_or_deployment(deployment):
+    result = await deployment.module.deploy(
+        kcl_source=deployment.source, unifi_only=True, cloudflare_only=True
+    )
+
+    assert "Cannot use both --unifi-only and --cloudflare-only" in result
+    assert GUIDANCE not in result
+    deployment.generate_unifi.assert_not_awaited()
+    deployment.generate_cloudflare.assert_not_awaited()
+    deployment.dag.container.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scope,missing,message",
+    [
+        ("cloudflare", "cloudflare_token", "--cloudflare-token"),
+        ("cloudflare", "cloudflare_account_id", "--cloudflare-account-id"),
+        ("cloudflare", "zone_name", "--zone-name"),
+        ("unifi", "unifi_api_key", "--unifi-api-key"),
+        ("unifi", "unifi_url", "--unifi-url"),
+        ("full", "unifi_api_key", "--unifi-api-key"),
+        ("full", "cloudflare_token", "--cloudflare-token"),
+    ],
+)
+async def test_missing_selected_credentials_fail_without_execution(
+    deployment, scope, missing, message
+):
+    arguments = deploy_arguments(deployment, scope)
+    arguments.pop(missing)
+
+    result = await deployment.module.deploy(**arguments)
+
+    assert "Failed" in result
+    assert message in result
+    assert GUIDANCE not in result
+    deployment.generate_unifi.assert_not_awaited()
+    deployment.generate_cloudflare.assert_not_awaited()
+    deployment.dag.container.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["full", "cloudflare"])
+@pytest.mark.parametrize("storage", ["local", "s3", "gcs", "persistent"])
+async def test_success_guidance_reflects_parameters_and_storage(deployment, scope, storage):
+    arguments = deploy_arguments(deployment, scope)
+    backend = Mock(spec=dagger.File)
+    backend.contents = AsyncMock(return_value='bucket = "state"\naccess_key = "SENTINEL_BACKEND"')
+    state = Mock(spec=dagger.Directory)
+    if storage in ("s3", "gcs"):
+        arguments.update(backend_type=storage, backend_config_file=backend)
+    elif storage == "persistent":
+        arguments["state_dir"] = state
+
+    result = await deployment.module.deploy(**arguments)
+
+    assert "completed successfully" in result
+    assert f"{'-' * 60}\n{GUIDANCE}\n{'-' * 60}" in result
+    assert "Option 1: Using Dagger (recommended):" in result
+    assert "dagger call get-tunnel-secrets \\\n" in result
+    assert "    --source='<kcl-source>' \\\n" in result
+    assert "Replace the quoted path placeholders" in result
+    assert "Reuse the same source" in result
+    assert "original host paths are unavailable" in result
+    assert "--source=./kcl" not in result
+    assert "--source=. " not in result
+    assert "./backend.hcl" not in result
+    assert "./terraform-state" not in result
+    assert "--cloudflare-account-id=account-actual-123" in result
+    assert "--zone-name=actual.example.test" in result
+    assert "--cloudflare-token=env:CF_TOKEN" in result
+    assert "Option 2: Install cloudflared service directly:" in result
+    assert "cloudflared service install <tunnel-token-from-option-1>" in result
+    assert "examples/homelab-media-stack/README.md" in result
+    if storage in ("s3", "gcs"):
+        assert f"--backend-type={storage}" in result
+        assert "--backend-config-file='<backend-config-file>'" in result
+        assert "--state-dir" not in result
+        deployment.container.with_mounted_secret.assert_called_once_with(
+            BACKEND_SECRET_PATH,
+            deployment.dag.set_secret.return_value,
+            owner="root",
+            mode=0o600,
+        )
+        deployment.container.with_exec.assert_any_call(
+            ["terraform", "init", f"-backend-config={BACKEND_SECRET_PATH}"]
+        )
+    else:
+        assert "--backend-type" not in result
+        assert "--backend-config-file" not in result
+        deployment.container.with_mounted_secret.assert_not_called()
+    if storage == "persistent":
+        assert "--state-dir='<state-dir>'" in result
+        deployment.container.with_directory.assert_any_call("/state", state)
+        deployment.container.with_workdir.assert_called_once_with("/state")
+    else:
+        assert "--state-dir" not in result
+    assert RAW_OUTPUT not in result
+    assert "SENTINEL_BACKEND" not in result
+    assert "SENTINEL_CF_TOKEN" not in result
+    assert "SENTINEL_UNIFI_KEY" not in result
+    deployment.cf_token.plaintext.assert_not_awaited()
+    deployment.unifi_key.plaintext.assert_not_awaited()
+    assert all(
+        "output" not in invocation.args[0]
+        for invocation in deployment.container.with_exec.call_args_list
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["full", "cloudflare", "unifi"])
+@pytest.mark.parametrize("failure_phase", ["init", "apply"])
+async def test_terraform_failure_omits_guidance_and_raw_error_output(
+    deployment, scope, failure_phase
+):
+    failure = dagger.ExecError(
+        [
+            QueryErrorValue(
+                "SENTINEL_EXCEPTION",
+                extensions={
+                    "_type": "EXEC_ERROR",
+                    "cmd": ["terraform", failure_phase],
+                    "exitCode": 17,
+                    "stdout": RAW_OUTPUT,
+                    "stderr": "SENTINEL_STDERR",
+                },
             )
+        ],
+        Mock(document=None),
+    )
+    deployment.container.stdout.side_effect = (
+        [failure] if failure_phase == "init" else ["Init complete", failure]
+    )
 
-            assert "Next Step: Retrieve Tunnel Credentials" in result
-            assert "✓ Success" in result
+    result = await deployment.module.deploy(**deploy_arguments(deployment, scope))
 
-    @pytest.mark.asyncio
-    async def test_success_message_contains_dagger_command(self, module, mock_secret, mock_directory):
-        """Test that success message includes 'dagger call get-tunnel-secrets' command."""
-        with patch("dagger.dag") as mock_dag:
-            mock_container = Mock()
-            mock_dag.container = Mock(return_value=mock_container)
-            mock_dag.directory = Mock(return_value=mock_directory)
-            mock_container.from_ = Mock(return_value=mock_container)
-            mock_container.with_directory = Mock(return_value=mock_container)
-            mock_container.with_env_variable = Mock(return_value=mock_container)
-            mock_container.with_secret_variable = Mock(return_value=mock_container)
-            mock_container.with_workdir = Mock(return_value=mock_container)
-            mock_container.with_exec = Mock(return_value=mock_container)
-            mock_container.stdout = AsyncMock(return_value="Apply complete!")
-
-            result = await module.deploy_cloudflare(
-                source=mock_directory,
-                cloudflare_token=mock_secret,
-                cloudflare_account_id="test-account-id",
-                zone_name="example.com",
-            )
-
-            assert "dagger call get-tunnel-secrets" in result
-
-    @pytest.mark.asyncio
-    async def test_success_message_contains_actual_parameters(self, module, mock_secret, mock_directory):
-        """Test that success message uses actual deployment parameters in command."""
-        with patch("dagger.dag") as mock_dag:
-            mock_container = Mock()
-            mock_dag.container = Mock(return_value=mock_container)
-            mock_dag.directory = Mock(return_value=mock_directory)
-            mock_container.from_ = Mock(return_value=mock_container)
-            mock_container.with_directory = Mock(return_value=mock_container)
-            mock_container.with_env_variable = Mock(return_value=mock_container)
-            mock_container.with_secret_variable = Mock(return_value=mock_container)
-            mock_container.with_workdir = Mock(return_value=mock_container)
-            mock_container.with_exec = Mock(return_value=mock_container)
-            mock_container.stdout = AsyncMock(return_value="Apply complete!")
-
-            result = await module.deploy_cloudflare(
-                source=mock_directory,
-                cloudflare_token=mock_secret,
-                cloudflare_account_id="my-account-123",
-                zone_name="myzone.com",
-            )
-
-            assert "--cloudflare-account-id=my-account-123" in result
-            assert "--zone-name=myzone.com" in result
-
-    @pytest.mark.asyncio
-    async def test_local_backend_shows_source_flag(self, module, mock_secret, mock_directory):
-        """Test that local backend command includes --source flag."""
-        with patch("dagger.dag") as mock_dag:
-            mock_container = Mock()
-            mock_dag.container = Mock(return_value=mock_container)
-            mock_dag.directory = Mock(return_value=mock_directory)
-            mock_container.from_ = Mock(return_value=mock_container)
-            mock_container.with_directory = Mock(return_value=mock_container)
-            mock_container.with_env_variable = Mock(return_value=mock_container)
-            mock_container.with_secret_variable = Mock(return_value=mock_container)
-            mock_container.with_workdir = Mock(return_value=mock_container)
-            mock_container.with_exec = Mock(return_value=mock_container)
-            mock_container.stdout = AsyncMock(return_value="Apply complete!")
-
-            result = await module.deploy_cloudflare(
-                source=mock_directory,
-                cloudflare_token=mock_secret,
-                cloudflare_account_id="test-account-id",
-                zone_name="example.com",
-                backend_type="local",
-            )
-
-            assert "--source=." in result
-
-    @pytest.mark.asyncio
-    async def test_remote_backend_shows_backend_flags(self, module, mock_secret, mock_directory):
-        """Test that remote backend command includes backend-specific flags."""
-        mock_backend_file = Mock()
-
-        with patch("dagger.dag") as mock_dag:
-            mock_container = Mock()
-            mock_dag.container = Mock(return_value=mock_container)
-            mock_dag.directory = Mock(return_value=mock_directory)
-            mock_container.from_ = Mock(return_value=mock_container)
-            mock_container.with_directory = Mock(return_value=mock_container)
-            mock_container.with_new_file = Mock(return_value=mock_container)
-            mock_container.with_file = Mock(return_value=mock_container)
-            mock_container.with_env_variable = Mock(return_value=mock_container)
-            mock_container.with_secret_variable = Mock(return_value=mock_container)
-            mock_container.with_workdir = Mock(return_value=mock_container)
-            mock_container.with_exec = Mock(return_value=mock_container)
-            mock_container.stdout = AsyncMock(return_value="Apply complete!")
-
-            result = await module.deploy_cloudflare(
-                source=mock_directory,
-                cloudflare_token=mock_secret,
-                cloudflare_account_id="test-account-id",
-                zone_name="example.com",
-                backend_type="s3",
-                backend_config_file=mock_backend_file,
-            )
-
-            assert "--backend-type=s3" in result
-            assert "--backend-config-file=./backend.hcl" in result
-
-    @pytest.mark.asyncio
-    async def test_persistent_state_shows_state_dir_flag(self, module, mock_secret, mock_directory):
-        """Test that persistent state command includes --state-dir flag."""
-        mock_state_dir = Mock()
-
-        with patch("dagger.dag") as mock_dag:
-            mock_container = Mock()
-            mock_dag.container = Mock(return_value=mock_container)
-            mock_dag.directory = Mock(return_value=mock_directory)
-            mock_container.from_ = Mock(return_value=mock_container)
-            mock_container.with_directory = Mock(return_value=mock_container)
-            mock_container.with_exec = Mock(return_value=mock_container)
-            mock_container.with_env_variable = Mock(return_value=mock_container)
-            mock_container.with_secret_variable = Mock(return_value=mock_container)
-            mock_container.with_workdir = Mock(return_value=mock_container)
-            mock_container.stdout = AsyncMock(return_value="Apply complete!")
-
-            result = await module.deploy_cloudflare(
-                source=mock_directory,
-                cloudflare_token=mock_secret,
-                cloudflare_account_id="test-account-id",
-                zone_name="example.com",
-                state_dir=mock_state_dir,
-            )
-
-            assert "--state-dir=./terraform-state" in result
-
-    @pytest.mark.asyncio
-    async def test_success_message_contains_terraform_output_command(self, module, mock_secret, mock_directory):
-        """Test that success message includes terraform output command option."""
-        with patch("dagger.dag") as mock_dag:
-            mock_container = Mock()
-            mock_dag.container = Mock(return_value=mock_container)
-            mock_dag.directory = Mock(return_value=mock_directory)
-            mock_container.from_ = Mock(return_value=mock_container)
-            mock_container.with_directory = Mock(return_value=mock_container)
-            mock_container.with_env_variable = Mock(return_value=mock_container)
-            mock_container.with_secret_variable = Mock(return_value=mock_container)
-            mock_container.with_workdir = Mock(return_value=mock_container)
-            mock_container.with_exec = Mock(return_value=mock_container)
-            mock_container.stdout = AsyncMock(return_value="Apply complete!")
-
-            result = await module.deploy_cloudflare(
-                source=mock_directory,
-                cloudflare_token=mock_secret,
-                cloudflare_account_id="test-account-id",
-                zone_name="example.com",
-            )
-
-            assert "terraform output -json cloudflare_tunnel_tokens" in result
-
-    @pytest.mark.asyncio
-    async def test_success_message_contains_cloudflared_install_command(self, module, mock_secret, mock_directory):
-        """Test that success message includes cloudflared service install example."""
-        with patch("dagger.dag") as mock_dag:
-            mock_container = Mock()
-            mock_dag.container = Mock(return_value=mock_container)
-            mock_dag.directory = Mock(return_value=mock_directory)
-            mock_container.from_ = Mock(return_value=mock_container)
-            mock_container.with_directory = Mock(return_value=mock_container)
-            mock_container.with_env_variable = Mock(return_value=mock_container)
-            mock_container.with_secret_variable = Mock(return_value=mock_container)
-            mock_container.with_workdir = Mock(return_value=mock_container)
-            mock_container.with_exec = Mock(return_value=mock_container)
-            mock_container.stdout = AsyncMock(return_value="Apply complete!")
-
-            result = await module.deploy_cloudflare(
-                source=mock_directory,
-                cloudflare_token=mock_secret,
-                cloudflare_account_id="test-account-id",
-                zone_name="example.com",
-            )
-
-            assert "cloudflared service install" in result
-
-    @pytest.mark.asyncio
-    async def test_success_message_contains_example_documentation_link(self, module, mock_secret, mock_directory):
-        """Test that success message includes link to example documentation."""
-        with patch("dagger.dag") as mock_dag:
-            mock_container = Mock()
-            mock_dag.container = Mock(return_value=mock_container)
-            mock_dag.directory = Mock(return_value=mock_directory)
-            mock_container.from_ = Mock(return_value=mock_container)
-            mock_container.with_directory = Mock(return_value=mock_container)
-            mock_container.with_env_variable = Mock(return_value=mock_container)
-            mock_container.with_secret_variable = Mock(return_value=mock_container)
-            mock_container.with_workdir = Mock(return_value=mock_container)
-            mock_container.with_exec = Mock(return_value=mock_container)
-            mock_container.stdout = AsyncMock(return_value="Apply complete!")
-
-            result = await module.deploy_cloudflare(
-                source=mock_directory,
-                cloudflare_token=mock_secret,
-                cloudflare_account_id="test-account-id",
-                zone_name="example.com",
-            )
-
-            assert "examples/homelab-media-stack/README.md" in result
-
-    @pytest.mark.asyncio
-    async def test_failure_message_does_not_contain_guidance(self, module, mock_secret, mock_directory):
-        """Test that failure message does NOT include tunnel token guidance."""
-        import dagger
-
-        with patch("dagger.dag") as mock_dag:
-            mock_container = Mock()
-            mock_dag.container = Mock(return_value=mock_container)
-            mock_dag.directory = Mock(return_value=mock_directory)
-            mock_container.from_ = Mock(return_value=mock_container)
-            mock_container.with_directory = Mock(return_value=mock_container)
-            mock_container.with_env_variable = Mock(return_value=mock_container)
-            mock_container.with_secret_variable = Mock(return_value=mock_container)
-            mock_container.with_workdir = Mock(return_value=mock_container)
-            # Make init succeed but apply fail
-            mock_container.with_exec = Mock(side_effect=[
-                Mock(stdout=AsyncMock(return_value="Init complete!")),
-                Mock(stdout=AsyncMock(side_effect=dagger.ExecError("apply failed", 1, "", ""))),
-            ])
-
-            result = await module.deploy_cloudflare(
-                source=mock_directory,
-                cloudflare_token=mock_secret,
-                cloudflare_account_id="test-account-id",
-                zone_name="example.com",
-            )
-
-            assert "✗ Failed" in result
-            assert "Next Step: Retrieve Tunnel Credentials" not in result
+    assert "Failed" in result
+    assert f"Terraform {failure_phase}" in result
+    assert "exit code 17" in result
+    assert GUIDANCE not in result
+    assert "completed successfully" not in result
+    assert "SENTINEL" not in result
+    assert "raw-state" not in result
+    expected = [call(["terraform", "init"])]
+    if failure_phase == "apply":
+        expected.append(call(["terraform", "apply", "-auto-approve"]))
+    assert deployment.container.with_exec.call_args_list == expected
 
 
-class TestDeployGuidance:
-    """Test suite for deploy() success message guidance."""
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["unifi", "cloudflare"])
+async def test_generation_failure_omits_guidance_and_prevents_terraform(deployment, provider):
+    getattr(deployment, f"generate_{provider}").side_effect = ValueError("invalid generated config")
 
-    @pytest.fixture
-    def module(self):
-        """Create a fresh module instance for each test."""
-        return UnifiCloudflareGlue()
+    result = await deployment.module.deploy(**deploy_arguments(deployment, "full"))
 
-    @pytest.fixture
-    def mock_secret(self):
-        """Create a mock Secret object."""
-        secret = Mock()
-        secret.plaintext = AsyncMock(return_value="mock-token-value")
-        return secret
-
-    @pytest.fixture
-    def mock_directory(self):
-        """Create a mock Directory object."""
-        mock_dir = Mock()
-        mock_dir.file = Mock(return_value=Mock())
-        mock_dir.file.return_value.contents = AsyncMock(return_value="{}")
-        mock_dir.entries = AsyncMock(return_value=[])
-        return mock_dir
-    @pytest.mark.asyncio
-    async def test_both_success_shows_guidance(self, module, mock_secret, mock_directory):
-        """Test that guidance appears when both UniFi and Cloudflare succeed."""
-        with patch("dagger.dag") as mock_dag:
-            mock_container = Mock()
-            mock_dag.container = Mock(return_value=mock_container)
-            mock_dag.directory = Mock(return_value=mock_directory)
-            mock_container.from_ = Mock(return_value=mock_container)
-            mock_container.with_directory = Mock(return_value=mock_container)
-            mock_container.with_new_file = Mock(return_value=mock_container)
-            mock_container.with_file = Mock(return_value=mock_container)
-            mock_container.with_env_variable = Mock(return_value=mock_container)
-            mock_container.with_secret_variable = Mock(return_value=mock_container)
-            mock_container.with_workdir = Mock(return_value=mock_container)
-            mock_container.with_exec = Mock(return_value=mock_container)
-            mock_container.stdout = AsyncMock(return_value="Apply complete!")
-            mock_container.file = Mock(return_value=mock_directory.file())
-
-            result = await module.deploy(
-                kcl_source=mock_directory,
-                unifi_url="https://unifi.local:8443",
-                cloudflare_token=mock_secret,
-                cloudflare_account_id="test-account-id",
-                zone_name="example.com",
-                unifi_api_key=mock_secret,
-            )
-
-            assert "✓ Both deployments completed successfully" in result
-            assert "Next Step: Retrieve Tunnel Credentials" in result
-            assert "dagger call get-tunnel-secrets" in result
-
-    @pytest.mark.asyncio
-    async def test_guidance_uses_kcl_source_directory(self, module, mock_secret, mock_directory):
-        """Test that deploy() guidance uses --source=./kcl for KCL-generated configs."""
-        with patch("dagger.dag") as mock_dag:
-            mock_container = Mock()
-            mock_dag.container = Mock(return_value=mock_container)
-            mock_dag.directory = Mock(return_value=mock_directory)
-            mock_container.from_ = Mock(return_value=mock_container)
-            mock_container.with_directory = Mock(return_value=mock_container)
-            mock_container.with_new_file = Mock(return_value=mock_container)
-            mock_container.with_file = Mock(return_value=mock_container)
-            mock_container.with_env_variable = Mock(return_value=mock_container)
-            mock_container.with_secret_variable = Mock(return_value=mock_container)
-            mock_container.with_workdir = Mock(return_value=mock_container)
-            mock_container.with_exec = Mock(return_value=mock_container)
-            mock_container.stdout = AsyncMock(return_value="Apply complete!")
-            mock_container.file = Mock(return_value=mock_directory.file())
-
-            result = await module.deploy(
-                kcl_source=mock_directory,
-                unifi_url="https://unifi.local:8443",
-                cloudflare_token=mock_secret,
-                cloudflare_account_id="test-account-id",
-                zone_name="example.com",
-                unifi_api_key=mock_secret,
-            )
-
-            # deploy() uses --source=./kcl for KCL-generated configs
-            assert "--source=./kcl" in result
-
-    @pytest.mark.asyncio
-    async def test_unifi_success_only_no_guidance(self, module, mock_secret, mock_directory):
-        """Test that guidance does NOT appear when only UniFi succeeds."""
-        import dagger
-
-        with patch("dagger.dag") as mock_dag:
-            mock_container = Mock()
-            mock_dag.container = Mock(return_value=mock_container)
-            mock_dag.directory = Mock(return_value=mock_directory)
-            mock_container.from_ = Mock(return_value=mock_container)
-            mock_container.with_directory = Mock(return_value=mock_container)
-            mock_container.with_new_file = Mock(return_value=mock_container)
-            mock_container.with_file = Mock(return_value=mock_container)
-            mock_container.with_env_variable = Mock(return_value=mock_container)
-            mock_container.with_secret_variable = Mock(return_value=mock_container)
-            mock_container.with_workdir = Mock(return_value=mock_container)
-            # First 4 calls: UniFi success (init + apply), then Cloudflare init
-            # 5th call: Cloudflare apply fails
-            exec_results = [
-                Mock(stdout=AsyncMock(return_value="Init complete!")),  # UniFi init
-                Mock(stdout=AsyncMock(return_value="Apply complete!")),  # UniFi apply
-                Mock(stdout=AsyncMock(return_value="Init complete!")),  # CF init
-                Mock(stdout=AsyncMock(side_effect=dagger.ExecError("apply failed", 1, "", ""))),  # CF apply fails
-            ]
-            mock_container.with_exec = Mock(side_effect=exec_results)
-            mock_container.file = Mock(return_value=mock_directory.file())
-
-            result = await module.deploy(
-                kcl_source=mock_directory,
-                unifi_url="https://unifi.local:8443",
-                cloudflare_token=mock_secret,
-                cloudflare_account_id="test-account-id",
-                zone_name="example.com",
-                unifi_api_key=mock_secret,
-            )
-
-            assert "○ UniFi: Success" in result or "UniFi: Success" in result
-            assert "Cloudflare: Failed" in result
-            assert "Next Step: Retrieve Tunnel Credentials" not in result
+    assert "Could not generate" in result
+    assert "invalid generated config" in result
+    assert GUIDANCE not in result
+    deployment.dag.container.assert_not_called()
 
 
-class TestVisualFormatting:
-    """Test visual formatting of guidance sections."""
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_storage", ["missing-config", "remote-and-state"])
+async def test_invalid_backend_or_state_omits_guidance_and_prevents_terraform(
+    deployment, invalid_storage
+):
+    arguments = deploy_arguments(deployment, "cloudflare")
+    arguments["backend_type"] = "s3"
+    if invalid_storage == "remote-and-state":
+        arguments.update(
+            backend_config_file=Mock(spec=dagger.File), state_dir=Mock(spec=dagger.Directory)
+        )
 
-    @pytest.fixture
-    def module(self):
-        return UnifiCloudflareGlue()
+    result = await deployment.module.deploy(**arguments)
 
-    @pytest.fixture
-    def mock_secret(self):
-        secret = Mock()
-        secret.plaintext = AsyncMock(return_value="mock-token")
-        return secret
-
-    @pytest.fixture
-    def mock_directory(self):
-        mock_dir = Mock()
-        mock_dir.file = Mock(return_value=Mock())
-        mock_dir.file.return_value.contents = AsyncMock(return_value="{}")
-        return mock_dir
-
-    @pytest.mark.asyncio
-    async def test_separator_lines_present(self, module, mock_secret, mock_directory):
-        """Test that separator lines (60 dashes) are present in guidance."""
-        with patch("dagger.dag") as mock_dag:
-            mock_container = Mock()
-            mock_dag.container = Mock(return_value=mock_container)
-            mock_dag.directory = Mock(return_value=mock_directory)
-            mock_container.from_ = Mock(return_value=mock_container)
-            mock_container.with_directory = Mock(return_value=mock_container)
-            mock_container.with_env_variable = Mock(return_value=mock_container)
-            mock_container.with_secret_variable = Mock(return_value=mock_container)
-            mock_container.with_workdir = Mock(return_value=mock_container)
-            mock_container.with_exec = Mock(return_value=mock_container)
-            mock_container.stdout = AsyncMock(return_value="Apply complete!")
-
-            result = await module.deploy_cloudflare(
-                source=mock_directory,
-                cloudflare_token=mock_secret,
-                cloudflare_account_id="test-account-id",
-                zone_name="example.com",
-            )
-
-            # Check for separator line (60 dashes)
-            assert "-" * 60 in result
+    assert "Failed" in result
+    assert GUIDANCE not in result
+    deployment.dag.container.assert_not_called()
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+@pytest.mark.asyncio
+async def test_unreadable_backend_omits_guidance_and_sensitive_error(deployment):
+    backend = Mock(spec=dagger.File)
+    backend.contents = AsyncMock(side_effect=RuntimeError("SENTINEL_BACKEND_FAILURE"))
+
+    result = await deployment.module.deploy(
+        **deploy_arguments(deployment, "cloudflare"),
+        backend_type="s3",
+        backend_config_file=backend,
+    )
+
+    assert "Failed" in result
+    assert "Backend configuration processing" in result
+    assert GUIDANCE not in result
+    assert "SENTINEL" not in result
+    deployment.container.with_exec.assert_not_called()

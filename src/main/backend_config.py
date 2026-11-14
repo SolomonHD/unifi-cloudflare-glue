@@ -5,18 +5,19 @@ to Terraform-compatible HCL format, enabling seamless integration with secret
 management tools like vals.
 """
 
-import yaml
 from typing import Optional
+
+import yaml
 
 
 def _yaml_to_hcl_value(value, indent_level: int = 0) -> str:
     """
     Recursively convert a Python value to HCL format.
-    
+
     Args:
         value: The value to convert (str, int, float, bool, list, dict)
         indent_level: Current indentation level for nested structures
-        
+
     Returns:
         String representation of the value in HCL format
     """
@@ -38,7 +39,10 @@ def _yaml_to_hcl_value(value, indent_level: int = 0) -> str:
             return "{}"
         indent = "  " * indent_level
         inner_indent = "  " * (indent_level + 1)
-        items = [f'{inner_indent}{k} = {_yaml_to_hcl_value(v, indent_level + 1)}' for k, v in value.items()]
+        items = [
+            f"{inner_indent}{k} = {_yaml_to_hcl_value(v, indent_level + 1)}"
+            for k, v in value.items()
+        ]
         return f"{{\n" + ",\n".join(items) + "\n{indent}}}"
     else:
         # For unknown types, convert to string with quotes
@@ -48,39 +52,39 @@ def _yaml_to_hcl_value(value, indent_level: int = 0) -> str:
 def yaml_to_hcl(yaml_content: str) -> str:
     """
     Convert YAML content to HCL format.
-    
+
     Args:
         yaml_content: String containing YAML data
-        
+
     Returns:
         String containing HCL-formatted data
-        
+
     Raises:
         yaml.YAMLError: If the content is not valid YAML
     """
     yaml_data = yaml.safe_load(yaml_content)
-    
+
     if yaml_data is None:
         return ""
-    
+
     if not isinstance(yaml_data, dict):
         raise ValueError("YAML content must be a dictionary (mapping)")
-    
+
     hcl_lines = []
     for key, value in yaml_data.items():
         hcl_value = _yaml_to_hcl_value(value)
-        hcl_lines.append(f'{key} = {hcl_value}')
-    
-    return '\n'.join(hcl_lines)
+        hcl_lines.append(f"{key} = {hcl_value}")
+
+    return "\n".join(hcl_lines)
 
 
 def process_backend_config_content(content: str) -> tuple[str, str]:
     """
     Process backend configuration content, converting YAML to HCL if necessary.
-    
+
     Args:
         content: String containing backend configuration (YAML or HCL)
-        
+
     Returns:
         Tuple of (content, extension) where content is the HCL-formatted backend config
         and extension is '.tfbackend' for mounting
@@ -88,17 +92,17 @@ def process_backend_config_content(content: str) -> tuple[str, str]:
     # Try to parse as YAML
     try:
         yaml_data = yaml.safe_load(content)
-        
+
         # If parsing succeeds and we got a dict, convert to HCL
         if isinstance(yaml_data, dict):
             hcl_content = yaml_to_hcl(content)
-            return (hcl_content, '.tfbackend')
+            return (hcl_content, ".tfbackend")
         elif yaml_data is None:
             # Empty YAML file, treat as HCL (pass through)
-            return (content, '.tfbackend')
+            return (content, ".tfbackend")
         else:
             # YAML parsed but not a dict (unexpected), treat as HCL
-            return (content, '.tfbackend')
+            return (content, ".tfbackend")
     except yaml.YAMLError:
         # Not valid YAML, treat as HCL (pass through)
-        return (content, '.tfbackend')
+        return (content, ".tfbackend")

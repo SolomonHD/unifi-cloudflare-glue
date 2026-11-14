@@ -1,4 +1,12 @@
-## ADDED Requirements
+# Generator Output Validation
+
+## Purpose
+
+Specify provider generator output shapes, validation diagnostics, and offline
+test coverage. Active change deltas reconcile consumer fixtures and supported
+APIs separately; this structural repair preserves the existing obligations.
+
+## Requirements
 
 ### Requirement: UniFi generator output has all required top-level fields
 When the UniFi generator produces output, it SHALL contain all required top-level fields with correct types.

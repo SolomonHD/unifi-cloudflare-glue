@@ -62,3 +62,6 @@ Thumbs.db
 dist/
 build/
 *.egg-info/
+
+# Machine-local OpenSpec registration
+.openspec-store/

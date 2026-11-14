@@ -1,4 +1,12 @@
-## ADDED Requirements
+# Deployment Guidance
+
+## Purpose
+
+Specify deployment guidance and environment documentation contracts. Historical
+requirements remain pending reconciliation by the active change deltas; this
+structural repair does not apply those deltas or declare their behavior complete.
+
+## Requirements
 
 ### Requirement: Deploy Cloudflare success message includes credential retrieval guidance
 After successful Cloudflare tunnel deployment via [`deploy_cloudflare()`](../../../../src/main/main.py:422-571), the success message SHALL include clear, actionable instructions for retrieving tunnel credentials using both Terraform and Dagger commands.
@@ -85,7 +93,7 @@ Credential retrieval guidance SHALL use visual separators and formatting to dist
 
 ---
 
-## ADDED Requirements (from change: environment-examples)
+<!-- Requirements retained from change: environment-examples. -->
 
 ### Requirement: Deployment patterns documentation file
 The documentation SHALL include a comprehensive deployment patterns guide at `docs/deployment-patterns.md` explaining environment-specific strategies.
@@ -187,7 +195,7 @@ The deployment patterns documentation SHALL be linked from main project navigati
 - **WHEN** user reads project `README.md`
 - **THEN** documentation section includes reference to deployment patterns
 
-## ADDED Requirements (from change: deploy-function-consolidation)
+<!-- Requirements retained from change: deploy-function-consolidation. -->
 
 ### Requirement: Deploy function uses combined Terraform module
 The `deploy()` function SHALL use the combined Terraform module at `terraform/modules/glue/` for all deployments.
@@ -268,12 +276,15 @@ The `deploy()` function SHALL perform a single Terraform init/apply cycle regard
 - **AND** only one `terraform apply` SHALL be performed
 - **AND** the container reference SHALL be preserved after execution
 
-## REMOVED Requirements (from change: deploy-function-consolidation)
+## Historical Removals
 
-### Requirement: Separate deploy_unifi function
+The following removed contracts are retained for migration history, not as
+current requirements (from change: deploy-function-consolidation).
+
+### Removed Contract: Separate deploy_unifi function
 **Reason**: Consolidated into unified `deploy()` function with `--unifi-only` flag
 **Migration**: Use `dagger call deploy --kcl-source=./kcl --unifi-only ...` instead of `dagger call deploy-unifi ...`
 
-### Requirement: Separate deploy_cloudflare function
+### Removed Contract: Separate deploy_cloudflare function
 **Reason**: Consolidated into unified `deploy()` function with `--cloudflare-only` flag
 **Migration**: Use `dagger call deploy --kcl-source=./kcl --cloudflare-only ...` instead of `dagger call deploy-cloudflare ...`

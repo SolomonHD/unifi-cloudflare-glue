@@ -28,18 +28,24 @@
 # MACAddress type alias for tunnel identification
 MACAddress = str
 
+# Extract the DNS hostname without changing the emitted origin URL.
+origin_hostname = lambda url: str -> str {
+    hostname = url.lower().split("://", 1)[-1].split("/")[0].split("?")[0].split("#")[0].split("@")[-1].split(":")[0]
+    hostname[:-1] if hostname.endswith(".") else hostname
+}
+
 # is_valid_domain checks if a URL contains a valid domain per RFC 1123
 # Returns True if the hostname has valid syntax
 # Validation rules:
 # - Valid characters: alphanumeric, hyphens, dots only
 # - No consecutive dots
-# - No leading/trailing dots
+# - No leading dots; an optional DNS root dot is normalized
 # - Each label: 1-63 characters
 # - Labels must start and end with alphanumeric
 # - TLD: minimum 2 characters
 # - At least one dot separator required
 is_valid_domain = lambda url: str -> bool {
-    hostname = url.replace("http://", "").replace("https://", "").split("/")[0].split(":")[0]
+    hostname = origin_hostname(url)
     labels = hostname.split(".")
     tld = labels[-1]
     validLabels = [l for l in labels if len(l) > 0 and len(l) <= 63 and l[0].isalnum() and l[-1].isalnum()]
@@ -88,7 +94,7 @@ schema TunnelService:
         len(public_hostname) > 0, "public_hostname cannot be empty"
         # local_service_url must not be empty
         len(local_service_url) > 0, "local_service_url cannot be empty"
-        # local_service_url must use valid domain syntax to prevent DNS loops
+        # Domain syntax alone does not enforce public-zone DNS loop prevention.
         is_valid_domain(local_service_url), "local_service_url has invalid domain syntax"
 
 # CloudflareTunnel represents a single tunnel connected to a physical device
@@ -197,4 +203,3 @@ schema CloudflareConfig:
         len(zone_name) > 0, "zone_name cannot be empty"
         # account_id must not be empty
         len(account_id) > 0, "account_id cannot be empty"
-

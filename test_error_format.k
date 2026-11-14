@@ -49,3 +49,6 @@ test_result = main.generate(test_config)
 
 # Test error formatting
 formatted_errors = main.format_validation_errors(test_result.errors)
+assert not test_result.valid
+assert "MAC_CONSISTENCY_ERROR" in formatted_errors
+assert "Suggestion:" in formatted_errors

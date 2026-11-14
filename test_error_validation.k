@@ -256,6 +256,12 @@ print("\n")
 # Test 6: Validation-Only Mode
 print("=== Test 6: VALIDATION_ONLY MODE ===\n")
 validation_only_result = main.validate_only(test_mac_error_config)
+assert mac_error_result.errors[0]["error"] == "MAC_CONSISTENCY_ERROR"
+assert hostname_error_result.errors[0]["error"] == "DUPLICATE_HOSTNAME_ERROR"
+assert public_hostname_error_result.errors[0]["error"] == "DUPLICATE_PUBLIC_HOSTNAME_ERROR"
+assert valid_config_result.valid
+assert not validation_only_result.valid
+assert validation_only_result.error_count == 1
 print("Valid: ${str(validation_only_result['valid'])}\n")
 print("Error Count: ${str(validation_only_result['error_count'])}\n")
 

@@ -226,13 +226,48 @@ Follow these steps to create a new release. Use the comprehensive checklist belo
 
 ## Testing
 
-### Unit Testing
+### Authoritative Offline Baseline
 
-Run unit tests for Dagger functions:
+From the repository root, run the complete baseline:
+
 ```bash
-cd src/main
-python -m pytest tests/
+bash scripts/verify-offline.sh
 ```
+
+The sequence checks Black and isort across `src` and `tests`, mypy for all
+production Python, Python compilation, the **entire** `tests/unit` suite without
+marker exclusions, and the root KCL schema/validation and standalone generator
+entry points. KCL assertions make failed validation exit nonzero; `kcl test`
+alone discovers no tests because these historical files are named `test_*.k`,
+not `*_test.k`. The full unit suite includes the hardening sentinel and
+failure-injection tests in `test_secret_safety.py` and normalized-provider
+regressions in `test_unifi_provider_baseline.py`.
+
+Offline means no infrastructure credentials, live infrastructure calls, or
+dependency downloads during this sequence. It does not mean a fresh checkout
+can bootstrap air-gapped. Unit transports are mocked; generator tests execute
+the local KCL binary against synthetic fixtures. No Terraform apply, Dagger
+engine, UniFi controller, Cloudflare API, backend, or 1Password access is used.
+
+Bootstrap separately with Python 3.11+, `uv`, KCL 0.12.4, and the generated
+Python SDK in `sdk/` corresponding to the existing `dagger.json`. A fresh
+checkout requires `dagger develop` to generate that ignored SDK, which may need
+network access and the existing Dagger toolchain. Do not change the runtime
+selection as part of this baseline; runtime qualification belongs to
+`modernize-dagger-execution-contracts`. Acquire/cache Python dependencies once:
+
+```bash
+uv run --frozen \
+  --with pytest==9.2.0 --with pytest-asyncio==1.5.0 \
+  --with black==26.10.1 --with isort==9.0.2 \
+  --with mypy==2.4.1 --with types-PyYAML==6.0.12.20261113 \
+  python -c 'import pytest, pytest_asyncio, black, isort, mypy, yaml, dagger'
+```
+
+The wrapper repeats those exact tool pins with `uv --offline --frozen` so a
+missing prerequisite fails rather than silently downloading or skipping tests.
+The PyYAML stubs are necessary for typed backend parsing. No global package
+installation or project dependency change is needed.
 
 ### Integration Testing
 
@@ -253,10 +288,26 @@ dagger call test-integration \
 
 Test KCL schema changes:
 ```bash
-cd kcl
 kcl run generators/unifi.k
 kcl run generators/cloudflare.k
 ```
+
+Standalone generators export `result`. Dagger generation instead consumes a
+consumer directory whose `main.k` exports `unifi_output` and/or `cf_output`.
+The root library `main.k` is not such a consumer. Dedicated test fixtures keep
+these contracts separate; do not add consumer outputs to the library to satisfy
+a stale test.
+
+Generation validates JSON field types against the existing Terraform input
+structures before exporting a file. Malformed-output diagnostics identify field
+paths and expected types without echoing values. Cloudflare KCL generation also
+rejects resolved origins in the configured public zone, including explicit URLs
+and entity-derived hostname overrides or fallbacks.
+
+Successful deployment guidance uses actual account, zone, and backend selections.
+Because Dagger inputs do not expose original host paths, source/backend/state
+paths are explicitly labeled, quoted placeholders. Replace them with the same
+inputs used for deployment; the examples are not recovered local paths.
 
 ## Code Style
 

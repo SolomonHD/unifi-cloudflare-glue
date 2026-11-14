@@ -112,6 +112,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Deployment credential-retrieval guidance now clearly labels unavailable host
+  paths as quoted placeholders and tells callers to reuse deployment inputs.
+- Public configuration generation validates provider JSON structures before
+  export, reporting field paths and expected types without echoing values.
+- Cloudflare KCL generation rejects origins in the public zone for explicit and
+  entity-derived services instead of merely exposing an unused DNS-loop helper.
+- Replaced obsolete deployment/generator tests and added the complete
+  credential-free `bash scripts/verify-offline.sh` baseline.
+
 - **Fixed missing `site` field in UniFi generator output:**
   - Modified `generate_unifi_config()` in `generators/unifi.k` to include `site` field in generated JSON
   - Site value sourced from `config.unifi_controller.site` (schema default: `"default"`)

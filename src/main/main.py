@@ -5,19 +5,22 @@ hybrid DNS infrastructure bridging UniFi network DNS with Cloudflare Tunnel edge
 """
 
 import asyncio
-import dagger
-from dagger import function, object_type, Secret, Doc, Directory
-from typing import Annotated, Optional
-import random
-import string
 import json
+import random
 import re
+import string
 import time
+from typing import Annotated, Optional
+
+import dagger
+from dagger import Directory, Doc, Secret, function, object_type
 
 try:
     from .backend_config import process_backend_config_content
 except ImportError:  # Support the repository's direct-module unit test imports.
-    from backend_config import process_backend_config_content  # type: ignore[no-redef]
+    from backend_config import (  # type: ignore[no-redef,import-not-found]
+        process_backend_config_content,
+    )
 
 
 async def _process_backend_config(backend_config_file: dagger.File) -> tuple[str, str]:
@@ -119,6 +122,79 @@ class KCLGenerationError(Exception):
     """Raised when KCL configuration generation fails."""
 
     pass
+
+
+def _validate_generated_config(output: object, provider: str) -> None:
+    """Check the existing Terraform input shapes without exposing configuration values."""
+    missing = object()
+    type_names = {dict: "object", list: "array", str: "string", bool: "boolean"}
+    root = "unifi_output" if provider == "unifi" else "cf_output"
+
+    def expect(value: object, kind: type, path: str, nullable: bool = False) -> None:
+        if nullable and value is None:
+            return
+        if type(value) is not kind:
+            expected = type_names[kind] + (" or null" if nullable else "")
+            found = (
+                "missing"
+                if value is missing
+                else "null" if value is None else type_names.get(type(value), "number")
+            )
+            raise KCLGenerationError(f"{path}: expected {expected}; found {found}")
+
+    def fields(value: dict, path: str, required: dict[str, type]) -> None:
+        for name, kind in required.items():
+            expect(value.get(name, missing), kind, f"{path}.{name}")
+
+    def mac(value: object, path: str) -> None:
+        expect(value, str, path)
+        if not re.fullmatch(r"[0-9a-f]{2}(?::[0-9a-f]{2}){5}", str(value)):
+            raise KCLGenerationError(f"{path}: expected normalized MAC string; found string")
+
+    def cnames(value: dict, path: str) -> None:
+        names = value.get("service_cnames", missing)
+        expect(names, list, f"{path}.service_cnames", nullable=True)
+        if isinstance(names, list):
+            for index, name in enumerate(names):
+                expect(name, str, f"{path}.service_cnames[{index}]")
+
+    expect(output, dict, root)
+    assert isinstance(output, dict)
+    if provider == "unifi":
+        fields(output, root, {"devices": list, "default_domain": str, "site": str})
+        for index, device in enumerate(output["devices"]):
+            path = f"{root}.devices[{index}]"
+            expect(device, dict, path)
+            fields(device, path, {"friendly_hostname": str, "nics": list})
+            expect(device.get("domain", missing), str, f"{path}.domain", nullable=True)
+            cnames(device, path)
+            for nic_index, nic in enumerate(device["nics"]):
+                nic_path = f"{path}.nics[{nic_index}]"
+                expect(nic, dict, nic_path)
+                mac(nic.get("mac_address", missing), f"{nic_path}.mac_address")
+                if "nic_name" in nic:
+                    expect(nic["nic_name"], str, f"{nic_path}.nic_name", nullable=True)
+                cnames(nic, nic_path)
+    else:
+        fields(output, root, {"zone_name": str, "account_id": str, "tunnels": dict})
+        # Positional paths avoid copying arbitrary map keys into error messages.
+        for index, (key, tunnel) in enumerate(output["tunnels"].items()):
+            path = f"{root}.tunnels[{index}]"
+            mac(key, f"{path}.key")
+            expect(tunnel, dict, path)
+            fields(tunnel, path, {"tunnel_name": str, "services": list})
+            mac(tunnel.get("mac_address", missing), f"{path}.mac_address")
+            for service_index, service in enumerate(tunnel["services"]):
+                service_path = f"{path}.services[{service_index}]"
+                expect(service, dict, service_path)
+                fields(service, service_path, {"public_hostname": str, "local_service_url": str})
+                if "no_tls_verify" in service:
+                    expect(
+                        service["no_tls_verify"],
+                        bool,
+                        f"{service_path}.no_tls_verify",
+                        nullable=True,
+                    )
 
 
 @object_type
@@ -320,20 +396,15 @@ class UnifiCloudflareGlue:
 
         # Step 9: Validate JSON output
         try:
-            json.loads(json_result)
+            parsed_result = json.loads(json_result)
         except json.JSONDecodeError as je:
-            # Truncate JSON result to 500 characters for error display
-            truncated_json = json_result[:500] if len(json_result) > 500 else json_result
-            json_ellipsis = "... (truncated)" if len(json_result) > 500 else ""
             raise KCLGenerationError(
-                f"✗ Invalid JSON output after yq conversion:\n"
-                f"JSON parse error: {str(je)}\n"
-                f"\nInvalid output preview:\n"
-                f"{'-' * 60}\n"
-                f"{truncated_json}{json_ellipsis}\n"
-                f"{'-' * 60}\n"
-                f"\nHint: This may indicate a bug in yq or unexpected KCL output format."
-            )
+                "unifi_output: expected valid JSON after yq conversion; "
+                f"parse error at line {je.lineno}, column {je.colno}. "
+                "Hint: Check the consumer output and yq conversion."
+            ) from None
+
+        _validate_generated_config(parsed_result, "unifi")
 
         # Step 10: Return as file
         return dagger.dag.directory().with_new_file("unifi.json", json_result).file("unifi.json")
@@ -514,11 +585,12 @@ provider "unifi" {{}}
         ] = "",
     ) -> str:
         """
-        Deploy UniFi DNS and/or Cloudflare Tunnels using the combined Terraform module.
+        Deploy UniFi DNS and/or Cloudflare Tunnels using one Terraform operation.
 
         This function generates KCL configurations and deploys them using a single
-        Terraform operation with the combined module at terraform/modules/glue/.
-        
+        Terraform operation. Full deployment uses terraform/modules/glue/; selective
+        deployment uses the corresponding provider module without unselected inputs.
+
         Use --unifi-only or --cloudflare-only for selective deployment, or omit both
         for full deployment of both components.
 
@@ -914,11 +986,14 @@ provider "unifi" {{}}
                 "on your devices, you need to retrieve the tunnel credentials.",
                 "",
                 "Option 1: Using Dagger (recommended):",
+                "Replace the quoted path placeholders below before running the command.",
+                "Reuse the same source and, when applicable, backend configuration file",
+                "and state directory supplied to deploy; original host paths are unavailable.",
             ]
 
             dagger_cmd_parts = [
                 "dagger call get-tunnel-secrets \\",
-                f"    --source=. \\",
+                "    --source='<kcl-source>' \\",
                 f"    --cloudflare-token=env:CF_TOKEN \\",
                 f"    --cloudflare-account-id={cloudflare_account_id} \\",
                 f"    --zone-name={zone_name}",
@@ -927,11 +1002,11 @@ provider "unifi" {{}}
             if backend_type != "local":
                 dagger_cmd_parts.append(f" \\")
                 dagger_cmd_parts.append(f"    --backend-type={backend_type} \\")
-                dagger_cmd_parts.append(f"    --backend-config-file=./backend.hcl")
+                dagger_cmd_parts.append("    --backend-config-file='<backend-config-file>'")
 
             if state_dir is not None:
                 dagger_cmd_parts.append(f" \\")
-                dagger_cmd_parts.append(f"    --state-dir=./terraform-state")
+                dagger_cmd_parts.append("    --state-dir='<state-dir>'")
 
             guidance_lines.extend(dagger_cmd_parts)
             guidance_lines.extend(
@@ -963,11 +1038,14 @@ provider "unifi" {{}}
                 "on your devices, you need to retrieve the tunnel credentials.",
                 "",
                 "Option 1: Using Dagger (recommended):",
+                "Replace the quoted path placeholders below before running the command.",
+                "Reuse the same source and, when applicable, backend configuration file",
+                "and state directory supplied to deploy; original host paths are unavailable.",
             ]
 
             dagger_cmd_parts = [
                 "dagger call get-tunnel-secrets \\",
-                f"    --source=./kcl \\",
+                "    --source='<kcl-source>' \\",
                 f"    --cloudflare-token=env:CF_TOKEN \\",
                 f"    --cloudflare-account-id={cloudflare_account_id} \\",
                 f"    --zone-name={zone_name}",
@@ -976,11 +1054,11 @@ provider "unifi" {{}}
             if backend_type != "local":
                 dagger_cmd_parts.append(f" \\")
                 dagger_cmd_parts.append(f"    --backend-type={backend_type} \\")
-                dagger_cmd_parts.append(f"    --backend-config-file=./backend.hcl")
+                dagger_cmd_parts.append("    --backend-config-file='<backend-config-file>'")
 
             if state_dir is not None:
                 dagger_cmd_parts.append(f" \\")
-                dagger_cmd_parts.append(f"    --state-dir=./terraform-state")
+                dagger_cmd_parts.append("    --state-dir='<state-dir>'")
 
             guidance_lines.extend(dagger_cmd_parts)
             guidance_lines.extend(
@@ -2054,20 +2132,15 @@ Notes
 
         # Step 9: Validate JSON output
         try:
-            json.loads(json_result)
+            parsed_result = json.loads(json_result)
         except json.JSONDecodeError as je:
-            # Truncate JSON result to 500 characters for error display
-            truncated_json = json_result[:500] if len(json_result) > 500 else json_result
-            json_ellipsis = "... (truncated)" if len(json_result) > 500 else ""
             raise KCLGenerationError(
-                f"✗ Invalid JSON output after yq conversion:\n"
-                f"JSON parse error: {str(je)}\n"
-                f"\nInvalid output preview:\n"
-                f"{'-' * 60}\n"
-                f"{truncated_json}{json_ellipsis}\n"
-                f"{'-' * 60}\n"
-                f"\nHint: This may indicate a bug in yq or unexpected KCL output format."
-            )
+                "cf_output: expected valid JSON after yq conversion; "
+                f"parse error at line {je.lineno}, column {je.colno}. "
+                "Hint: Check the consumer output and yq conversion."
+            ) from None
+
+        _validate_generated_config(parsed_result, "cloudflare")
 
         # Step 10: Return as file
         return (

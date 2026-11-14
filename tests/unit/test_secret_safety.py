@@ -1,9 +1,9 @@
 """Regression tests for secret transport, reports, and exported plan contracts."""
 
 import asyncio
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest

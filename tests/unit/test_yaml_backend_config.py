@@ -1,14 +1,15 @@
 """Unit tests for YAML to HCL backend config conversion."""
 
+import importlib.util
+import os
+import sys
+
 import pytest
 import yaml
-import sys
-import os
-import importlib.util
 
 # Load backend_config.py directly without going through the package __init__.py
 backend_config_path = os.path.join(
-    os.path.dirname(__file__), '..', '..', 'src', 'main', 'backend_config.py'
+    os.path.dirname(__file__), "..", "..", "src", "main", "backend_config.py"
 )
 spec = importlib.util.spec_from_file_location("backend_config", backend_config_path)
 backend_config = importlib.util.module_from_spec(spec)
@@ -86,13 +87,7 @@ class TestYamlToHclValue:
         data = {
             "bucket": "my-bucket",
             "tags": ["env:prod", "team:platform"],
-            "config": {
-                "enabled": True,
-                "count": 5,
-                "nested": {
-                    "value": 3.14
-                }
-            }
+            "config": {"enabled": True, "count": 5, "nested": {"value": 3.14}},
         }
         result = _yaml_to_hcl_value(data)
         # Check all values are present
@@ -120,9 +115,9 @@ key: path/to/state
 region: us-east-1
 """
         result = yaml_to_hcl(yaml_content)
-        assert "bucket = \"my-bucket\"" in result
-        assert "key = \"path/to/state\"" in result
-        assert "region = \"us-east-1\"" in result
+        assert 'bucket = "my-bucket"' in result
+        assert 'key = "path/to/state"' in result
+        assert 'region = "us-east-1"' in result
 
     def test_yaml_with_booleans(self):
         """Test YAML with boolean values."""
@@ -171,7 +166,7 @@ workspaces:
 """
         result = yaml_to_hcl(yaml_content)
         assert "workspaces =" in result
-        assert "name = \"dev\"" in result
+        assert 'name = "dev"' in result
         assert "tags =" in result
 
 
@@ -190,11 +185,11 @@ dynamodb_table: terraform-state-lock
         content, ext = process_backend_config_content(yaml_content)
 
         assert ext == ".tfbackend"
-        assert "bucket = \"my-terraform-state-bucket\"" in content
-        assert "key = \"unifi-cloudflare-glue/terraform.tfstate\"" in content
-        assert "region = \"us-east-1\"" in content
+        assert 'bucket = "my-terraform-state-bucket"' in content
+        assert 'key = "unifi-cloudflare-glue/terraform.tfstate"' in content
+        assert 'region = "us-east-1"' in content
         assert "encrypt = true" in content
-        assert "dynamodb_table = \"terraform-state-lock\"" in content
+        assert 'dynamodb_table = "terraform-state-lock"' in content
 
     def test_yaml_azurerm_backend(self):
         """Test Azure backend YAML conversion."""
@@ -207,8 +202,8 @@ resource_group_name: my-resource-group
         content, ext = process_backend_config_content(yaml_content)
 
         assert ext == ".tfbackend"
-        assert "storage_account_name = \"myterraformstate\"" in content
-        assert "container_name = \"terraform-state\"" in content
+        assert 'storage_account_name = "myterraformstate"' in content
+        assert 'container_name = "terraform-state"' in content
 
     def test_yaml_gcs_backend(self):
         """Test GCS backend YAML conversion."""
@@ -219,8 +214,8 @@ prefix: unifi-cloudflare-glue/terraform
         content, ext = process_backend_config_content(yaml_content)
 
         assert ext == ".tfbackend"
-        assert "bucket = \"my-terraform-state-bucket\"" in content
-        assert "prefix = \"unifi-cloudflare-glue/terraform\"" in content
+        assert 'bucket = "my-terraform-state-bucket"' in content
+        assert 'prefix = "unifi-cloudflare-glue/terraform"' in content
 
     def test_hcl_fallback(self):
         """Test that HCL files are passed through unchanged."""
@@ -253,7 +248,7 @@ endpoints:
         content, ext = process_backend_config_content(yaml_content)
 
         assert ext == ".tfbackend"
-        assert "bucket = \"my-bucket\"" in content
+        assert 'bucket = "my-bucket"' in content
         assert "endpoints =" in content
         assert '"https://s3.amazonaws.com"' in content
 
@@ -270,7 +265,7 @@ workspaces:
 
         assert ext == ".tfbackend"
         assert "workspaces =" in content
-        assert "name = \"dev\"" in content
+        assert 'name = "dev"' in content
         assert "tags =" in content
 
 
@@ -284,7 +279,7 @@ class TestYamlBackendConfigFixtures:
             "key": "unifi-cloudflare-glue/terraform.tfstate",
             "region": "us-east-1",
             "encrypt": True,
-            "dynamodb_table": "terraform-state-lock"
+            "dynamodb_table": "terraform-state-lock",
         }
 
         yaml_file = tmp_path / "s3-backend.yaml"
@@ -301,7 +296,7 @@ class TestYamlBackendConfigFixtures:
             "storage_account_name": "myterraformstate",
             "container_name": "terraform-state",
             "key": "unifi-cloudflare-glue/terraform.tfstate",
-            "resource_group_name": "my-resource-group"
+            "resource_group_name": "my-resource-group",
         }
 
         yaml_file = tmp_path / "azurerm-backend.yaml"
@@ -314,7 +309,7 @@ class TestYamlBackendConfigFixtures:
         """Create and validate GCS backend YAML fixture."""
         gcs_yaml = {
             "bucket": "my-terraform-state-bucket",
-            "prefix": "unifi-cloudflare-glue/terraform"
+            "prefix": "unifi-cloudflare-glue/terraform",
         }
 
         yaml_file = tmp_path / "gcs-backend.yaml"
@@ -327,9 +322,7 @@ class TestYamlBackendConfigFixtures:
         """Create and validate remote backend YAML fixture."""
         remote_yaml = {
             "organization": "my-organization",
-            "workspaces": {
-                "name": "unifi-cloudflare-glue"
-            }
+            "workspaces": {"name": "unifi-cloudflare-glue"},
         }
 
         yaml_file = tmp_path / "remote-backend.yaml"
@@ -346,15 +339,11 @@ class TestYamlToHclFormatting:
     def test_key_value_formatting(self):
         """Test that key=value pairs are properly formatted."""
         result = _yaml_to_hcl_value({"bucket": "test"})
-        assert "bucket = \"test\"" in result
+        assert 'bucket = "test"' in result
 
     def test_multiple_keys(self):
         """Test formatting with multiple keys."""
-        result = _yaml_to_hcl_value({
-            "bucket": "my-bucket",
-            "key": "my-key",
-            "region": "us-east-1"
-        })
+        result = _yaml_to_hcl_value({"bucket": "my-bucket", "key": "my-key", "region": "us-east-1"})
         lines = result.strip().split("\n")
         # Check it's formatted as HCL object
         assert result.startswith("{")
