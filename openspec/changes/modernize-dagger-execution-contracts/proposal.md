@@ -13,6 +13,7 @@ The module's v0.19.8-era execution layer mixes deterministic KCL generation with
 - **BREAKING**: Restrict public deploy/destroy to explicit remote backends; reject local-state or missing durable-state selections before mutation. Read-only local previews never imply Directory host write-through. Per the operator's 2026-11-14 scope decision, durable local-state output/recovery is tracked separately as DLR-1 in the design, not claimed complete here.
 - Expose credential-free offline verification through the accepted Dagger release; provide Changeset generation only for intentional checkout outputs, not raw plans/state.
 - Reconcile contradictory legacy cache, plan, orchestration, and state requirements as part of this change, preserving security invariants and unfinished acceptance work.
+- Add opt-in typed split-DNS origin exceptions without changing routes or Terraform JSON: `cloudflare.SplitDNSOrigin {protocol, hostname, port}` and default-empty `split_dns_origins` on explicit configuration, entity generation and direct transform helpers. Retain same-zone rejection by default; allow only exact protocol/normalized DNS hostname/effective-port matches, never suffix wildcards, inherited subdomains or global bypass. Invalid declarations fail closed. This records operator intent, not DNS verification; live acceptance must separately prove connector-internal resolution without a Cloudflare loop.
 
 ## Capabilities
 
@@ -23,7 +24,7 @@ The module's v0.19.8-era execution layer mixes deterministic KCL generation with
 ### Modified Capabilities
 
 - `cache-control`: Automatic live-operation freshness without invalidating deterministic inputs or relying on caller timestamps.
-- `config-generation`: A shared deterministic KCL execution and validated output boundary, independent of yq implementation details.
+- `config-generation`: A shared deterministic KCL execution and validated output boundary, independent of yq implementation details, with narrowly scoped typed split-DNS origin exceptions. Current `generator-output-validation` and `kcl-validation-rules` clauses are reconciled to this contract without changing archived history.
 - `orchestration`: Common execution preparation, truthful failure status, preserved post-execution snapshots, and explicit partial/unknown outcomes.
 - `plan-generation`: Root agreement, reliable action summaries, and clear separation between preview and approved execution artifacts.
 - `state-management`: Fail-closed remote-only effects, read-only preview custody, backend identity/locking preservation, and uncertain-effect reconciliation.
@@ -32,5 +33,7 @@ The module's v0.19.8-era execution layer mixes deterministic KCL generation with
 ## Impact
 
 Implementation will affect `src/main/main.py`, `src/main/backend_config.py`, Dagger manifests/generated SDK, Python/tool dependency locks, tests, selected CI entry points, and operational documentation. This planning change writes none of those implementation files.
+
+The approved split-DNS revision additionally affects `schemas/cloudflare.k`, `generators/cloudflare.k` and their offline validation/tests. It authorizes no consumer routing edit, production operation or Git mutation. Candidate `38daa8a8131080659acb5e4d59e4a2135eb7d92f` remains blocked for consumer acceptance; tasks 6.2 and 6.3 remain open and must be repeated against the revised exact published SHA after separately authorized commit/push. No replacement SHA is assigned by this documentation revision.
 
 `modernize-legacy-unit-test-contracts` provides the current-contract offline baseline before this refactor; qualification may proceed alongside it, but execution changes depend on that baseline. `migrate-to-ubiquiti-community-unifi` and `add-cloudflare-live-ci-canary` consume the resulting foundation independently. The sibling `portainer-docker-compose` change `adopt-modernized-dns-dagger-workspace` owns consumer pins, workspace configuration, and acceptance. Global mise/chezmoi adoption requires its own authorized host-scoped work. Provider upgrades, production state handoff, Cloudflare canary deployment, Dagger Cloud activation, and migration of other Actions templates are excluded.

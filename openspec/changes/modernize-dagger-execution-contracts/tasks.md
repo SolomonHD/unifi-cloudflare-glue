@@ -38,10 +38,16 @@
 
 ## 6. Cross-Repository Acceptance
 
-- [x] 6.1 Run the full offline suite, selected runtime/SDK schema checks, format/static checks and both provider generation contract suites; verify current provider constraints/lock selections and resource addresses remain unchanged.
-- [ ] 6.2 Qualify the reviewed feature revision as a remote dependency with matching KCL source in the sibling consumer change; verify exact source identities, release tuple, Secret input invocation and deterministic output equivalence before merge or promotion.
-- [ ] 6.3 With explicit authorization for production reads, verify a fresh zero-drift consumer plan against the unchanged Wasabi backend and existing providers; retain only sanitized identity/action-count evidence and confirm no apply was performed. Unexpected deltas block acceptance.
+- [x] 6.1 Run the full offline suite, selected runtime/SDK schema checks, format/static checks and both provider generation contract suites; verify current provider constraints/lock selections and resource addresses remain unchanged. Repeated for the split-DNS revision with 593 local and 593 qualified-Dagger tests; qualification of candidate `38daa8a8131080659acb5e4d59e4a2135eb7d92f` alone does not qualify changed source.
+- [ ] 6.2 Qualify the reviewed feature revision as a remote dependency with matching KCL source in the sibling consumer change; verify exact source identities, release tuple, Secret input invocation and deterministic output equivalence before merge or promotion. Candidate `38daa8a8131080659acb5e4d59e4a2135eb7d92f` is blocked by strict same-zone validation; repeat against the revised exact published SHA with explicit split-DNS declarations after separately authorized publication.
+- [ ] 6.3 With explicit authorization for production reads, verify a fresh zero-drift consumer plan against the unchanged Wasabi backend and existing providers; retain only sanitized identity/action-count evidence and confirm no apply was performed. Unexpected deltas block acceptance. Use the revised accepted exact SHA and separately verify the tunnel connector resolves declared split-DNS origins internally without routing back through Cloudflare; an intent declaration and offline tests do not establish that live property.
 - [x] 6.4 Record the accepted foundation contract and dependency evidence for the independent community-provider and thin-Actions canary branches; verify neither branch depends on the other's completion and downstream tasks reference the accepted runtime rather than a moving beta label.
+
+## 7. Split-DNS Consumer Acceptance Correction
+
+- [x] 7.1 Revise the active specification and caller documentation for typed exact-origin split-DNS intent declarations, preserving default rejection, operator/DNS-verification distinctions and open tasks 6.2/6.3.
+- [x] 7.2 Implement the optional typed per-origin allowlist across explicit and entity-derived Cloudflare generation; verify approved and unapproved same-zone origins, normalized hostname/protocol/port identity, boundary matching, malformed declarations, non-emission of policy metadata and unchanged ingress ordering.
+- [x] 7.3 Repeat complete credential-free local and qualified Dagger suites, schema/generation checks and immutable-provider comparisons; retain the required consumer declaration and uncommitted candidate status without production access or Git publication. Consumer acceptance must repeat against the revised exact SHA after separately authorized publication.
 
 ## Workflow Follow-up
 

@@ -33,6 +33,36 @@ is not a consumer configuration. Full operations select both outputs from one
 validated native JSON snapshot. Dependencies require exact declarations and a
 matching committed `kcl.mod.lock`; ordinary generation does not update them.
 
+Cloudflare origins at the public zone apex or its subdomains are rejected by
+default. For an intentionally split-horizon origin, declare only its exact typed
+protocol/hostname/port tuple, for example with the existing `cloudflare` import:
+
+```kcl
+_split_dns_origins: [cloudflare.SplitDNSOrigin] = [
+    cloudflare.SplitDNSOrigin {
+        protocol = "https"
+        hostname = "traefik-mid.sghd.io"
+        port = 443
+    }
+]
+```
+
+Set `split_dns_origins = _split_dns_origins` inside `CloudflareConfig`, or pass
+`split_dns_origins = _split_dns_origins` as the optional trailing argument to
+`generate_cloudflare_from_entities`, `transform_service` or
+`transform_tunnel_services`. Omitted policy defaults to `[]`. Matching uses a
+lowercase URL scheme, case-insensitive DNS hostname with one terminal root dot
+normalized, and effective port (HTTP 80, HTTPS 443; TCP needs an explicit port).
+There are no suffix wildcards, inherited subdomains or global bypasses.
+Invalid declarations fail closed; userinfo or ambiguous authorities cannot
+qualify. URLs, ordering, TLS/path metadata and Terraform JSON are unchanged,
+and the policy is not emitted into that JSON. See the
+[split-DNS contract](docs/execution-contracts.md#split-dns-origins) for boundaries.
+
+Public-zone membership alone is not proof of a loop. The declaration expresses
+operator intent, not DNS verification. Separately authorized live acceptance
+must prove connector-internal origin resolution without a Cloudflare loop.
+
 For an explicitly authorized remote-state read, the full-scope preview is:
 
 ```bash
@@ -144,6 +174,12 @@ with matching KCL, and separately approved production-read zero-drift acceptance
 must each be recorded. This README establishes none of those gates and records
 no production read, apply or destroy. Provider migration, global tool selection,
 consumer promotion, publication and release remain separately scoped work.
+
+Candidate `38daa8a8131080659acb5e4d59e4a2135eb7d92f` remains blocked, not
+accepted retroactively by the split-DNS revision. Tasks 6.2/6.3 remain open:
+consumer and live acceptance must be repeated against the revised exact SHA
+after separately authorized commit/push. No new SHA or consumer routing change
+is established here.
 
 ## License
 

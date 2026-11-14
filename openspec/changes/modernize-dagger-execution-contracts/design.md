@@ -32,6 +32,18 @@ Build a pinned tooling environment and execute the KCL entry point once to produ
 
 Both public generation paths select from the same result and preserve current JSON contracts, normalization, site propagation, service filtering and DNS-loop validation. Invalid source/missing keys/empty output fail structurally, not by searching stdout for the word VALIDATION. Use Changesets only for explicitly requested, non-sensitive checkout output; ephemeral Terraform inputs remain typed Files/Directories.
 
+#### Scoped split-DNS origin policy
+
+The approved revision replaces blanket same-zone rejection with default rejection plus exact opt-in declarations. Public-zone membership is a conservative validation signal, not proof that the connector's resolver will loop. Split-horizon DNS can resolve a public-zone name internally. An exception expresses operator intent only; it performs no DNS lookup or verification.
+
+Define `cloudflare.SplitDNSOrigin` as a typed record with `protocol: "http" | "https" | "tcp"`, `hostname: str` and `port: int` in 1..65535. Add `CloudflareConfig.split_dns_origins: [SplitDNSOrigin] = []`. `generate_cloudflare_from_entities`, `transform_service` and `transform_tunnel_services` accept the same typed list as an optional trailing `split_dns_origins` argument defaulting to empty; explicit tunnel-service validation receives the configuration policy. Existing callers without declarations retain default same-zone apex/subdomain rejection.
+
+Match only the exact lowercase URL scheme, DNS hostname (case-insensitive, normalizing one terminal root dot) and effective port. HTTP and HTTPS default to 80 and 443; TCP requires an explicit URL port. Paths, queries and fragments do not affect origin identity. A declaration hostname must be a concrete DNS name, not a URL, wildcard, IP address or address range. Invalid declarations fail closed even if unused. Userinfo and ambiguous authorities cannot qualify. Do not introduce suffix wildcards, subdomain inheritance or a global bypass, and do not let one protocol/port authorize another.
+
+The policy applies consistently to explicit services, entity-derived services, internal hostname overrides, resolved fallbacks and direct transform helpers. It does not rewrite output URLs or alter service ordering, TLS/path metadata, Terraform input shapes or provider/resource addresses. Do not emit the policy into Terraform JSON. Offline fixtures must cover default rejection, exact acceptance, normalized equivalents, nonmatching tuples, invalid declarations, unsafe authorities and output preservation through real supported entry points. Existing archived strict-blanket language remains historical, not the current policy.
+
+The required consumer example is `cloudflare.SplitDNSOrigin {protocol = "https", hostname = "traefik-mid.sghd.io", port = 443}` for an already-intended HTTPS origin. It changes validation policy, not routing. No consumer repository is edited under this revision. Separately authorized live acceptance must prove that the connector resolves this origin internally and reaches it without a Cloudflare loop.
+
 ### 3. Automatic freshness at the effect boundary
 
 Mark live orchestration uncached under the qualified SDK, then introduce a unique non-secret invocation identity into the live container execution graph. Function-level cache control alone cannot prevent underlying exec cache reuse. Keep tool setup and deterministic generation above that boundary. Refresh backend initialization when its cached metadata or credentials would otherwise be stale; initialization that contacts a backend is not assumed pure.
@@ -61,6 +73,8 @@ Newly generated tunnel credentials need secret-oriented output/explicit disclosu
 The accepted foundation then independently unblocks `add-cloudflare-live-ci-canary` (Dagger lifecycle, thin Actions runner) and `migrate-to-ubiquiti-community-unifi` (provider/state qualification). Neither branch is a prerequisite of the other. `portainer-docker-compose` change `adopt-modernized-dns-dagger-workspace` first accepts modernization with the existing provider and later accepts the provider-bearing revision only after its handoff gates. Published Dagger and KCL revisions must match; source pointers are not runtime acceptance.
 
 Expose the early runtime-qualification/candidate-contract receipt before final acceptance so the consumer can start its feature checks. Module tasks 6.2-6.3 and consumer feature checks produce shared final evidence; neither repository requires the other's entire change to be complete before beginning those checks. A modernization-only consumer delivery can finish independently of later provider-bearing adoption, whose explicit follow-up retains its own handoff and repeated acceptance gates.
+
+Candidate `38daa8a8131080659acb5e4d59e4a2135eb7d92f` was blocked by the strict same-zone guard and is not accepted by this revision. Tasks 6.2 and 6.3 remain open. After separately authorized commit/push, repeat matching module/KCL consumer generation and separately authorized live/production-read acceptance against the revised exact SHA; record connector-internal origin resolution and absence of a Cloudflare loop separately from offline validation. No replacement SHA, publication, consumer routing change or production operation is authorized here.
 
 ## Risks / Trade-offs
 

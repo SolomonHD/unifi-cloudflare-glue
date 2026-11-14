@@ -228,13 +228,35 @@ Both public generation methods MUST validate parsed JSON against existing provid
 - **THEN** generation MUST preserve those supported values
 
 ### Requirement: KCL generation enforces DNS-loop rejection
-Cloudflare KCL generation MUST reject resolved origin hostnames equal to the public zone or a subdomain of that zone, for explicit tunnel services and entity-derived services, before exporting usable configuration.
+Cloudflare KCL generation MUST reject origins at the public zone apex or its subdomains by default for explicit and entity-derived services, before exporting usable configuration. Only an exact typed `split_dns_origins` declaration matching protocol, normalized DNS hostname and effective port MAY exempt an origin.
 
 #### Scenario: Explicit or derived origin points into the public zone
 - **WHEN** an explicit service URL, service hostname override, or resolved fallback hostname uses the zone apex or a subdomain, including case and trailing-dot variants
-- **THEN** KCL generation MUST fail with an actionable tunnel/service location
+- **THEN** KCL generation MUST fail with an actionable tunnel/service location unless that exact origin tuple is declared
 - **AND** it MUST NOT silently omit the invalid service
 
 #### Scenario: Origin is outside the public zone
 - **WHEN** an origin uses an internal domain or a distinct hostname such as `notexample.com` for zone `example.com`
 - **THEN** DNS-loop validation MUST allow it
+
+#### Scenario: Exact split-DNS declaration permits a same-zone origin
+- **WHEN** an explicit, entity-derived, hostname-override or fallback service resolves to an origin exactly matching a valid `cloudflare.SplitDNSOrigin` declaration
+- **THEN** generation MUST allow the same-zone origin without altering the URL, service ordering, TLS/path metadata or Terraform input shape
+- **AND** tests MUST exercise both configuration and direct transform helper entry points with the same typed policy
+- **AND** documentation MUST distinguish public-zone membership from proof of a loop and declared operator intent from verified DNS resolution
+
+#### Scenario: Origin matching is narrowly normalized
+- **WHEN** matching lowercase URL schemes, DNS hostname case and one terminal DNS root dot, or implicit HTTP port 80 and HTTPS port 443 against declared ports
+- **THEN** tests MUST prove equivalent tuples match and protocol, port and distinct-hostname tuples do not
+- **AND** TCP MUST require an explicit URL port to qualify
+- **AND** paths, queries and fragments MUST NOT change origin identity or be rewritten
+
+#### Scenario: Declaration does not grant inherited or global permission
+- **WHEN** a declaration names a specific hostname and port
+- **THEN** tests MUST prove it grants no suffix wildcard, subdomain inheritance, other port/protocol or global bypass
+- **AND** omitted or empty policy MUST retain default rejection of same-zone apex and subdomains
+
+#### Scenario: Invalid declarations and ambiguous authorities fail closed
+- **WHEN** a declaration has an invalid protocol, non-integer or out-of-range port, or a hostname that is a URL, wildcard, IP address, address range or otherwise not a concrete DNS name
+- **THEN** generation MUST reject the declaration rather than ignore it or broaden permission
+- **AND** tests MUST prove userinfo or ambiguous URL authority cannot qualify for an exception

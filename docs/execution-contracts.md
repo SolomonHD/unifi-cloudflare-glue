@@ -53,6 +53,61 @@ The executable version is checked, not inferred from a tag. The mislabeled
 require reviewed helper pins; `latest` is not a supported default. Preserve
 Python, Dagger, KCL and Terraform locks independently.
 
+## Split-DNS Origins
+
+Same-zone apex and subdomain origins are rejected by default as a conservative
+loop guard. Public-zone membership is not proof of an actual loop: split-horizon
+DNS can resolve the same name internally. An opt-in declaration records operator
+intent only, not a lookup, resolution verification or routing change.
+
+`cloudflare.SplitDNSOrigin` is a typed record with `protocol` restricted to
+`"http" | "https" | "tcp"`, a concrete DNS `hostname: str`, and `port: int` in
+1..65535. `CloudflareConfig.split_dns_origins: [SplitDNSOrigin]` defaults to
+`[]`. `generate_cloudflare_from_entities`, `transform_service` and
+`transform_tunnel_services` accept that same typed list as an optional trailing
+`split_dns_origins` argument defaulting to empty. Pass it to any direct helper
+that validates a same-zone origin, not only to a later configuration wrapper.
+
+With the consumer's existing `cloudflare` schema import, the required policy
+example for the already-intended `https://traefik-mid.sghd.io:443` origin is:
+
+```kcl
+_split_dns_origins: [cloudflare.SplitDNSOrigin] = [
+    cloudflare.SplitDNSOrigin {
+        protocol = "https"
+        hostname = "traefik-mid.sghd.io"
+        port = 443
+    }
+]
+```
+
+Assign this list to `split_dns_origins` in the existing `CloudflareConfig` or
+pass `split_dns_origins = _split_dns_origins` to the existing entity-generator
+or transform-helper call. This is a consumer migration example, not an edit
+to the consumer repository or permission to change its origin routing.
+
+- Match the exact lowercase URL scheme, case-insensitive DNS hostname with one
+  terminal root dot normalized, and effective port. An omitted HTTP port is 80;
+  an omitted HTTPS port is 443. TCP must have an explicit URL port.
+- A declaration for HTTPS port 443 does not authorize HTTP, port 8443, another
+  hostname or any descendant of that hostname. No suffix wildcards,
+  subdomain inheritance or global bypass exists.
+- Declaration hostnames cannot be URLs, wildcards, IP addresses or address
+  ranges. Invalid declarations fail closed, including unused entries.
+  Userinfo and ambiguous URL authorities cannot qualify for an exception.
+- Paths, query strings and fragments do not change origin identity. Generation
+  preserves output URLs, service ordering, TLS/path metadata and Terraform
+  input shape. The validation policy is not emitted into Terraform JSON.
+- Explicit services, entity-derived services, internal hostname overrides,
+  resolved fallback hostnames and direct helpers use the same policy. Omitted
+  or empty policy retains default rejection; origins outside the public zone
+  retain their existing behavior.
+
+Offline schema/generator tests establish exact matching and output preservation,
+not DNS safety in a running network. Separately authorized live acceptance must
+prove that the connector resolves the declared origin internally and reaches it
+without a Cloudflare loop, with TLS and path behavior preserved.
+
 ## Root And State Ownership
 
 `state_scope` accepts exactly `full`, `unifi` or `cloudflare` and must match
@@ -148,6 +203,13 @@ local-state effects or prove cleanup after lost connectivity.
 The sibling `adopt-modernized-dns-dagger-workspace` change owns consumer
 adoption. No global toolchain change, provider upgrade, publication, merge or
 production effect is implied by this documentation.
+
+Candidate `38daa8a8131080659acb5e4d59e4a2135eb7d92f` remains blocked by the
+earlier strict same-zone guard; the revised policy does not retroactively accept
+that candidate. Upstream tasks 6.2 and 6.3 remain open. After separately
+authorized commit/push, repeat matching module/KCL consumer generation and the
+separately authorized live/production-read checks against the revised exact SHA.
+No new SHA, consumer edit, publication or production read is established here.
 
 ## Independent Downstream Dependencies
 

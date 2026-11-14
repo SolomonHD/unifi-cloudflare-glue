@@ -367,3 +367,78 @@ qualification the upstream implementation was uncommitted on
 `modernize-legacy-unit-test-contracts`; later publication must be verified
 against that branch's remote full SHA rather than inferred from this receipt.
 Tasks 6.2 and 6.3 remain unchecked; no merge or archive is requested here.
+
+## Split-DNS Revision Qualification, 2026-11-14
+
+Consumer acceptance rejected published candidate
+`38daa8a8131080659acb5e4d59e4a2135eb7d92f` because its same-zone origin
+guard rejected existing split-DNS origins. Zone membership alone is not proof
+of a tunnel loop. The checks below qualified a working-tree revision based on
+that SHA before publication. Later feature publication requires separate
+authorization and does not establish consumer acceptance. Use the independently
+verified full published SHA supplied with this revision's downstream handoff,
+not the old candidate or an assumed branch/tag resolution.
+
+The chosen source contract is `cloudflare.SplitDNSOrigin` with required
+`protocol` (`http`, `https` or `tcp`), concrete DNS `hostname`, and integer
+`port` (1..65535). `CloudflareConfig.split_dns_origins` and the entity/transform
+helpers' optional trailing argument default to an empty typed list. An exception
+matches one protocol, case-normalized hostname with one terminal DNS dot
+removed, and effective port (HTTP 80 / HTTPS 443; TCP needs an explicit port).
+Wildcards, inherited subdomains, global bypass flags, URI/userinfo declarations
+and malformed authorities are not accepted as exceptions. URL paths and query
+strings do not change origin identity; emitted URLs and ingress ordering remain
+unchanged, and policy metadata is not emitted into Terraform input JSON.
+
+Required consumer declaration for the reported origin, using its existing
+import alias for this module's Cloudflare schemas:
+
+```kcl
+split_dns_origins = [cloudflare.SplitDNSOrigin {
+    protocol = "https"
+    hostname = "traefik-mid.sghd.io"
+    port = 443
+}]
+```
+
+Set that field on the existing `CloudflareConfig`, or pass the same list as
+`split_dns_origins=...` to the existing entity/transform call. This receipt
+does not edit the consumer or authorize an origin/routing change. Each additional
+origin needs its own exact declaration.
+
+Credential-free revision results:
+
+- Full local `bash scripts/verify-offline.sh`: **593 passed, no skips**.
+- Qualified Dagger `verify-offline --source=.`: **593 passed, no skips**.
+- Black/isort, mypy across eight application files, compilation and all seven
+  KCL entry points passed. Existing plugin deprecations remain warnings.
+- Qualified schema generation passed (5.7 seconds); Python runtime, SDK, engine,
+  tool identities, locks and provider constraints were not changed.
+- Focused DNS suites: 171 passed, including 119 new split-DNS cases and all 52
+  existing default-rejection regressions. Cases cover all five entry paths,
+  approved/unapproved same-zone origins, case/root-dot and default-port matching,
+  label boundaries, raw structural declarations, malformed types/values,
+  per-origin isolation, preserved ingress order/TLS/path metadata and non-emission
+  of the allowlist.
+- `/tmp/kilo/qualify-split-dns-public-20261114.py` exercised the public Cloudflare
+  generator with real Dagger Files and the pinned native compiler. The exact
+  approved origin succeeded with original URLs/order; a different same-zone
+  declaration failed without producing a usable File. No provider or origin-DNS lookup
+  was performed.
+- Strict validation passed for the active change and canonical main
+  `config-generation` / `generator-output-validation` specs. The older
+  `kcl-validation-rules`, `kcl-debugging-guide` and `terraform-module` files retain
+  their pre-existing structural warnings; unrelated contract/header repair was
+  not folded into this revision. The existing `rules.general` warning remains.
+- `git diff --check` passed. `git diff --exit-code -- terraform src/main scripts
+  dagger-module.toml dagger.toml dagger.lock pyproject.toml uv.lock` confirmed no
+  provider-source, execution-contract or tool/lock changes.
+
+The exception records **operator intent, not verified DNS resolution**. Live
+acceptance must separately prove the tunnel connector resolves each declared
+origin internally and reaches it without routing back through Cloudflare,
+including relevant TLS/path behavior. No production access or live DNS/route
+check was performed here. No consumer routing change, commit/push, merge or
+archive was performed during qualification. Tasks 6.2 and 6.3 remain open and must repeat against the
+revised exact published SHA after separate publication/read authorization; the
+old candidate's prior qualification is not substituted for that evidence.
