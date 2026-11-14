@@ -8,88 +8,48 @@ structural repair does not apply those deltas or declare their behavior complete
 
 ## Requirements
 
-### Requirement: Deploy Cloudflare success message includes credential retrieval guidance
-After successful Cloudflare tunnel deployment via [`deploy_cloudflare()`](../../../../src/main/main.py:422-571), the success message SHALL include clear, actionable instructions for retrieving tunnel credentials using both Terraform and Dagger commands.
-
-#### Scenario: Successful deploy_cloudflare with local backend
-- **WHEN** [`deploy_cloudflare()`](../../../../src/main/main.py:422-571) completes successfully with local backend
-- **THEN** success message includes:
-  - Success indicator and backend type
-  - Section header "Next Step: Retrieve Tunnel Credentials"
-  - Terraform output command: `terraform output -json cloudflare_tunnel_tokens`
-  - Dagger command with actual deployment parameters (account ID, zone name, source directory)
-  - `cloudflared service install` command example
-  - Link to example documentation
-
-#### Scenario: Successful deploy_cloudflare with remote backend
-- **WHEN** [`deploy_cloudflare()`](../../../../src/main/main.py:422-571) completes successfully with remote backend (e.g., S3, GCS)
-- **THEN** success message includes:
-  - Backend type information
-  - Credential retrieval guidance
-  - Dagger command WITH backend-specific flags (`--backend-type`, `--backend-config-file`)
-
-#### Scenario: Successful deploy_cloudflare with persistent local state
-- **WHEN** [`deploy_cloudflare()`](../../../../src/main/main.py:422-571) completes successfully with mounted state directory
-- **THEN** success message includes:
-  - State persistence indicator
-  - Dagger command WITH `--state-dir` flag
-
-#### Scenario: Failed deploy_cloudflare
-- **WHEN** [`deploy_cloudflare()`](../../../../src/main/main.py:422-571) fails
-- **THEN** success message MUST NOT include credential retrieval guidance
-
 ### Requirement: Full deploy success message includes credential retrieval guidance
-After successful full deployment via [`deploy()`](../../../../src/main/main.py:574-742) where both UniFi and Cloudflare phases succeed, the final summary SHALL include clear instructions for retrieving tunnel credentials.
+After successful full deployment via `deploy()` using one combined Terraform operation, the final summary SHALL include clear instructions for retrieving tunnel credentials.
 
 #### Scenario: Both UniFi and Cloudflare deployments succeed
-- **WHEN** [`deploy()`](../../../../src/main/main.py:574-742) completes with both phases successful
-- **THEN** final summary includes:
-  - Success summary indicator
-  - Section header "Next Step: Retrieve Tunnel Credentials"
-  - Dagger command with KCL source directory (`--source=./kcl`)
-  - Dagger command with actual deployment parameters
-  - Backend-specific flags if applicable
-  - `cloudflared service install` command example
-  - Link to example documentation
+- **WHEN** the combined operation for both components succeeds
+- **THEN** the final summary MUST include a success indicator, a labeled credential-retrieval section, supported Dagger retrieval guidance with actual account/zone/backend selections and a labeled KCL-source path placeholder, an installation example, and the example documentation link
 
 #### Scenario: UniFi succeeds but Cloudflare fails
-- **WHEN** [`deploy()`](../../../../src/main/main.py:574-742) completes with UniFi success but Cloudflare failure
-- **THEN** final summary MUST NOT include credential retrieval guidance
+- **WHEN** a combined operation partially affects UniFi but fails before completing the selected Cloudflare deployment
+- **THEN** the final summary MUST NOT include success credential-retrieval guidance
+- **AND** tests MUST NOT require separate UniFi and Cloudflare apply cycles
 
 #### Scenario: UniFi fails before Cloudflare deployment
-- **WHEN** [`deploy()`](../../../../src/main/main.py:574-742) fails at UniFi phase
-- **THEN** final summary MUST NOT include credential retrieval guidance
+- **WHEN** the combined operation fails before completing the selected components
+- **THEN** the final summary MUST NOT include success credential-retrieval guidance
 
 ### Requirement: Guidance commands use actual deployment parameters
-Credential retrieval guidance in success messages SHALL use the exact parameters from the deployment function call, not placeholder values.
+Credential retrieval guidance SHALL use actual account, zone, and backend selections while clearly distinguishing unavailable original host paths from known parameter values.
 
 #### Scenario: Dagger command reflects actual parameter values
-- **WHEN** success message includes Dagger command guidance
-- **THEN** command MUST include:
-  - Actual Cloudflare account ID from deployment
-  - Actual zone name from deployment
-  - Actual backend type if not local
-  - Actual backend config file path if provided
-  - Actual state directory path if provided
+- **WHEN** a successful deployment includes Dagger retrieval guidance
+- **THEN** the command MUST include the actual account ID, zone name, and applicable backend type
+- **AND** unavailable original source, backend-file, and state-directory paths MUST be shell-quoted placeholders with instructions to reuse deployment inputs
+- **AND** it MUST NOT imply that conventional example paths are the original deployment paths
 
 #### Scenario: Command formatting includes line continuations
-- **WHEN** success message includes multi-parameter Dagger command
-- **THEN** command MUST use line continuation backslashes (`\`) for readability
-- **AND** parameters MUST be indented consistently
+- **WHEN** guidance includes a multi-parameter command
+- **THEN** parameters MUST use consistent indentation and line-continuation backslashes
 
 ### Requirement: Guidance formatting improves readability
-Credential retrieval guidance SHALL use visual separators and formatting to distinguish it from deployment output.
+Credential retrieval guidance SHALL use visual separators, a labeled section,
+and separate numbered options for supported Dagger retrieval and cloudflared
+installation without requiring raw Terraform output instructions.
 
 #### Scenario: Visual separation from deployment logs
-- **WHEN** success message includes guidance section
-- **THEN** guidance MUST be preceded by separator line (dashes)
-- **AND** guidance MUST be followed by separator line
-- **AND** section header MUST be clearly labeled
+- **WHEN** a successful deployment includes credential retrieval guidance
+- **THEN** the section MUST have dash separators and a clearly labeled header
 
 #### Scenario: Multi-step instructions
-- **WHEN** guidance includes multiple retrieval options
-- **THEN** options MUST be numbered (1. Terraform, 2. Dagger, 3. Install)
-- **AND** each step MUST be on separate lines for clarity
+- **WHEN** guidance describes retrieval and installation
+- **THEN** it MUST label Dagger retrieval as Option 1 and installation as Option 2 on separate lines
+- **AND** it MUST NOT require printing raw Terraform state or token output
 
 ---
 
@@ -198,22 +158,24 @@ The deployment patterns documentation SHALL be linked from main project navigati
 <!-- Requirements retained from change: deploy-function-consolidation. -->
 
 ### Requirement: Deploy function uses combined Terraform module
-The `deploy()` function SHALL use the combined Terraform module at `terraform/modules/glue/` for all deployments.
+The `deploy()` function SHALL use `terraform/modules/glue/` for full deployment and the current provider-specific module for selective deployment, with one Terraform init/apply cycle for every scope.
+Historical scenario titles are retained as identifiers; their bodies define the reconciled module selection.
 
 #### Scenario: Full deployment uses combined module
-- **WHEN** `deploy()` is called without `--unifi-only` or `--cloudflare-only` flags
-- **THEN** the function SHALL use `terraform/modules/glue/` module
-- **AND** apply both UniFi DNS and Cloudflare Tunnel configurations in a single Terraform operation
+- **WHEN** `deploy()` runs without selective flags
+- **THEN** it MUST apply both providers using `terraform/modules/glue/` in one operation
 
 #### Scenario: UniFi-only deployment uses combined module
-- **WHEN** `deploy()` is called with `--unifi-only` flag
-- **THEN** the function SHALL use `terraform/modules/glue/` module
-- **AND** apply only UniFi DNS configuration
+- **WHEN** the combined `deploy()` entry point runs with `unifi_only`
+- **THEN** it MUST use `terraform/modules/unifi-dns/`
+- **AND** unselected provider credentials and configuration generation MUST NOT be required
+- **AND** it MUST NOT run separate UniFi and Cloudflare apply cycles
 
 #### Scenario: Cloudflare-only deployment uses combined module
-- **WHEN** `deploy()` is called with `--cloudflare-only` flag
-- **THEN** the function SHALL use `terraform/modules/glue/` module
-- **AND** apply only Cloudflare Tunnel configuration
+- **WHEN** the combined `deploy()` entry point runs with `cloudflare_only`
+- **THEN** it MUST use `terraform/modules/cloudflare-tunnel/`
+- **AND** unselected provider credentials and configuration generation MUST NOT be required
+- **AND** it MUST NOT run separate UniFi and Cloudflare apply cycles
 
 ### Requirement: Selective deployment flags
 The `deploy()` function SHALL support `--unifi-only` and `--cloudflare-only` boolean flags for selective component deployment.
@@ -275,6 +237,39 @@ The `deploy()` function SHALL perform a single Terraform init/apply cycle regard
 - **THEN** only one `terraform init` SHALL be performed
 - **AND** only one `terraform apply` SHALL be performed
 - **AND** the container reference SHALL be preserved after execution
+
+### Requirement: Selective combined deployment includes applicable credential guidance
+The combined `deploy()` function SHALL include tunnel credential-retrieval guidance after a successful deployment that includes Cloudflare, including a Cloudflare-only deployment, and MUST omit that guidance when Cloudflare is excluded or deployment fails.
+
+#### Scenario: Cloudflare-only combined deployment succeeds
+- **WHEN** `deploy()` completes successfully with Cloudflare selected and UniFi excluded
+- **THEN** the result MUST include credential-retrieval guidance using actual account, zone, and backend selections and explicitly labeled placeholders for unavailable original host paths
+
+#### Scenario: Combined deployment excludes Cloudflare
+- **WHEN** `deploy()` completes successfully with UniFi selected and Cloudflare excluded
+- **THEN** the result MUST NOT include Cloudflare tunnel credential-retrieval guidance
+
+#### Scenario: Combined deployment fails
+- **WHEN** `deploy()` fails before completing the selected Cloudflare deployment
+- **THEN** a success guidance section MUST NOT be emitted
+
+### Requirement: Deployment guidance tests use supported public functions
+Deployment-guidance unit tests MUST invoke the supported combined deployment interface and MUST NOT require compatibility wrappers for deleted standalone functions.
+
+#### Scenario: Guidance unit tests construct the module
+- **WHEN** deployment-guidance tests exercise Cloudflare-only, UniFi-only, or combined behavior
+- **THEN** they MUST call `deploy()` with the corresponding selection flags
+- **AND** their mocks MUST match the current combined Terraform execution path
+
+### Requirement: Guidance is parameter-correct and secret-safe
+Guidance SHALL describe supported credential retrieval without emitting resolved credentials or raw state, using actual non-secret account, zone, and backend selections. Original host paths unavailable from opaque Dagger inputs MUST be represented by clearly labeled, shell-quoted placeholders with instructions to reuse deployment inputs; no new path-hint parameters are required.
+
+#### Scenario: Local remote or persistent-state deployment succeeds
+- **WHEN** Cloudflare is included in a successful deployment using a local backend, remote backend, or explicit persistent state
+- **THEN** guidance MUST use the actual account, zone, and backend type and include only applicable source/backend/state flags
+- **AND** original source, backend-file, and state-directory paths MUST be explicitly labeled placeholders, not invented conventional paths
+- **AND** guidance MUST instruct the caller to replace placeholders with the same inputs used for deployment
+- **AND** secret inputs MUST remain runtime references rather than rendered values
 
 ## Historical Removals
 

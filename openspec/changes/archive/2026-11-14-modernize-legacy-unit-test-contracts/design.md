@@ -249,3 +249,24 @@ not current completion evidence; final verification is recorded separately.
   a separately requested commit/push records these working-tree changes. No
   live engine/provider acceptance, infrastructure mutation, merge, spec sync or
   archive was performed.
+
+### Archive Closeout (2026-11-14)
+
+- Implementation baseline `098c62c1343e0260bb07643ab21ca46c2eabdff8` was
+  committed and verified on origin before the operator requested archive/push.
+  All 17 implementation tasks are complete; no merge was requested.
+- Synced deployment guidance, generator-output validation and the new offline
+  verification baseline. Explicitly reconciled the historical validation-error
+  requirement that demanded echoing values with the approved no-value diagnostic
+  contract, retaining all three scenario identities.
+- Each affected main spec passes strict validation. All delta blocks are verified
+  applied (19 guidance, 15 generator, 4 baseline requirements); all 21 untouched
+  requirement blocks and established titles/Purpose sections are preserved. The
+  new baseline title is canonical and its Purpose is copied from the delta.
+- Repository-wide `openspec validate --specs` found 15 passing and 47 failing
+  capabilities, with unrelated legacy missing sections/structural errors. The
+  operator explicitly approved proceeding with strict validation scoped to this
+  change's three affected capabilities, leaving unrelated specs unchanged.
+- Archive and publication are lifecycle closeout only. Provider/runtime settings,
+  infrastructure, the other completed normalized-provider change, and unrelated
+  local planning edits remain untouched.

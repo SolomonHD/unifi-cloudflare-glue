@@ -61,3 +61,22 @@ Cloudflare KCL generation MUST reject resolved origin hostnames equal to the pub
 #### Scenario: Origin is outside the public zone
 - **WHEN** an origin uses an internal domain or a distinct hostname such as `notexample.com` for zone `example.com`
 - **THEN** DNS-loop validation MUST allow it
+
+## MODIFIED Requirements
+
+### Requirement: Validation provides clear error messages
+When validation fails, it SHALL provide actionable field-path and type/format diagnostics without echoing offending values or the full configuration.
+
+#### Scenario: Missing field error message
+- **WHEN** validation detects a missing required field
+- **THEN** the error message SHALL identify the field path, that the field is missing, and the expected type
+
+#### Scenario: Wrong type error message
+- **WHEN** validation detects a field with incorrect type
+- **THEN** the error message SHALL identify the field path, expected type, and found type
+- **AND** it MUST NOT include the offending value or full configuration
+
+#### Scenario: Invalid MAC address format error
+- **WHEN** validation detects a MAC address not in normalized format
+- **THEN** the error message SHALL identify the field path and expected normalized MAC format
+- **AND** it MUST NOT echo the invalid MAC value or arbitrary tunnel-map key
