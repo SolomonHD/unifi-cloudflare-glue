@@ -1,0 +1,62 @@
+name: Cloudflare DNS Canary
+
+on:
+  push:
+    branches: [main, change/add-cloudflare-live-ci-canary]
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-live-ci
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    if: >-
+      github.repository == 'SolomonHD/unifi-cloudflare-glue' &&
+      ((github.ref == 'refs/heads/main' &&
+        vars.CLOUDFLARE_CANARY_ENABLED == 'true' &&
+        (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+         (github.event_name == 'schedule' && vars.CLOUDFLARE_CANARY_SCHEDULE_ENABLED == 'true'))) ||
+       (github.event_name == 'push' &&
+        github.ref == 'refs/heads/change/add-cloudflare-live-ci-canary' &&
+        vars.CANARY_ACCEPTANCE_BRANCH == 'change/add-cloudflare-live-ci-canary' &&
+        github.sha == vars.CANARY_ACCEPTANCE_SHA))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: cloudflare-live-ci
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install checksum-qualified Dagger CLI
+        run: python3 scripts/bootstrap-canary-dagger.py "$RUNNER_TEMP/canary-cli/dagger"
+      - name: Run Dagger-owned DNS lifecycle
+        env:
+          DAGGER_BIN: ${{ runner.temp }}/canary-cli/dagger
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          WASABI_BUCKET: ${{ vars.WASABI_BUCKET }}
+          CANARY_ACCEPTANCE_SHA: ${{ vars.CANARY_ACCEPTANCE_SHA }}
+          CANARY_ACCEPTANCE_BRANCH: ${{ vars.CANARY_ACCEPTANCE_BRANCH }}
+          CANARY_POLICY_REVIEWED: ${{ vars.CANARY_POLICY_REVIEWED }}
+        run: >-
+          bash scripts/dagger-qualified.sh api call -m . test-cloudflare-dns-canary
+          --cloudflare-api-token=env://CLOUDFLARE_API_TOKEN
+          --wasabi-access-key=env://AWS_ACCESS_KEY_ID
+          --wasabi-secret-key=env://AWS_SECRET_ACCESS_KEY
+          --bucket="$WASABI_BUCKET"
+          --revision="$GITHUB_SHA"
+          --run-id="$GITHUB_RUN_ID"
+          --attempt="$GITHUB_RUN_ATTEMPT"
+          --repository="$GITHUB_REPOSITORY"
+          --ref="$GITHUB_REF"
+          --event-name="$GITHUB_EVENT_NAME"
+          --acceptance-sha="$CANARY_ACCEPTANCE_SHA"
+          --acceptance-branch="$CANARY_ACCEPTANCE_BRANCH"
+          --policy-reviewed="$CANARY_POLICY_REVIEWED"

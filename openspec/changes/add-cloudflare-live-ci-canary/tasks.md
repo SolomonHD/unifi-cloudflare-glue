@@ -1,31 +1,31 @@
 ## 1. Prerequisites and Credential Boundary
 
-- [ ] 1.1 Record accepted repaired baseline and execution-foundation evidence from `docs/dagger-runtime-qualification.md` / `docs/execution-contracts.md`: beta27 CLI checksum/engine digest, Python SDK full SHA, native KCL 0.12.4 checksum and Terraform 1.13.5 digest, not a moving beta label. Require the foundation's feature-consumer/production-read gates; fallback remains unaccepted unless separately qualified. Verify no dependency on `migrate-to-ubiquiti-community-unifi` completion.
-- [ ] 1.2 Document token creation/independent rotation for Zone Read and DNS Edit on only `solomonhd.ai`, and verify credential policy excludes Tunnel and production-zone permissions
+- [x] 1.1 Record accepted repaired baseline and execution-foundation evidence from `docs/dagger-runtime-qualification.md` / `docs/execution-contracts.md`: beta27 CLI checksum/engine digest, Python SDK full SHA, native KCL 0.12.4 checksum and Terraform 1.13.5 digest, not a moving beta label. Require the foundation's feature-consumer/production-read gates; fallback remains unaccepted unless separately qualified. Verify no dependency on `migrate-to-ubiquiti-community-unifi` completion.
+- [x] 1.2 Document token creation/independent rotation for Zone Read and DNS Edit on only `solomonhd.ai`, and verify credential policy excludes Tunnel and production-zone permissions
 - [ ] 1.3 Define the `cloudflare-live-ci` environment, trusted-ref/access policy, runtime secret bindings, and non-secret zone metadata; verify available GitHub enforcement rather than assume environment naming provides protection
-- [ ] 1.4 Add passing offline tests rejecting PR/fork/`pull_request_target` secret execution and untrusted manual-dispatch refs before requesting credentials
-- [ ] 1.5 Document the dedicated Wasabi sandbox prefix, per-run state/ledger/checkpoint layout, scoped CI identity, encryption, retention, and production isolation; verify the design grants no provisioning or credential access
+- [x] 1.4 Add passing offline tests rejecting PR/fork/`pull_request_target` secret execution and untrusted manual-dispatch refs before requesting credentials
+- [x] 1.5 Document the dedicated Wasabi sandbox prefix, per-run state/ledger/checkpoint layout, scoped CI identity, encryption, retention, and production isolation; verify the design grants no provisioning or credential access
 - [ ] 1.6 Under separately authorized backend qualification, record exact Wasabi conditional-write/version/lock semantics for the selected runtime/backend tuple and prove competing writers, renewal/loss, stale ownership, and failed preconditions fail closed before DNS mutation
 
 ## 2. DNS Canary Fixture
 
-- [ ] 2.1 Add the TXT/unproxied-CNAME-only Terraform fixture and one normal Dagger lifecycle entry point; verify resource allowlist tests exclude Tunnels, zones, routes, and UniFi
-- [ ] 2.2 Implement DNS-label-safe `gha-<timestamp>-<run-id>-<attempt>` naming and exact suffix/prefix checks; verify rejection tests run before apply and cleanup
-- [ ] 2.3 Supply Cloudflare and scoped Wasabi credentials only through runtime Dagger secret channels; verify sentinel tests exclude raw state/plan/credentials/provider logs from output and generic Actions artifacts
-- [ ] 2.4 Implement Dagger-owned create/API/public-DNS validation/update/zero-drift plan and verify unit tests for each phase plus bounded propagation failures
-- [ ] 2.5 Implement Dagger-owned handled-failure cleanup, state-based destroy, and exact-name API absence verification; verify primary and cleanup outcomes are retained and public negative DNS is informational only
-- [ ] 2.6 Add passing failure-injection tests for naming limits, allowlists, propagation timeout, partial apply, missing state, failed destroy, residuals, backend loss, and disclosure
-- [ ] 2.7 Persist run/revision/zone identity, exact intended records, and phase intent before effects in protected per-run Wasabi evidence; verify persistence failure stops mutation and uncertain-create recovery avoids duplicate creation
-- [ ] 2.8 Implement shared all-writer ownership/generation fencing and verify lost ownership, external writers, delayed/stalled prior work, and uncertain state block further effects; document why Actions concurrency or lease age alone is insufficient
-- [ ] 2.9 Document lifecycle, protected evidence, outcome meanings, and DNS/Tunnel boundaries; verify examples invoke the selected Dagger entry point without workflow Terraform logic
+- [x] 2.1 Add the TXT/unproxied-CNAME-only Terraform fixture and one normal Dagger lifecycle entry point; verify resource allowlist tests exclude Tunnels, zones, routes, and UniFi
+- [x] 2.2 Implement DNS-label-safe `gha-<timestamp>-<run-id>-<attempt>` naming and exact suffix/prefix checks; verify rejection tests run before apply and cleanup
+- [x] 2.3 Supply Cloudflare and scoped Wasabi credentials only through runtime Dagger secret channels; verify sentinel tests exclude raw state/plan/credentials/provider logs from output and generic Actions artifacts
+- [x] 2.4 Implement Dagger-owned create/API/public-DNS validation/update/zero-drift plan and verify unit tests for each phase plus bounded propagation failures
+- [x] 2.5 Implement Dagger-owned handled-failure cleanup, state-based destroy, and exact-name API absence verification; verify primary and cleanup outcomes are retained and public negative DNS is informational only
+- [x] 2.6 Add passing failure-injection tests for naming limits, allowlists, propagation timeout, partial apply, missing state, failed destroy, residuals, backend loss, and disclosure
+- [x] 2.7 Persist run/revision/zone identity, exact intended records, and phase intent before effects in protected per-run Wasabi evidence; verify persistence failure stops mutation and uncertain-create recovery avoids duplicate creation
+- [x] 2.8 Implement shared all-writer ownership/generation fencing and verify lost ownership, external writers, delayed/stalled prior work, and uncertain state block further effects; document why Actions concurrency or lease age alone is insufficient
+- [x] 2.9 Document lifecycle, protected evidence, outcome meanings, and DNS/Tunnel boundaries; verify examples invoke the selected Dagger entry point without workflow Terraform logic
 
 ## 3. Trusted GitHub Actions Workflow
 
-- [ ] 3.1 Add a thin live workflow for trusted `main` pushes, schedule, and trusted-ref manual dispatch; verify workflow tests reject all untrusted secret contexts
+- [x] 3.1 Add a thin live workflow for trusted `main` pushes, schedule, and trusted-ref manual dispatch; verify workflow tests reject all untrusted secret contexts
 - [ ] 3.2 Set least permissions (read-only contents unless justified), finite timeout, `cancel-in-progress: false`, verified environment controls, and exact parent-selected CLI setup; verify lint and policy tests
-- [ ] 3.3 Invoke the one normal Dagger entry point with runtime secret handoff; verify workflow tests reject Terraform/API lifecycle logic in every step, including `if: always()`, and reject Dagger Cloud or other-template migration
+- [x] 3.3 Invoke the one normal Dagger entry point with runtime secret handoff; verify workflow tests reject Terraform/API lifecycle logic in every step, including `if: always()`, and reject Dagger Cloud or other-template migration
 - [ ] 3.4 Verify sanitized failing job status for primary, cleanup, residual, and unknown outcomes, without claiming hard cancellation ran a finalizer
-- [ ] 3.5 Integrate one non-duplicated live result/status and verify no secret-bearing job is copied into either existing offline template
+- [x] 3.5 Integrate one non-duplicated live result/status and verify no secret-bearing job is copied into either existing offline template
 
 ## 4. Stale Record Janitor
 
@@ -44,7 +44,7 @@
 - [ ] 5.4 Run janitor report-only mode, review the selection, then test cleanup of a deliberately aged canary record
 - [ ] 5.5 Verify documentation covers hosted DNS-only scope, manual local Tunnel testing, credential rotation, protected recovery retention, explicit reconciliation authorization, rollback, residual cleanup, and troubleshooting
 - [ ] 5.6 Record pilot reliability/propagation measurements and a reviewed initial nightly rollout/status recommendation; verify schedule activation remains a separate explicitly authorized action
-- [ ] 5.7 Run offline test suites, workflow linting, `openspec validate add-cloudflare-live-ci-canary --strict`, and `git diff --check`
+- [x] 5.7 Run offline test suites, workflow linting, `openspec validate add-cloudflare-live-ci-canary --strict`, and `git diff --check`
 
 ## Closeout
 

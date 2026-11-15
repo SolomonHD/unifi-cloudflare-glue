@@ -34,6 +34,8 @@ SOURCE_INCLUDE = (
     "terraform/**/.terraform.lock.hcl",
     "scripts/verify-offline.sh",
     "scripts/dagger-qualified.sh",
+    "scripts/bootstrap-canary-dagger.py",
+    ".github/workflows/cloudflare-live-ci.gha.yaml",
 )
 SOURCE_EXCLUDE = (
     "**/__pycache__/**",

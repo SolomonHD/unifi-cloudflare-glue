@@ -3377,3 +3377,48 @@ output "record_id" {{
             raise RuntimeError(
                 _safe_exec_error("Tunnel secret retrieval", e, operation_id)
             ) from None
+
+    @function(cache="never")  # type: ignore[call-overload]
+    async def test_cloudflare_dns_canary(
+        self,
+        cloudflare_api_token: Secret,
+        wasabi_access_key: Secret,
+        wasabi_secret_key: Secret,
+        bucket: str,
+        revision: str,
+        run_id: str,
+        attempt: str,
+        repository: str,
+        ref: str,
+        event_name: str,
+        acceptance_sha: str = "",
+        acceptance_branch: str = "",
+        policy_reviewed: str = "false",
+        operation: str = "normal",
+    ) -> str:
+        """Qualify the sandbox, then create/update/verify/destroy two DNS records.
+
+        Runtime Secrets never become Python application strings. Unknown effects
+        retain the durable claim for separately authorized reconciliation.
+        """
+        try:
+            from .canary_entrypoint import config_for, invoke
+        except ImportError:
+            from canary_entrypoint import (  # type: ignore[no-redef,import-not-found]
+                config_for,
+                invoke,
+            )
+        config = config_for(
+            operation=operation,
+            bucket=bucket,
+            revision=revision,
+            run_id=run_id,
+            attempt=attempt,
+            repository=repository,
+            ref=ref,
+            event_name=event_name,
+            acceptance_sha=acceptance_sha,
+            acceptance_branch=acceptance_branch,
+            policy_reviewed=policy_reviewed,
+        )
+        return await invoke(config, cloudflare_api_token, wasabi_access_key, wasabi_secret_key)

@@ -61,6 +61,53 @@ Qualification must establish the exact Wasabi/backend behavior for conditional w
 
 Actions concurrency with `cancel-in-progress: false` limits that workflow only. It does not fence a manual CLI, another workflow, or a previously stalled process. Age/lease expiry alone cannot prove an old writer stopped or prevent its later request reaching Cloudflare. Recovery must establish prior writer termination and reconcile in-flight effects before takeover; if writer exclusion or required conditional-write semantics cannot be proven, fail closed and retain the run for explicit operator reconciliation, not an invented distributed lock guarantee.
 
+Operator decision, 2026-11-15: use non-expiring conditional Wasabi ownership
+claims with expected-generation checks. There is no automatic claim expiry or
+takeover. Revalidation is the ownership-renewal boundary; an unavailable or
+changed claim stops effects rather than extending assumed authority. Recovery
+requires explicit operator-established prior writer termination and exclusion
+of other writers, followed by authoritative effect reconciliation. A claim is
+cooperative coordination, not an API fence against an external writer bypassing
+the protocol. Without established exclusion, mutation stays blocked. This
+decision authorizes offline design/implementation, not storage provisioning,
+credential access, backend qualification or live execution.
+
+Subsequent operator approval, 2026-11-15: after verified DNS/state cleanup,
+conditionally create and read back an immutable per-run completed receipt;
+CAS the active claim to completed, binding the archive key, opaque version and
+original claim version. A successor verifies the exact completed ledger/archive
+body before CAS replacement and retains its predecessor pointer. Pending,
+unknown, stale or unverifiable outcomes remain blocked without takeover.
+Completed failures may hand off only after independently successful destroy
+and authoritative absence; the failed primary outcome is retained.
+
+The selected backend is `sandbox-ghe-actions-ci`, `us-east-1`,
+`https://s3.us-east-1.wasabisys.com`, prefix `cloudflare-live-ci/v1/`.
+State uses `runs/<run>/terraform.tfstate` with native `.tflock`; generation-
+specific immutable checkpoints and completed receipts stay under that run.
+`maintenance.json` is the cooperative global claim. Boto3/botocore 1.44.3
+are frozen in `uv.lock`; the fixture locks Cloudflare 5.16.0 using the
+foundation's reviewed hashes. All checkpoint/ledger puts require AES256 SSE
+and durable object versions, and all reads/writes are bounded without SDK
+retries. Historical versions are not permanently deleted. The operator enabled
+bucket versioning and reviewed both credential policy boundaries; those access
+and retention assertions remain attributed operator evidence, not an API fence
+against administrators or uncoordinated external writers.
+
+S3 qualification proves conditional acquisition, stale/competing refusal,
+versioned readback, encryption metadata and retained versions after delete-marker
+cleanup. A separate provider-free native Terraform root then proves refusal
+while its exact owned lock is held, owned release/absence and a zero-change
+plan. `operation=qualify` stops there and labels its result distinctly; it never
+enters the DNS lifecycle. Normal execution requires both measured gates first.
+
+The operator also authorized a feature-only initial Actions pilot. Its reviewed
+full SHA and exact branch are admitted using temporary repository-scoped
+variables before environment selection plus a temporary exact environment
+branch rule. PRs/forks/`pull_request_target` never become trusted. Normal main
+and schedule execution remain disabled by default; feature admission is removed
+after a known terminal pilot. No merge or recurring activation is authorized.
+
 ### 7. Separate explicit reconciliation and bounded janitor
 
 Expose a separate Dagger reconciliation entry point taking a non-secret run identity; runtime credentials remain separately supplied and scoped. A hard-cancelled/unknown run is not automatically replayed by the next normal canary. Obtain explicit reconciliation authorization, establish exclusive ownership and prior termination, load protected evidence, query exact intended names/known IDs, and reconcile partial or missing state before guarded cleanup. Unknown ownership or uncertain prior effects blocks deletion/retry. Do not infer success from a missing runner or missing state alone.

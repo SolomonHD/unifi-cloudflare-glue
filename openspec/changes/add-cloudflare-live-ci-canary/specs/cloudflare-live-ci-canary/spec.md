@@ -24,6 +24,12 @@ The live canary MUST NOT execute with Cloudflare secrets in pull-request, fork, 
 - **WHEN** a manual dispatch selects an unapproved branch or revision
 - **THEN** the workflow MUST reject it before requesting Cloudflare or Wasabi credentials or executing secret-bearing code
 
+#### Scenario: Explicitly authorized initial feature pilot
+- **WHEN** a reviewed feature SHA is authorized for the initial hosted pilot before the workflow exists on main
+- **THEN** only that exact SHA, branch and trusted repository push MAY pass the pre-environment gate
+- **AND** the environment MUST separately admit only that named feature branch in addition to main
+- **AND** temporary admission MUST be removed after a known terminal pilot without enabling recurring effects or trusting PR/dispatch input claims
+
 ### Requirement: Canary names are unique and confined
 Every record created by hosted CI MUST use a unique `gha-` run prefix and remain below `ci.solomonhd.ai`.
 
@@ -114,6 +120,18 @@ Live mutation MUST be gated on exact Wasabi/backend conditional-write and lock q
 - **WHEN** a prior writer is stalled, expired, or has an uncertain in-flight request
 - **THEN** recovery/deletion MUST wait for authoritative prior termination and effect reconciliation
 - **AND** inability to establish exclusion MUST fail closed for explicit operator reconciliation
+
+#### Scenario: Non-expiring ownership claim exists
+- **WHEN** a run encounters an existing maintenance claim, regardless of its age
+- **THEN** it MUST NOT automatically expire, replace or take over that claim
+- **AND** ownership revalidation MUST compare the expected owner and generation before further effects
+- **AND** recovery MUST require operator-established prior termination and exclusion rather than interpreting age as authority
+
+#### Scenario: Verified completed ownership is handed to a successor
+- **WHEN** the owner has observed successful destroy and authoritative API/state absence without pending or unknown receipts
+- **THEN** it MUST conditionally create and verify immutable per-run completed history before CAS-marking the active claim completed
+- **AND** a successor MUST verify the archive identity, full receipt body and opaque versions before conditional replacement
+- **AND** uncertain writes or unverifiable history MUST retain the blocked claim without automatic retry or takeover
 
 ### Requirement: Recovery is an explicit separate operation
 A separate Dagger reconciliation entry point MUST accept a non-secret run identity, require scoped authorization and runtime credentials, and reconcile durable state/ledger plus exact API identity before guarded cleanup or retry.
