@@ -392,7 +392,14 @@ def validate_recovery_snapshot(snapshot: RecoverySnapshot) -> None:
             or snapshot.ledger.completed is not None
             or snapshot.ledger.recovery is not None
             or not snapshot.ledger.receipts
-            or snapshot.ledger.receipts[-1].outcome not in (None, "unknown")
+            or not (
+                snapshot.ledger.receipts[-1].outcome in (None, "unknown")
+                or (
+                    snapshot.ledger.receipts[-1].outcome == "failed"
+                    and snapshot.ledger.receipts[-1].phase
+                    in {"cleanup_state", "destroy", "absence"}
+                )
+            )
         ):
             raise ValueError
     except Exception:

@@ -122,6 +122,10 @@ def reconcile(config: dict) -> dict:
         ):
             raise StoreError("Requested retained claim/state versions do not match")
         evidence = terminal_evidence(prefix, prior.ledger.run.revision)
+        if prior.ledger.receipts and all(
+            receipt.outcome in {"succeeded", "failed"} for receipt in prior.ledger.receipts
+        ):
+            report["original_outcome"] = "failed"
         transport = Boto3S3Transport(binding, runtime=True, runtime_check=in_runtime)
         report["phase"] = "qualification"
         owner = str(uuid.uuid4())

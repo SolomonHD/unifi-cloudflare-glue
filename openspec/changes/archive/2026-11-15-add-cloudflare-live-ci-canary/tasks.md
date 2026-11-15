@@ -29,22 +29,35 @@
 
 ## 4. Stale Record Janitor
 
-- [ ] 4.1 Add a Dagger scheduled/manual janitor inventory for exact `gha-*.*.ci.solomonhd.ai` candidates older than timeout plus buffer; verify age alone cannot select an active/unknown run for deletion
-- [ ] 4.2 Add default report-only mode and passing tests excluding newer, outside-namespace, active, unowned, and uncertain candidates using protected ledger/ownership evidence
-- [ ] 4.3 After explicit operator review/authorization, test fenced deletion of a selected aged owned record and verify exact-name/ID absence, with no overlap with live/recovery writers
-- [ ] 4.4 Verify selection/deletion failures report sanitized identifiers/results without tokens or unrelated zone inventory and document remaining recovery actions
+- [x] 4.1 Add a Dagger scheduled/manual janitor inventory for exact `gha-*.*.ci.solomonhd.ai` candidates older than timeout plus buffer; verify age alone cannot select an active/unknown run for deletion
+- [x] 4.2 Add default report-only mode and passing tests excluding newer, outside-namespace, active, unowned, and uncertain candidates using protected ledger/ownership evidence
+- [x] 4.4 Verify selection/deletion failures report sanitized identifiers/results without tokens or unrelated zone inventory and document remaining recovery actions
 - [x] 4.5 Add a separately authorized Dagger reconciliation entry point accepting non-secret run identity; verify it reconciles protected ledger/state and exact API objects only after prior writer termination/exclusivity, with no blind retry or automatic takeover
 - [x] 4.6 Add passing killed-run, missing/partial state, uncertain-create, stale-generation, and recovery-concurrency tests; verify unknown outcomes retain protected evidence and cannot be reported as verified cleanup
 
 ## 5. Live Verification and Documentation
 
-- [ ] 5.1 Under separate scoped authorization, run the local Dagger fixture with zone-scoped Cloudflare and sandbox-prefix Wasabi credentials; verify full lifecycle, durable evidence, and no Tunnel API calls
-- [ ] 5.2 Under separate setup/live authorization, configure verified GitHub environment controls and run trusted manual Actions create/update/plan/destroy acceptance; retain sanitized exact feature/runtime/run evidence before merge
-- [ ] 5.3 Under explicit sandbox authorization, force a controlled validation failure and verify Dagger cleanup plus failing status; separately test termination and authorized reconciliation without a false finalizer guarantee
-- [ ] 5.4 Run janitor report-only mode, review the selection, then test cleanup of a deliberately aged canary record
-- [ ] 5.5 Verify documentation covers hosted DNS-only scope, manual local Tunnel testing, credential rotation, protected recovery retention, explicit reconciliation authorization, rollback, residual cleanup, and troubleshooting
-- [ ] 5.6 Record pilot reliability/propagation measurements and a reviewed initial nightly rollout/status recommendation; verify schedule activation remains a separate explicitly authorized action
+- [x] 5.5 Verify documentation covers hosted DNS-only scope, manual local Tunnel testing, credential rotation, protected recovery retention, explicit reconciliation authorization, rollback, residual cleanup, and troubleshooting
+- [x] 5.6 Record pilot reliability/propagation measurements and a reviewed initial nightly rollout/status recommendation; verify schedule activation remains a separate explicitly authorized action
 - [x] 5.7 Run offline test suites, workflow linting, `openspec validate add-cloudflare-live-ci-canary --strict`, and `git diff --check`
+
+## Operator-Waived Acceptance Checks (2026-11-15)
+
+The operator requested shipping and archiving the working Actions pilot without
+further exhaustive or unlikely-scenario testing. These checks were not run and
+are not checked off as passed. Their original IDs are retained for traceability.
+No safety guard, credential boundary, cleanup requirement or authorization for
+future mutations is waived.
+
+- **4.3 Waived:** additional live fenced deletion of a deliberately aged selected fixture. The janitor remains report-only; reviewed whole-fixture cleanup uses the existing version-bound reconciliation path, already exercised on the actual failed pilot.
+- **5.1 Waived:** duplicate local normal DNS CRUD. Local backend/native-lock qualification and the hosted full lifecycle are verified; local normal execution is not claimed.
+- **5.2 Waived:** additional manual-dispatch CRUD before default-branch registration. The approved exact-feature push pilot passed on `934351b`; ref/environment/secret guards are verified. No merge is authorized merely to register the workflow.
+- **5.3 Waived:** deliberately forced validation, cancellation and killed-run live experiments. Existing failure-injection tests and actual failed-pilot preservation plus authorized successful reconciliation remain the evidence; a cancellation finalizer is not claimed.
+- **5.4 Waived:** live aged/orphan inventory/deletion exercises. Report-only inventory/exclusion behavior is tested offline; new destructive tests remain separately authorized if requested.
+
+Detailed phase-latency collection and additional repeated/cold-cache live
+experiments are also waived for this pilot. Measured job duration and bounded
+successful public-DNS validation are reported without inventing provider latency.
 
 ## Closeout
 

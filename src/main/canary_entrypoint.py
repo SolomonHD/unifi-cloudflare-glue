@@ -240,9 +240,41 @@ async def reconcile(
             or report.get("run_prefix") != config["run_prefix"]
             or report.get("cleanup") != "verified"
             or report.get("ownership_transferred") is not True
-            or report.get("original_outcome") != "unknown"
+            or report.get("original_outcome") not in {"unknown", "failed"}
         ):
             raise ValueError()
     except Exception:
         raise RuntimeError("Reconciliation unconfirmed; retain " + config["run_prefix"]) from None
     return json.dumps(report, sort_keys=True)
+
+
+async def reporting(
+    config: dict, cloudflare_api_token, wasabi_access_key, wasabi_secret_key
+) -> str:
+    from .canary_identity import validate_run_prefix
+
+    if config.get("operation") not in {"janitor", "metrics"}:
+        raise ValueError("Unsupported reporting operation")
+    if config["operation"] == "metrics":
+        validate_run_prefix(config["run_prefix"])
+        if re.fullmatch(r"[0-9a-f]{40}", config.get("revision", "")) is None:
+            raise ValueError("Exact measurement revision required")
+    container = runtime_container(cloudflare_api_token, wasabi_access_key, wasabi_secret_key)
+    container = live_exec(
+        container,
+        ["python", "-m", "main.canary_reporting", json.dumps(config)],
+        expect=dagger.ReturnType.ANY,
+        redirect_stdout="/canary/report.json",
+        redirect_stderr="/canary/report.private",
+    )
+    try:
+        code = await asyncio.wait_for(container.exit_code(), timeout=240)
+        if code != 0:
+            raise ValueError()
+        value = json.loads(await container.file("/canary/report.json").contents())
+        expected = "janitor_inventory" if config["operation"] == "janitor" else "phase_measurements"
+        if not isinstance(value, dict) or value.get("operation") != expected:
+            raise ValueError()
+    except Exception:
+        raise RuntimeError("Read-only canary report unconfirmed") from None
+    return json.dumps(value, sort_keys=True)

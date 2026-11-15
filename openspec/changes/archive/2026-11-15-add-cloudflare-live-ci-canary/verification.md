@@ -456,3 +456,64 @@ acceptance. The follow-up audit checkpoint changes documentation/checklists and
 tests only; the hosted implementation actually exercised remains exact commit
 `934351bb0d5905000e4015ae3baa59dcffa1cfa8`. Tracked progress is 23/33; unperformed
 manual/local-normal, forced-failure and aged-janitor acceptance stays unchecked.
+
+## Operator-Approved Pilot Closeout, 2026-11-15
+
+The operator requested pushing all current work and archiving unless an important
+unfinished item remained, and explicitly allowed extraneous acceptance tests to
+be waived. The shipped boundary is the working DNS lifecycle plus report-only
+janitor; deletion uses the existing separately authorized full-fixture recovery,
+not a new automatic/per-record delete path. One substantive handoff mismatch was
+fixed: a recorded failed destroy/absence can now be preserved and reconciled,
+not only a pending/unknown result. Both paths still require the same explicit
+proofs, immutable versions/snapshot and conditional ownership checks; successful
+or completed claims cannot be taken over. Two focused cleanup-failure cases
+verify this narrow correction, without new live resource tests.
+
+The report adapter uses documented Cloudflare server-side prefix/suffix filters,
+complete bounded pagination and exact state/checkpoint/ledger identities. It is
+read-only and has no mutation flag. The single workflow job can select normal or
+janitor-report, defaulting to normal; neither schedules nor admission variables
+were enabled during implementation. The report-status checker strips credential
+environment variables, emits only validated metadata and fails incomplete
+selection. Offline inventory tests exclude younger/outside/active/unknown/unowned
+or inconsistent evidence and include disclosure sentinels. No live inventory or
+destructive janitor exercise is claimed.
+
+The phase measurement reader is implemented/tested, but additional live collection
+was waived. Available measurement remains the exact successful 115-second job,
+including positive public-DNS validation within its configured 180-second
+per-record ceiling. There is no claim of isolated provider latency or a reliable
+recurring-service success rate from one corrected-revision sample. Recommendation
+remains informational/manual opt-in first, with nightly/required-status rollout
+separately authorized and currently disabled.
+
+Original test IDs 4.3 and 5.1-5.4 are preserved in the explicit waiver section of
+tasks.md as not executed, not checked off as passed. The initial push-triggered
+exact-feature acceptance, real failure preservation, successful explicit cleanup
+and successful corrected hosted run remain the live evidence. Missing/partial
+state still fails closed for operator-led repair. No safety-critical issue is
+being waived to force archival, and no merge/activation is authorized by archive.
+
+The single final closeout validation passed 1,418 existing tests in 20.25 seconds,
+Black/isort, mypy across 23 source files, compilation, all seven KCL entries,
+actionlint 1.7.12, strict OpenSpec validation and whitespace checks. The beta27
+SDK entry point was regenerated for the final report/measurement methods. No
+new live or exhaustive scenario testing was run for closeout. Earlier concurrent
+agent KCL cache-lock stdout failures were environmental contention; the serial
+final pass succeeded without changing pins, caches or unrelated KCL behavior.
+
+Closeout retains 28 completed tracked tasks and five operator-waived acceptance
+checks in a separate prose section, not falsely checked as tested. Optional
+phase collection remains unexecuted. The accepted live normal implementation
+evidence is still exact `934351b`; later report-only/known-cleanup handoff changes
+have offline closeout validation, not a newly claimed hosted run. Merge and
+recurring activation remain outside this archive request.
+
+The new canonical capability spec validates strictly and all 13 added
+requirements/scenario blocks match the delta exactly. A repository-wide spec
+scan also surfaced 44 pre-existing unrelated legacy-format failures; those
+files were not changed or used to expand this closeout. This receipt claims
+the selected canary change/spec validation, not a clean whole-repository spec
+baseline. Specification sync completed before archive; the archive command
+skips only a duplicate second spec-merge pass.

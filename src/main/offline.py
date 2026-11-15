@@ -35,6 +35,7 @@ SOURCE_INCLUDE = (
     "scripts/verify-offline.sh",
     "scripts/dagger-qualified.sh",
     "scripts/bootstrap-canary-dagger.py",
+    "scripts/check-canary-inventory.py",
     ".github/workflows/cloudflare-live-ci.gha.yaml",
 )
 SOURCE_EXCLUDE = (

@@ -123,6 +123,17 @@ Read-only observation is available without a mutation-qualified transport, but
 that transport cannot qualify, put or delete. There is no force unlock, blind
 apply replay, broad API delete or automated claim takeover.
 
+Final pilot delivery boundary, 2026-11-15: the janitor is a bounded read-only
+inventory callable manually or by an explicitly enabled scheduled operation in
+the same thin workflow. It has no direct API-delete mode; reviewed cleanup is
+delegated to the existing qualified whole-fixture reconciliation path. That path
+now also accepts a recorded failed cleanup, with the same immutable snapshot,
+version/termination/exclusivity checks and original-outcome preservation as an
+unknown outcome. No arbitrary partial-record repair/import is promised. The
+operator waived additional destructive, cancellation, duplicate/manual and
+detailed-latency acceptance experiments after the successful hosted pilot;
+waivers do not remove any runtime safety gate or activate schedules.
+
 ### 7. Separate explicit reconciliation and bounded janitor
 
 Expose a separate Dagger reconciliation entry point taking a non-secret run identity; runtime credentials remain separately supplied and scoped. A hard-cancelled/unknown run is not automatically replayed by the next normal canary. Obtain explicit reconciliation authorization, establish exclusive ownership and prior termination, load protected evidence, query exact intended names/known IDs, and reconcile partial or missing state before guarded cleanup. Unknown ownership or uncertain prior effects blocks deletion/retry. Do not infer success from a missing runner or missing state alone.

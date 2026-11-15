@@ -915,6 +915,23 @@ def finish_recovery(client):
     return client.complete_verified("recovery-writer", state)
 
 
+@pytest.mark.parametrize("phase", ["destroy", "absence"])
+def test_explicit_recovery_preserves_a_known_failed_cleanup(phase):
+    transport = MemoryTransport()
+    first = pending(transport)
+    first.check_before_effect("state-0")
+    first.record_result("succeeded", "state-0", "state-1")
+    first.begin_intent(phase, "state-1")
+    first.check_before_effect("state-1")
+    prior = first.record_result("failed", "state-1", "state-1")
+    client = session(transport)
+    auth = recovery_authorization(prior)
+    client.recover("recovery-writer", auth, auth.observed_state_generation)
+    assert client.recovery_retained.snapshot.ledger == prior.ledger
+    assert client.recovery_retained.snapshot.ledger.receipts[-1].outcome == "failed"
+    finish_recovery(client)
+
+
 def test_legacy_schema_one_pending_claim_preserved_exactly_in_recovery_snapshot():
     transport = MemoryTransport()
     prior = pending(transport).retained

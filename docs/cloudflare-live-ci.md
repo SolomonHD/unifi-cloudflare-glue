@@ -6,7 +6,7 @@ The normal Dagger lifecycle and thin workflow are implemented against the
 qualified `1.0.0-beta.27` tuple in [runtime qualification](dagger-runtime-qualification.md).
 Live qualification and pilot acceptance remain separate from implementation.
 Recurring execution is disabled by default. See the change's
-[verification receipt](../openspec/changes/add-cloudflare-live-ci-canary/verification.md).
+[verification receipt](../openspec/changes/archive/2026-11-15-add-cloudflare-live-ci-canary/verification.md).
 
 The corrected exact-feature pilot passed on commit `934351b` in 115 seconds:
 [Actions run 43719329517](https://github.com/SolomonHD/unifi-cloudflare-glue/actions/runs/43719329517).
@@ -179,6 +179,14 @@ Tunnel resources. Full Tunnel tests remain on the existing hardened local
 Dagger integration path with separately authorized account-level credentials,
 not the hosted DNS token.
 
+For an authorized manual Tunnel run, use the existing `test-integration` entry
+point from the hardened local workstation/runner, with separately approved
+UniFi and Cloudflare Tunnel runtime Secrets and targets. Discover the current
+beta CLI parameter contract without provisioning anything using
+`bash scripts/dagger-qualified.sh api call -m . test-integration --help`.
+That path creates real resources and is not authorized by the hosted DNS pilot
+or its zone-only token; do not copy it into the hosted workflow.
+
 - Authentication failure: verify the named runtime binding and actual token
   zone/permission policy without printing its value; do not broaden permissions.
 - Propagation timeout: retain primary failure, attempt cleanup only while
@@ -214,6 +222,38 @@ and effect receipts require their exact durable checkpoint generation. A harmles
 `check_results` ordering difference is not interpreted as drift or silently
 discarded; resource/output/serial/status differences remain failures.
 
-The report-only janitor entry point remains unfinished. Never delete a maintenance
-object merely to make the next run pass, and never retry an unknown cleanup
-without reconciling its snapshot/owner/state first.
+## Report-Only Janitor
+
+`inventory-cloudflare-dns-canaries` reports only exact canary names in
+`ci.solomonhd.ai`, using Cloudflare's supported server-side
+`name.startswith=gha-` and `name.endswith=.ci.solomonhd.ai` filters. It accepts
+at most 200 records and fails closed on incomplete or inconsistent pagination.
+Both encoded run age and API creation time must exceed the 30-minute job budget
+plus a five-minute buffer. Age alone never establishes ownership or inactivity.
+Newer, outside-namespace, active/unknown, unowned and inconsistent evidence is
+excluded or explicitly held for review. Record contents and provider bodies
+are not returned.
+
+Manual workflow dispatch can select `janitor-report`. A separately enabled
+scheduled run may select it through `CLOUDFLARE_CANARY_SCHEDULE_OPERATION`.
+The existing main/ref/environment guards and enable flags still apply; adding
+the operation does not activate schedules. Only one selected Dagger operation
+runs, and inventory errors produce a failing status after sanitized reporting.
+
+The janitor has no direct API-delete mode. Review its named-run/record-ID report
+and authorize qualified whole-fixture `reconcile-cloudflare-dns-canary` cleanup
+separately. That is the shared fenced deletion path, with expected versions,
+terminal-writer proof and exclusivity, not a second cleanup implementation.
+It preserves unknown outcomes or a recorded cleanup failure. Partial/missing
+state remains blocked for operator-led repair; the report does not promise
+arbitrary per-record cleanup or import.
+
+`measure-cloudflare-canary-phases` can derive approximate intent-to-result
+intervals from protected versioned ledger timestamps for an exact successful
+run/revision. These intervals include protected I/O and verification and are
+not isolated DNS-provider latency. Detailed phase collection and further live
+stress/aged-fixture tests were waived by the operator for this pilot; they are
+not prerequisites for the already successful normal workflow.
+
+Never delete a maintenance object merely to make the next run pass, and never
+retry an unknown cleanup without reconciling its snapshot/owner/state first.

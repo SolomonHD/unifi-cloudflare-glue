@@ -3463,3 +3463,40 @@ output "record_id" {{
             "exclusive_writer": exclusive_writer,
         }
         return await reconcile(config, cloudflare_api_token, wasabi_access_key, wasabi_secret_key)
+
+    @function(cache="never")  # type: ignore[call-overload]
+    async def inventory_cloudflare_dns_canaries(
+        self,
+        cloudflare_api_token: Secret,
+        wasabi_access_key: Secret,
+        wasabi_secret_key: Secret,
+    ) -> str:
+        """Report-only exact namespace inventory; no ownership transfer or deletion."""
+        try:
+            from .canary_entrypoint import reporting
+        except ImportError:
+            from canary_entrypoint import reporting  # type: ignore[no-redef,import-not-found]
+        return await reporting(
+            {"operation": "janitor"}, cloudflare_api_token, wasabi_access_key, wasabi_secret_key
+        )
+
+    @function(cache="never")  # type: ignore[call-overload]
+    async def measure_cloudflare_canary_phases(
+        self,
+        run_prefix: str,
+        revision: str,
+        cloudflare_api_token: Secret,
+        wasabi_access_key: Secret,
+        wasabi_secret_key: Secret,
+    ) -> str:
+        """Read protected ledger intervals, never raw state or isolated DNS latency."""
+        try:
+            from .canary_entrypoint import reporting
+        except ImportError:
+            from canary_entrypoint import reporting  # type: ignore[no-redef,import-not-found]
+        return await reporting(
+            {"operation": "metrics", "run_prefix": run_prefix, "revision": revision},
+            cloudflare_api_token,
+            wasabi_access_key,
+            wasabi_secret_key,
+        )

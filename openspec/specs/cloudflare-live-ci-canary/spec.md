@@ -1,8 +1,10 @@
+# cloudflare-live-ci-canary Specification
+
 ## Purpose
 
 Provides a trusted DNS-only CI canary with Dagger-owned lifecycle, bounded mutation, protected durable recovery, and verifiable cleanup without exposing infrastructure secrets.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Live CI uses a dedicated zone-scoped credential
 The hosted canary MUST authenticate with a dedicated token restricted to Zone Read and DNS Edit for `solomonhd.ai` and MUST NOT receive Cloudflare Tunnel Edit or access to production zones.
@@ -68,13 +70,19 @@ A scheduled/manual Dagger janitor MUST limit candidates to run-prefixed sandbox 
 - **WHEN** it lists records in `solomonhd.ai`
 - **THEN** it MUST ignore names outside `gha-*.*.ci.solomonhd.ai`
 - **AND** it MUST ignore records newer than the job-timeout-plus-buffer threshold
-- **AND** deletion mode MUST report and verify each selected record
+- **AND** reviewed removal MUST use the separately authorized whole-fixture reconciliation entry point and verify state/API absence for the selected run
 - **AND** active, unknown, unowned, or unfenced runs MUST be reported rather than deleted solely because of age
 
 #### Scenario: Operator reviews report-only output
 - **WHEN** candidate records are presented without deletion authorization
 - **THEN** no record MUST be removed
 - **AND** later authorized deletion MUST revalidate ownership, prior-writer termination, and exact resource identity
+
+#### Scenario: Operator requests cleanup after inventory review
+- **WHEN** cleanup is explicitly authorized for a reviewed run
+- **THEN** it MUST use the shared version-bound reconciliation path, not a direct janitor API-delete mode
+- **AND** the prior failed or unknown history MUST be preserved before conditional ownership transfer
+- **AND** missing/partial state or changed versions MUST remain blocked for explicit operator-led repair rather than arbitrary per-record deletion or import
 
 ### Requirement: Hosted CI excludes Tunnel mutations
 GitHub-hosted live CI MUST NOT create, update, or delete Cloudflare Tunnel or Tunnel configuration resources.
