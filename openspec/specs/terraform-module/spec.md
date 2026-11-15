@@ -33,9 +33,11 @@ When the variable is validated
 Then it SHALL reject with a validation error
 
 #### Scenario: DNS loop prevention validation
-Given a local_service_url containing the zone_name
-When the config variable is validated
-Then it SHALL reject with a validation error to prevent DNS resolution loops
+- **GIVEN** a local_service_url whose origin DNS hostname is the zone apex or a subdomain
+- **WHEN** KCL validates the origin before generating the Terraform config variable
+- **THEN** it SHALL reject by default unless an exact typed split_dns_origins protocol/hostname/effective-port declaration approves the origin
+- **AND** the policy SHALL NOT be emitted into Terraform JSON or require a Terraform variable shape change
+- **AND** public-zone membership alone SHALL NOT be treated as proof of an actual DNS loop
 
 ### Requirement: Terraform Cloudflare Tunnel Module - Zone Data Source (v5.x)
 
@@ -354,4 +356,3 @@ When: `terraform fmt` is run on the modules
 Then: The version comment block is preserved
 And: The format remains readable
 And: Comments stay at the top of the versions.tf file
-

@@ -1,57 +1,39 @@
 # Spec: Deployment Orchestration Function
 
-## ADDED Requirements
+## Purpose
+
+Define ordered, validated deployment orchestration with truthful status, protected credentials and recoverable partial or unknown outcomes.
+
+## Requirements
 
 ### Requirement: deploy Function (Orchestration)
 
-The Dagger module SHALL provide a `deploy` function that orchestrates the complete deployment workflow: KCL generation, UniFi deployment, and Cloudflare deployment in the correct order.
+The module SHALL orchestrate validated KCL generation and selected infrastructure operations using the accepted resource dependency graph, preserving UniFi-before-dependent-Cloudflare ordering and reporting actual operation outcomes.
 
 #### Scenario: Full Deployment Orchestration
-Given a KCL source directory with valid configuration
-And UniFi credentials (API key or username/password)
-And Cloudflare credentials (token, account ID, zone)
-When the `deploy` function is called
-Then it executes the following steps in order:
-  1. Generate UniFi JSON configuration from KCL
-  2. Generate Cloudflare JSON configuration from KCL
-  3. Deploy UniFi DNS (creates local DNS records)
-  4. Deploy Cloudflare Tunnels (points to now-resolvable hostnames)
-And returns a combined status message
+- **WHEN** valid configuration and both providers' credentials are supplied for full deployment
+- **THEN** both configurations are validated before effects and dependent Cloudflare work follows successful UniFi prerequisites
+- **AND** resource addresses and state ownership are preserved
 
 #### Scenario: Deployment Order Enforcement
-Given a call to the `deploy` function
-When the orchestration executes
-Then UniFi deployment ALWAYS runs before Cloudflare deployment
-And Cloudflare deployment only proceeds if UniFi deployment succeeds
+- **WHEN** a UniFi prerequisite fails
+- **THEN** dependent Cloudflare work is not dispatched and the overall command fails
 
 #### Scenario: KCL Generation Integration
-Given a KCL source directory
-When the orchestration begins
-Then it calls existing `generate_unifi_config` function
-And it calls existing `generate_cloudflare_config` function
-And exports generated files to a working directory
+- **WHEN** orchestration begins with valid KCL input
+- **THEN** selected validated provider files come from the shared deterministic generation result
 
 #### Scenario: Orchestration Failure - UniFi Deployment Fails
-Given a configuration that causes UniFi deployment to fail
-When the `deploy` function runs
-Then it stops execution after UniFi deployment failure
-And does NOT proceed to Cloudflare deployment
-And returns an error message indicating UniFi deployment failed
+- **WHEN** UniFi execution fails
+- **THEN** the command exits unsuccessfully with sanitized phase information and records any attempted effects needing reconciliation
 
 #### Scenario: Orchestration Failure - Cloudflare Deployment Fails
-Given UniFi deployment succeeds but Cloudflare deployment fails
-When the `deploy` function runs
-Then it reports both results:
-  - UniFi deployment: success
-  - Cloudflare deployment: failed
-And returns a combined status with both outcomes
+- **WHEN** Cloudflare fails after UniFi effects succeeded
+- **THEN** the command fails while identifying completed and failed phases without claiming automatic rollback
 
 #### Scenario: Deployment Success Reporting
-Given both UniFi and Cloudflare deployments succeed
-When the function completes
-Then it returns a message starting with "✓ Success"
-And includes summary of both deployments
-And lists applied resources from both providers
+- **WHEN** all requested operations and required verification succeed
+- **THEN** the report identifies success and bounded resource outcomes without secret values
 
 ---
 
@@ -60,13 +42,12 @@ And lists applied resources from both providers
 The `deploy` function SHALL accept all parameters needed for both UniFi and Cloudflare deployments, plus KCL source.
 
 #### Scenario: KCL Source Parameter
-Given the function signature
-Then it accepts a required `kcl_source` parameter of type `dagger.Directory`
-Containing the KCL module with schemas and generators
+- **WHEN** the function receives KCL source
+- **THEN** it accepts a required `kcl_source` parameter of type `dagger.Directory` containing the KCL module with schemas and generators
 
 #### Scenario: Combined UniFi Parameters
-Given the function signature
-Then it accepts all UniFi deployment parameters:
+- **WHEN** UniFi deployment is selected
+- **THEN** it accepts all UniFi deployment parameters:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `unifi_url` | `str` | UniFi Controller URL |
@@ -76,8 +57,8 @@ Then it accepts all UniFi deployment parameters:
 | `unifi_password` | `dagger.Secret` | UniFi password (optional) |
 
 #### Scenario: Combined Cloudflare Parameters
-Given the function signature
-Then it accepts all Cloudflare deployment parameters:
+- **WHEN** Cloudflare deployment is selected
+- **THEN** it accepts all Cloudflare deployment parameters:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `cloudflare_token` | `dagger.Secret` | Cloudflare API Token |
@@ -85,38 +66,39 @@ Then it accepts all Cloudflare deployment parameters:
 | `zone_name` | `str` | DNS zone name |
 
 #### Scenario: Parameter Validation
-Given the `deploy` function
-When called with invalid or missing parameters
-Then it validates all parameters before starting execution
-And returns clear error messages for any validation failures
+- **WHEN** `deploy` is called with invalid or missing parameters
+- **THEN** it validates all selected-scope parameters before starting execution
+- **AND** validation fails nonzero with clear sanitized diagnostics
 
 ---
 
 ### Requirement: deploy Function Return Value
 
-The `deploy` function SHALL return a comprehensive status message suitable for CLI display.
+Successful deployment SHALL return a CLI-readable bounded summary. Failed or partially failed deployment SHALL produce unsuccessful command status rather than a successful string containing a failure marker.
 
 #### Scenario: Success Return Format
-Given successful orchestration
-When the function returns
-Then the return value is a string containing:
-  - "✓ Success" indicator
-  - UniFi deployment summary
-  - Cloudflare deployment summary
-  - Total resources created/updated
+- **WHEN** orchestration succeeds
+- **THEN** the summary includes selected scope and bounded resource counts
 
 #### Scenario: Partial Failure Return Format
-Given partial failure (UniFi succeeds, Cloudflare fails)
-When the function returns
-Then the return value is a string containing:
-  - Mixed success/failure indicators
-  - UniFi success details
-  - Cloudflare failure details with error
+- **WHEN** some effects succeeded before a later phase failed
+- **THEN** the CLI exits nonzero and preserves sanitized completed/failed/unknown outcomes
 
 #### Scenario: Complete Failure Return Format
-Given complete failure (UniFi fails)
-When the function returns
-Then the return value is a string containing:
-  - "✗ Failed" indicator
-  - Error details from UniFi deployment
-  - Note that Cloudflare deployment was skipped
+- **WHEN** a required phase fails before dependent work begins
+- **THEN** the CLI exits nonzero and identifies the failure and skipped dependent phases
+
+### Requirement: Execution snapshots preserve completed preparation
+Operations that depend on initialization or earlier filesystem changes SHALL execute from the corresponding completed snapshot, including integration and cleanup paths.
+
+#### Scenario: Cleanup follows initialization
+- **WHEN** cleanup initialization succeeds
+- **THEN** destroy uses the initialized snapshot and its state/configuration rather than a pre-init snapshot
+
+### Requirement: Unknown effects require reconciliation
+Timeouts, cancellation and transport loss SHALL remain unknown outcomes until authoritative reconciliation; retries SHALL NOT blindly repeat an uncertain effect.
+
+#### Scenario: Apply exceeds its wait deadline
+- **WHEN** the client stops waiting without proof of remote termination
+- **THEN** the operation reports uncertainty with a non-secret identity and recovery guidance
+- **AND** it does not claim rollback or automatically repeat apply

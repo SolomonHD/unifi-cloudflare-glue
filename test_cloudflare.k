@@ -54,3 +54,7 @@ output = {
         default_no_tls_verify = config.default_no_tls_verify
     }
 }
+
+assert output.tunnel_count == 1
+assert output.service_count == 3
+assert output.first_service_hostname == "media.example.com"

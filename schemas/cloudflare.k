@@ -25,21 +25,54 @@
 #         }
 #     }
 
+import net
+import regex
+
 # MACAddress type alias for tunnel identification
 MACAddress = str
+
+# Extract the DNS hostname without changing the emitted origin URL.
+origin_hostname = lambda url: str -> str {
+    hostname = url.lower().split("://", 1)[-1].split("/")[0].split("?")[0].split("#")[0].split("@")[-1].split(":")[0]
+    hostname[:-1] if hostname.endswith(".") else hostname
+}
+
+# Split-DNS intent applies to one scheme/host/effective-port, never a suffix.
+schema SplitDNSOrigin:
+    """Exact operator-declared protocol, DNS hostname and port, never a suffix grant.
+
+    Matching folds hostname case and one terminal DNS dot. This is intent only;
+    connector-internal DNS resolution and loop avoidance require live verification.
+    """
+    protocol: "http" | "https" | "tcp"
+    hostname: str
+    port: int
+
+    check:
+        is_valid_domain(hostname) and regex.match(hostname, r"^[A-Za-z0-9.-]+$") and not net.is_IP(origin_hostname(hostname)), "split-DNS hostname must be a concrete DNS name, not a URL, IP address, wildcard or range"
+        port >= 1 and port <= 65535, "split-DNS port must be between 1 and 65535"
+
+matches_split_dns_origin = lambda url: str, origin: SplitDNSOrigin -> bool {
+    parts = url.split("://", 1)
+    scheme = parts[0].lower()
+    authority = parts[-1].split("/")[0].split("?")[0].split("#")[0]
+    host_port = authority.split(":")
+    port = int(host_port[1]) if len(host_port) == 2 and regex.match(host_port[1], r"^[0-9]+$") else (443 if scheme == "https" else (80 if scheme == "http" else 0)) if len(host_port) == 1 else 0
+    len(parts) == 2 and "@" not in authority and scheme == origin.protocol and origin_hostname(url) == origin_hostname(origin.hostname) and port == origin.port
+}
 
 # is_valid_domain checks if a URL contains a valid domain per RFC 1123
 # Returns True if the hostname has valid syntax
 # Validation rules:
 # - Valid characters: alphanumeric, hyphens, dots only
 # - No consecutive dots
-# - No leading/trailing dots
+# - No leading dots; an optional DNS root dot is normalized
 # - Each label: 1-63 characters
 # - Labels must start and end with alphanumeric
 # - TLD: minimum 2 characters
 # - At least one dot separator required
 is_valid_domain = lambda url: str -> bool {
-    hostname = url.replace("http://", "").replace("https://", "").split("/")[0].split(":")[0]
+    hostname = origin_hostname(url)
     labels = hostname.split(".")
     tld = labels[-1]
     validLabels = [l for l in labels if len(l) > 0 and len(l) <= 63 and l[0].isalnum() and l[-1].isalnum()]
@@ -88,7 +121,7 @@ schema TunnelService:
         len(public_hostname) > 0, "public_hostname cannot be empty"
         # local_service_url must not be empty
         len(local_service_url) > 0, "local_service_url cannot be empty"
-        # local_service_url must use valid domain syntax to prevent DNS loops
+        # Domain syntax alone does not enforce public-zone DNS loop prevention.
         is_valid_domain(local_service_url), "local_service_url has invalid domain syntax"
 
 # CloudflareTunnel represents a single tunnel connected to a physical device
@@ -156,6 +189,8 @@ schema CloudflareConfig:
                  Each MAC address can have only one tunnel (one-to-one mapping)
         default_no_tls_verify: Default value for no_tls_verify across all services
                                Can be overridden per-service. Defaults to False.
+        split_dns_origins: Exact typed origin exceptions to same-zone rejection.
+                           Empty by default; declares intent, not verified resolution.
 
     Validation:
         - zone_name must be non-empty
@@ -191,10 +226,10 @@ schema CloudflareConfig:
     account_id: str
     tunnels: {str:CloudflareTunnel} = {}
     default_no_tls_verify: bool = False
+    split_dns_origins: [SplitDNSOrigin] = []
 
     check:
         # zone_name must not be empty
         len(zone_name) > 0, "zone_name cannot be empty"
         # account_id must not be empty
         len(account_id) > 0, "account_id cannot be empty"
-

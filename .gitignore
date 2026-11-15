@@ -51,8 +51,7 @@ examples/backend-configs/*.yaml
 .DS_Store
 Thumbs.db
 
-# Dagger auto-generated SDK
-/sdk/
+# Dagger beta runtime consumes committed generated SDK and entrypoint files.
 
 # Python virtual environments
 .venv/
@@ -62,3 +61,6 @@ Thumbs.db
 dist/
 build/
 *.egg-info/
+
+# Machine-local OpenSpec registration
+.openspec-store/

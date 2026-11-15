@@ -46,8 +46,9 @@ The documentation SHALL provide approach to interpreting check block failures an
 - **THEN** documentation identifies conflicting hostnames and suggests unique naming strategy
 
 #### Scenario: User fixes DNS loop error
-- **WHEN** user uses public zone in local_service_url
-- **THEN** documentation explains DNS loop consequence and shows correct internal hostname replacement
+- **WHEN** a same-zone local_service_url fails the default origin guard
+- **THEN** documentation explains the risk of resolving back through Cloudflare and shows an internal hostname replacement or an exact typed `SplitDNSOrigin` declaration for intentional split-DNS
+- **AND** it distinguishes public-zone membership from proof of a loop and requires separate live connector-internal resolution evidence
 
 ### Requirement: Generator error diagnosis
 The documentation SHALL provide approach to debugging JSON generation failures and output validation.
