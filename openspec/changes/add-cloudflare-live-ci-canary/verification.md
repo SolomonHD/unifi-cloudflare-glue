@@ -338,3 +338,63 @@ seven KCL entries, pinned actionlint, strict specification validation and diff
 whitespace checks passed. Completed implementation tasks are checked separately
 from the still-pending backend/live/recovery acceptance tasks. The next effect
 is the separately authorized local sandbox backend qualification, not DNS CRUD.
+
+## Backend Qualification And Initial Hosted Failure
+
+Committed candidate `233c71c865c98940342c0858e9e428a7820ffe2e` passed authorized
+local backend-only qualification on 2026-11-15. The first desktop sign-in exited
+1 after 60,508 ms within a 180-second wrapper deadline; no credential reads or
+backend effects followed it. Its cause remains unclassified, not a claimed
+wrong PIN or wrapper timeout. After explicit operator unlock/retry, signin
+succeeded in 7,053 ms, whoami in 403 ms, and the intended vault matched.
+The three supplied fields resolved privately into the Dagger child environment.
+
+Qualification run `gha-1794714752-1-1` completed in 15,984 ms with
+`operation=qualify`, qualified/primary/cleanup all verified. This measured the
+exact scoped CI identity, endpoint/bucket/prefix, AES256 SSE/versioned reads,
+conditional-create/update refusal, native Terraform held-lock refusal, exact
+owned release/absence and a successful provider-free plan. It performed no
+DNS CRUD. The service-side policy scope remains operator-reviewed evidence.
+
+Temporary repository admission variables selected only the canary branch and
+full candidate SHA. Environment rule 66765247 added that exact branch alongside
+unchanged main rule 66759358; the operator-review variable was verified before
+the push. Main/schedule enable variables remained unset. The new branch push
+started the only hosted pilot:
+`https://github.com/SolomonHD/unifi-cloudflare-glue/actions/runs/43674454065`.
+Attempt 1/job 132691420572 completed with failure at `2026-11-15T03:55:53Z`,
+47 seconds elapsed. Bootstrap/checkout succeeded; the Dagger step exited 2.
+That result is failed acceptance, not verified cleanup.
+
+Read-only projected inspection of `gha-1794714939-43674454065-1` confirmed an
+uncompleted claim pending at create, valid protected state and exactly one TXT
+and one CNAME whose API IDs match that state. The only difference between native
+state pull and the stored state was ordering of `check_results`/nested objects;
+a second projected comparison confirmed order-only equivalence. No raw state,
+record content, credentials or provider logs were disclosed. The strict equality
+check had therefore blocked checkpointing before any cleanup. The fix sorts
+only those unordered check collections, retains all statuses/values, writes
+authoritative S3 state bytes, and binds effect receipts to the exact successfully
+checkpointed generation. Other state changes and missing checkpoints fail closed.
+
+The separate Node20 checkout warning was non-fatal. The new workflow alone now
+pins checkout v5 commit `fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09`, whose
+official action declares `runs.using: node24`; persistence remains disabled.
+No Dagger Cloud configuration is needed. The old run keeps its original warning.
+
+The owned acceptance-SHA variable was removed to prevent a blind normal rerun;
+the original claim and feature environment access were retained pending recovery.
+The operator separately authorized exclusive reconciliation/cleanup of only this
+failed run. Exact Actions attempt metadata and all jobs are terminal and bound
+to the original SHA/repository/workflow. Recovery requires immutable claim/state
+VersionId preconditions, an immutable untouched prior-ledger snapshot, CAS owner
+transfer, only destroy/absence phases and fresh state/API verification. The old
+unknown outcome remains in its snapshot and never becomes a passing pilot.
+Missing/partial state, stale versions, lost proof/ownership and uncertain writes
+block effects. Read-only inspection uses a transport that cannot put, delete or
+qualify. Existing schema-1 ledgers without recovery fields remain readable
+specifically because the original persisted failed run uses that schema.
+
+The recovery/fix candidate passed 1,239 tests locally and inside beta27, mypy
+across 19 source files, formatting, seven KCL entries and pinned workflow lint.
+At this receipt point the authorized recovery has not yet been executed.

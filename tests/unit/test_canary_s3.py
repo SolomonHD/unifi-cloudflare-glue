@@ -3,6 +3,7 @@
 import hashlib
 import importlib.util
 import io
+import json
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -121,6 +122,24 @@ class FakeClient:
         self.objects.pop(params["Key"], None)
         self.serial += 1
         return {"DeleteMarker": True, "VersionId": f"marker-{self.serial}"}
+
+
+def test_observation_transport_reads_but_cannot_mutate():
+    client = FakeClient()
+    writer = s3.Boto3S3Transport(BINDING, client=client)
+    writer.qualify_backend()
+    blob = writer.create_blob(BINDING, KEY, b"synthetic-private-state")
+    client.calls.clear()
+    observer = s3.Boto3S3Transport(BINDING, client=client, observation_only=True)
+    assert observer.get_blob(BINDING, KEY).data == b"synthetic-private-state"
+    for effect in (
+        lambda: observer.create_blob(BINDING, KEY, b"changed"),
+        lambda: observer.delete_blob(BINDING, KEY, blob.version),
+        observer.qualify_backend,
+    ):
+        with pytest.raises(store.StoreError, match="Observation-only"):
+            effect()
+    assert [name for name, _ in client.calls] == ["get_object"]
 
 
 @pytest.fixture
@@ -517,6 +536,105 @@ def test_archive_immutable_strict_helpers(qualified):
     with pytest.raises(store.PreconditionFailed):
         transport.create_archive(BINDING, key, receipt)
     assert not any(m == "delete_object" for m, _ in client.calls)
+
+
+def recovery_snapshot():
+    prefix = "gha-1794700000-123-1"
+    run = store.RunIdentity(
+        prefix,
+        "a" * 40,
+        "b" * 32,
+        "solomonhd.ai",
+        ((f"{prefix}.txt.ci.solomonhd.ai", "TXT"), (f"{prefix}.cname.ci.solomonhd.ai", "CNAME")),
+    )
+    prior = store.Ledger(
+        run,
+        "original-writer",
+        1,
+        "pre-create-state",
+        (store.Receipt("create", "pre-create-state"),),
+    )
+    auth = store.RecoveryAuthorization(
+        run,
+        "opaque-claim-version",
+        1,
+        "observed-post-create-state",
+        True,
+        True,
+        "terminal-actions-job-123",
+    )
+    return store.RecoverySnapshot(prior, auth.expected_claim_version, "cleanup-writer", auth)
+
+
+def test_recovery_snapshot_immutable_encrypted_and_exact_current_version(qualified):
+    transport, client = qualified
+    snapshot = recovery_snapshot()
+    key = BINDING.prefix + f"runs/{snapshot.ledger.run.run_prefix}/recovery.json"
+    archived = transport.create_recovery_snapshot(BINDING, key, snapshot)
+    assert archived.snapshot == snapshot
+    assert transport.get_recovery_snapshot(BINDING, key) == archived
+    put = [params for method, params in client.calls if method == "put_object"]
+    assert len(put) == 1
+    assert put[0]["IfNoneMatch"] == "*"
+    assert put[0]["ServerSideEncryption"] == "AES256"
+    assert "recovery" not in json.loads(put[0]["Body"])["body"]["ledger"]
+    exact_reads = [
+        params
+        for method, params in client.calls
+        if method == "get_object" and "VersionId" in params
+    ]
+    assert exact_reads and exact_reads[0]["VersionId"] == s3._untoken(archived.version)[0]
+    with pytest.raises(store.PreconditionFailed):
+        transport.create_recovery_snapshot(BINDING, key, snapshot)
+    assert transport.get_recovery_snapshot(BINDING, key) == archived
+    assert len([version for obj_key, version in client.versions if obj_key == key]) == 1
+    assert not any(method == "delete_object" for method, _ in client.calls)
+
+
+def test_observation_only_can_read_recovery_snapshot_but_not_create(qualified):
+    transport, client = qualified
+    snapshot = recovery_snapshot()
+    key = BINDING.prefix + f"runs/{snapshot.ledger.run.run_prefix}/recovery.json"
+    archived = transport.create_recovery_snapshot(BINDING, key, snapshot)
+    observer = s3.Boto3S3Transport(BINDING, client=client, observation_only=True)
+    client.calls.clear()
+    assert observer.get_recovery_snapshot(BINDING, key) == archived
+    with pytest.raises(store.StoreError, match="Observation-only"):
+        observer.create_recovery_snapshot(BINDING, key, snapshot)
+    assert [method for method, _ in client.calls] == ["get_object"]
+
+
+def test_malformed_recovery_snapshot_blocks_s3_without_echo_or_retry(qualified):
+    transport, client = qualified
+    transport.create_blob(BINDING, KEY, SENTINEL.encode())
+    with pytest.raises(store.StoreError) as error:
+        transport.get_recovery_snapshot(BINDING, KEY)
+    assert SENTINEL not in str(error.value)
+    assert error.value.__suppress_context__
+    calls = list(client.calls)
+    with pytest.raises(store.StoreError, match="blocked"):
+        transport.get_recovery_snapshot(BINDING, KEY)
+    assert client.calls == calls
+
+
+def test_recovery_snapshot_commit_then_error_keeps_version_and_blocks(qualified, monkeypatch):
+    transport, client = qualified
+    snapshot = recovery_snapshot()
+    key = BINDING.prefix + f"runs/{snapshot.ledger.run.run_prefix}/recovery.json"
+    original = client.put_object
+
+    def uncertain(**params):
+        original(**params)
+        raise error(503, "ServiceUnavailable")
+
+    monkeypatch.setattr(client, "put_object", uncertain)
+    with pytest.raises(store.StoreError):
+        transport.create_recovery_snapshot(BINDING, key, snapshot)
+    assert key in client.objects
+    assert sum(method == "put_object" for method, _ in client.calls) == 1
+    with pytest.raises(store.StoreError, match="blocked"):
+        transport.create_recovery_snapshot(BINDING, key, snapshot)
+    assert not any(method == "delete_object" for method, _ in client.calls)
 
 
 def test_default_client_runtime_gate_no_ambient_credential_discovery(monkeypatch):

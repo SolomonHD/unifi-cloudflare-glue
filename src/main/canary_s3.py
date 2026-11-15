@@ -80,6 +80,7 @@ class Boto3S3Transport:
         client: Any = None,
         runtime: bool = False,
         runtime_check: Callable[[], bool] = _in_dagger,
+        observation_only: bool = False,
         connect_timeout: float = 3,
         read_timeout: float = 5,
         max_bytes: int = 1048576,
@@ -109,10 +110,12 @@ class Boto3S3Transport:
         ):
             raise store.StoreError("Invalid bounded S3 configuration")
         self.binding = binding
+        self.observation_only = observation_only
         self.max_bytes = max_bytes
         self._qualified = False
         self._qualifying = False
         self._blocked = False
+        self.last_read_error_kind: str | None = None
         self.evidence: S3QualificationEvidence | None = None
         self.qualification_key: str | None = None
         self.qualification_versions: tuple[str, ...] = ()
@@ -183,7 +186,9 @@ class Boto3S3Transport:
         ):
             raise store.StoreError("S3 destination changed; reconciliation required")
 
-    def _gate(self, binding: store.StoreBinding, key: str) -> None:
+    def _gate(self, binding: store.StoreBinding, key: str, *, mutation: bool = False) -> None:
+        if mutation and self.observation_only:
+            raise store.StoreError("Observation-only transport cannot mutate")
         if self._blocked:
             raise store.StoreError(
                 "S3 transport blocked; explicit operator reconciliation required"
@@ -200,7 +205,7 @@ class Boto3S3Transport:
             or (key.startswith(binding.prefix + ".qualification/") and not self._qualifying)
         ):
             raise store.StoreError("S3 key outside exact canary prefix")
-        if not self._qualified and not self._qualifying:
+        if not self._qualified and not self._qualifying and not self.observation_only:
             raise store.StoreError("S3 backend qualification required")
 
     def _call(self, method: str, **params: Any) -> Any:
@@ -257,7 +262,14 @@ class Boto3S3Transport:
             if not isinstance(data, bytes) or len(data) != length or len(data) > self.max_bytes:
                 raise ValueError
             return StoredBlob(data, actual)
-        except Exception:
+        except Exception as error:
+            kind = type(error).__name__
+            self.last_read_error_kind = (
+                kind
+                if kind
+                in {"ChecksumValidationError", "ReadTimeoutError", "ValueError", "TypeError"}
+                else "unclassified"
+            )
             self._blocked = True
             raise store.StoreError("S3 bounded encrypted readback invalid") from None
         finally:
@@ -271,7 +283,7 @@ class Boto3S3Transport:
     def _put(
         self, binding: store.StoreBinding, key: str, data: bytes, version: str | None
     ) -> StoredBlob:
-        self._gate(binding, key)
+        self._gate(binding, key, mutation=True)
         if not isinstance(data, bytes) or len(data) > self.max_bytes:
             raise store.StoreError("S3 payload exceeds bounded bytes")
         self._versioning()
@@ -317,7 +329,7 @@ class Boto3S3Transport:
 
     def delete_blob(self, binding: store.StoreBinding, key: str, expected_version: str) -> None:
         """Hide only an owned disposable native-lock probe, retaining every version."""
-        self._gate(binding, key)
+        self._gate(binding, key, mutation=True)
         if not key.startswith(binding.prefix + "qualification/") or not key.endswith(
             "/terraform.tfstate.tflock"
         ):
@@ -378,7 +390,31 @@ class Boto3S3Transport:
         blob = self.create_blob(binding, key, store.encode_archive(receipt))
         return store.StoredArchive(store.decode_archive(blob.data), blob.version)
 
+    def get_recovery_snapshot(
+        self, binding: store.StoreBinding, key: str
+    ) -> store.StoredRecoverySnapshot | None:
+        blob = self.get_blob(binding, key)
+        try:
+            return (
+                None
+                if blob is None
+                else store.StoredRecoverySnapshot(
+                    store.decode_recovery_snapshot(blob.data), blob.version
+                )
+            )
+        except Exception:
+            self._blocked = True
+            raise store.StoreError("S3 recovery snapshot schema invalid") from None
+
+    def create_recovery_snapshot(
+        self, binding: store.StoreBinding, key: str, snapshot: store.RecoverySnapshot
+    ) -> store.StoredRecoverySnapshot:
+        blob = self.create_blob(binding, key, store.encode_recovery_snapshot(snapshot))
+        return store.StoredRecoverySnapshot(store.decode_recovery_snapshot(blob.data), blob.version)
+
     def qualify_backend(self) -> S3QualificationEvidence:
+        if self.observation_only:
+            raise store.StoreError("Observation-only transport cannot qualify or mutate")
         if self._blocked or self._qualified or self._qualifying:
             raise store.StoreError("S3 qualification unavailable; retain existing evidence")
         key = self.binding.prefix + ".qualification/" + uuid.uuid4().hex + "/probe"

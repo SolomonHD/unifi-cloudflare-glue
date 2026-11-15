@@ -136,20 +136,25 @@ def checked_report(raw: str, config: dict, exit_code: int) -> str:
     return safe
 
 
-async def invoke(config: dict, cloudflare_api_token, wasabi_access_key, wasabi_secret_key) -> str:
-    container = (
+def runtime_container(cloudflare_api_token, wasabi_access_key, wasabi_secret_key):
+    return (
         terraform_runtime(dagger.dag, TERRAFORM_IMAGE)
         .with_directory(
             "/canary/fixture",
             dagger.dag.current_module().source().directory("terraform/cloudflare-canary"),
         )
         .with_new_file("/run/canary/runtime-marker", "dagger-canary-v1", permissions=0o600)
-        .with_new_file("/canary/config.json", json.dumps(config), permissions=0o600)
         .with_env_variable("PYTHONPATH", "/tooling/src")
         .with_secret_variable("CLOUDFLARE_API_TOKEN", cloudflare_api_token)
         .with_secret_variable("AWS_ACCESS_KEY_ID", wasabi_access_key)
         .with_secret_variable("AWS_SECRET_ACCESS_KEY", wasabi_secret_key)
     )
+
+
+async def invoke(config: dict, cloudflare_api_token, wasabi_access_key, wasabi_secret_key) -> str:
+    container = runtime_container(
+        cloudflare_api_token, wasabi_access_key, wasabi_secret_key
+    ).with_new_file("/canary/config.json", json.dumps(config), permissions=0o600)
     container = live_exec(
         container,
         ["python", "-m", "main.canary_runtime", "/canary/config.json"],
@@ -165,3 +170,79 @@ async def invoke(config: dict, cloudflare_api_token, wasabi_access_key, wasabi_s
             "Canary execution unknown; reconcile run " + config["run_prefix"]
         ) from None
     return checked_report(raw, config, exit_code)
+
+
+async def observe(
+    run_prefix: str, cloudflare_api_token, wasabi_access_key, wasabi_secret_key
+) -> str:
+    from .canary_identity import validate_run_prefix
+
+    validate_run_prefix(run_prefix)
+    container = runtime_container(cloudflare_api_token, wasabi_access_key, wasabi_secret_key)
+    container = live_exec(
+        container,
+        ["python", "-m", "main.canary_observation", run_prefix],
+        expect=dagger.ReturnType.ANY,
+        redirect_stdout="/canary/observation.json",
+        redirect_stderr="/canary/observation.private",
+    )
+    try:
+        code = await asyncio.wait_for(container.exit_code(), timeout=240)
+        if code != 0:
+            raise ValueError()
+        raw = await container.file("/canary/observation.json").contents()
+        report = json.loads(raw)
+        if (
+            report.get("operation") != "read_only_observation"
+            or report.get("run_prefix") != run_prefix
+        ):
+            raise ValueError()
+    except Exception:
+        raise RuntimeError("Read-only observation unconfirmed for " + run_prefix) from None
+    return json.dumps(report, sort_keys=True)
+
+
+async def reconcile(
+    config: dict, cloudflare_api_token, wasabi_access_key, wasabi_secret_key
+) -> str:
+    from .canary_identity import validate_run_prefix
+
+    validate_run_prefix(config["run_prefix"])
+    if (
+        config.get("exclusive_writer") is not True
+        or config.get("prior_writer_terminated") is not True
+        or any(
+            not isinstance(config.get(key), str)
+            or not 1 <= len(config[key]) <= 768
+            or not config[key].isascii()
+            or not config[key].isprintable()
+            for key in ("expected_claim_version_id", "expected_state_version_id")
+        )
+    ):
+        raise ValueError("Explicit version-bound termination/exclusivity authorization required")
+    container = runtime_container(
+        cloudflare_api_token, wasabi_access_key, wasabi_secret_key
+    ).with_new_file("/canary/recovery.json", json.dumps(config), permissions=0o600)
+    container = live_exec(
+        container,
+        ["python", "-m", "main.canary_recovery", "/canary/recovery.json"],
+        expect=dagger.ReturnType.ANY,
+        redirect_stdout="/canary/recovery-result.json",
+        redirect_stderr="/canary/recovery.private",
+    )
+    try:
+        code = await asyncio.wait_for(container.exit_code(), timeout=600)
+        raw = await container.file("/canary/recovery-result.json").contents()
+        report = json.loads(raw)
+        if (
+            code != 0
+            or report.get("operation") != "reconcile"
+            or report.get("run_prefix") != config["run_prefix"]
+            or report.get("cleanup") != "verified"
+            or report.get("ownership_transferred") is not True
+            or report.get("original_outcome") != "unknown"
+        ):
+            raise ValueError()
+    except Exception:
+        raise RuntimeError("Reconciliation unconfirmed; retain " + config["run_prefix"]) from None
+    return json.dumps(report, sort_keys=True)

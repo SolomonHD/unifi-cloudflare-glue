@@ -12,6 +12,51 @@ from unittest.mock import Mock
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_state_comparison_normalizes_check_order_without_dropping_metadata():
+    original = {
+        "version": 4,
+        "serial": 1,
+        "lineage": "lineage",
+        "terraform_version": "1.13.5",
+        "resources": [],
+        "outputs": {},
+        "check_results": [
+            {
+                "config_addr": "var.zone_id",
+                "status": "pass",
+                "objects": [{"object_addr": "var.zone_id", "status": "pass"}],
+            },
+            {
+                "config_addr": "cloudflare_dns_record.canary",
+                "status": "pass",
+                "objects": [
+                    {"object_addr": 'cloudflare_dns_record.canary["txt"]', "status": "pass"},
+                    {"object_addr": 'cloudflare_dns_record.canary["cname"]', "status": "pass"},
+                ],
+            },
+        ],
+    }
+    changed = json.loads(json.dumps(original))
+    changed["check_results"].reverse()
+    changed["check_results"][0]["objects"].reverse()
+    assert tf.states_match(json.dumps(original).encode(), json.dumps(changed).encode())
+    for key, value in (
+        ("serial", 2),
+        ("lineage", "other"),
+        ("outputs", {"changed": True}),
+        ("resources", [{"changed": True}]),
+        ("terraform_version", "1.13.6"),
+    ):
+        assert not tf.states_match(
+            json.dumps(original).encode(), json.dumps({**changed, key: value}).encode()
+        )
+    changed["check_results"][0]["objects"][0]["status"] = "fail"
+    assert not tf.states_match(json.dumps(original).encode(), json.dumps(changed).encode())
+    assert not tf.states_match(b'{"check_results": []}', b'{"check_results": null}')
+
+
 spec = importlib.util.spec_from_file_location(
     "canary_terraform_test_package",
     ROOT / "src/main/__init__.py",

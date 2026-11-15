@@ -3422,3 +3422,44 @@ output "record_id" {{
             policy_reviewed=policy_reviewed,
         )
         return await invoke(config, cloudflare_api_token, wasabi_access_key, wasabi_secret_key)
+
+    @function(cache="never")  # type: ignore[call-overload]
+    async def inspect_cloudflare_dns_canary(
+        self,
+        run_prefix: str,
+        cloudflare_api_token: Secret,
+        wasabi_access_key: Secret,
+        wasabi_secret_key: Secret,
+    ) -> str:
+        """Read-only projected metadata for one retained run; never cleanup or takeover."""
+        try:
+            from .canary_entrypoint import observe
+        except ImportError:
+            from canary_entrypoint import observe  # type: ignore[no-redef,import-not-found]
+        return await observe(run_prefix, cloudflare_api_token, wasabi_access_key, wasabi_secret_key)
+
+    @function(cache="never")  # type: ignore[call-overload]
+    async def reconcile_cloudflare_dns_canary(
+        self,
+        run_prefix: str,
+        expected_claim_version_id: str,
+        expected_state_version_id: str,
+        cloudflare_api_token: Secret,
+        wasabi_access_key: Secret,
+        wasabi_secret_key: Secret,
+        prior_writer_terminated: bool = False,
+        exclusive_writer: bool = False,
+    ) -> str:
+        """Explicitly reconcile/destroy one terminated run; never replay or age-takeover."""
+        try:
+            from .canary_entrypoint import reconcile
+        except ImportError:
+            from canary_entrypoint import reconcile  # type: ignore[no-redef,import-not-found]
+        config = {
+            "run_prefix": run_prefix,
+            "expected_claim_version_id": expected_claim_version_id,
+            "expected_state_version_id": expected_state_version_id,
+            "prior_writer_terminated": prior_writer_terminated,
+            "exclusive_writer": exclusive_writer,
+        }
+        return await reconcile(config, cloudflare_api_token, wasabi_access_key, wasabi_secret_key)

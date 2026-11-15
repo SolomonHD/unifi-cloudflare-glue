@@ -3,13 +3,14 @@
 The injected transport must be independently qualified against the exact binding.
 Its versions are opaque CAS tokens, not timestamps. A successful write means the
 object is durable; an exception may mean it committed. There are no retries,
-expiry, deletion or unresolved-claim takeover operations here. Operator-established prior
-termination/exclusion and effect reconciliation require a separate recovery path.
+expiry, deletion or automatic takeover operations here. Explicit cleanup recovery
+requires operator-established prior termination/exclusion and exact generation
+evidence, preserving the unresolved original ledger in an immutable snapshot.
 
 One maintenance object contains both claim and ledger, avoiding split-object
 commit races. It serializes all participating runs in this dedicated prefix and
-is replaced only after verified immutable completion history. This API does not implement
-recovery, checkpoint storage, Terraform locking, DNS effects or live qualification.
+is normally replaced only after verified immutable completion history. This API
+does not observe termination, state, DNS effects or live backend qualification.
 Checks cannot fence requests already sent or writers bypassing this protocol.
 """
 
@@ -178,6 +179,25 @@ class CompletedPointer:
 
 
 @dataclass(frozen=True)
+class RecoveryAuthorization:
+    run: RunIdentity
+    expected_claim_version: str
+    expected_generation: int
+    observed_state_generation: str
+    prior_writer_terminated: bool
+    external_writer_exclusion: bool
+    evidence_id: str
+
+
+@dataclass(frozen=True)
+class RecoveryPointer:
+    key: str
+    version: str
+    claim_version: str
+    generation: int
+
+
+@dataclass(frozen=True)
 class Ledger:
     run: RunIdentity
     owner: str
@@ -186,6 +206,7 @@ class Ledger:
     receipts: tuple[Receipt, ...] = ()
     completed: CompletedPointer | None = None
     predecessor: CompletedPointer | None = None
+    recovery: RecoveryPointer | None = None
 
 
 @dataclass(frozen=True)
@@ -203,6 +224,20 @@ class CompletedReceipt:
 @dataclass(frozen=True)
 class StoredArchive:
     receipt: CompletedReceipt
+    version: str
+
+
+@dataclass(frozen=True)
+class RecoverySnapshot:
+    ledger: Ledger
+    claim_version: str
+    recovery_owner: str
+    authorization: RecoveryAuthorization
+
+
+@dataclass(frozen=True)
+class StoredRecoverySnapshot:
+    snapshot: RecoverySnapshot
     version: str
 
 
@@ -242,6 +277,21 @@ def validate_ledger(ledger: Ledger) -> None:
         ):
             raise ValueError
         generation = 0
+        if ledger.recovery is not None:
+            recovery_pointer = ledger.recovery
+            if (
+                type(recovery_pointer) is not RecoveryPointer
+                or not _token(recovery_pointer.key)
+                or not _token(recovery_pointer.version)
+                or not _token(recovery_pointer.claim_version)
+                or type(recovery_pointer.generation) is not int
+                or not 1 <= recovery_pointer.generation <= 256
+                or recovery_pointer.key.startswith("/")
+                or any(part in ("", ".", "..") for part in recovery_pointer.key.split("/"))
+                or not recovery_pointer.key.endswith("/recovery.json")
+            ):
+                raise ValueError
+            generation = recovery_pointer.generation + 1
         previous = None
         for index, receipt in enumerate(ledger.receipts):
             if (
@@ -249,6 +299,10 @@ def validate_ledger(ledger: Ledger) -> None:
                 or receipt.phase not in _PHASES
                 or not _token(receipt.state_generation)
                 or (previous is not None and receipt.state_generation != previous)
+                or (
+                    ledger.recovery is not None
+                    and receipt.phase not in ("cleanup_state", "destroy", "absence")
+                )
             ):
                 raise ValueError
             generation += 1
@@ -302,6 +356,49 @@ def validate_archive(receipt: CompletedReceipt) -> None:
         raise StoreError("Invalid completed archive schema") from None
 
 
+def validate_recovery_authorization(authorization: RecoveryAuthorization) -> None:
+    try:
+        if type(authorization) is not RecoveryAuthorization:
+            raise ValueError
+        authorization.run.validate()
+        if (
+            not _token(authorization.expected_claim_version)
+            or type(authorization.expected_generation) is not int
+            or not 1 <= authorization.expected_generation <= 256
+            or not _token(authorization.observed_state_generation)
+            or authorization.prior_writer_terminated is not True
+            or authorization.external_writer_exclusion is not True
+            or not _token(authorization.evidence_id)
+            or not authorization.evidence_id.strip()
+        ):
+            raise ValueError
+    except Exception:
+        raise StoreError("Invalid explicit recovery authorization") from None
+
+
+def validate_recovery_snapshot(snapshot: RecoverySnapshot) -> None:
+    try:
+        if type(snapshot) is not RecoverySnapshot:
+            raise ValueError
+        validate_ledger(snapshot.ledger)
+        validate_recovery_authorization(snapshot.authorization)
+        auth = snapshot.authorization
+        if (
+            not _token(snapshot.recovery_owner)
+            or snapshot.recovery_owner == snapshot.ledger.owner
+            or snapshot.claim_version != auth.expected_claim_version
+            or snapshot.ledger.run != auth.run
+            or snapshot.ledger.generation != auth.expected_generation
+            or snapshot.ledger.completed is not None
+            or snapshot.ledger.recovery is not None
+            or not snapshot.ledger.receipts
+            or snapshot.ledger.receipts[-1].outcome not in (None, "unknown")
+        ):
+            raise ValueError
+    except Exception:
+        raise StoreError("Invalid immutable recovery snapshot") from None
+
+
 _MAX_JSON_BYTES = 262144
 
 
@@ -311,14 +408,8 @@ def _object(value: object, keys: set[str]) -> dict[str, object]:
     return cast(dict[str, object], value)
 
 
-def _decode_ledger(value: object) -> Ledger:
-    row = _object(
-        value,
-        {"run", "owner", "generation", "state_generation", "receipts", "completed", "predecessor"},
-    )
-    run = _object(
-        row["run"], {"run_prefix", "revision", "zone_id", "zone_name", "intended_records"}
-    )
+def _decode_run(value: object) -> RunIdentity:
+    run = _object(value, {"run_prefix", "revision", "zone_id", "zone_name", "intended_records"})
     records = run["intended_records"]
     if type(records) is not list or len(records) != 2:
         raise ValueError
@@ -331,6 +422,28 @@ def _decode_ledger(value: object) -> Ledger:
         cast(str, run["zone_name"]),
         tuple(tuple(record) for record in records),
     )
+    identity.validate()
+    return identity
+
+
+def _decode_ledger(value: object) -> Ledger:
+    if type(value) is dict and "recovery" not in value:
+        # Concrete schema-1 ledgers persisted by the first pilot lack this field.
+        value = {**value, "recovery": None}
+    row = _object(
+        value,
+        {
+            "run",
+            "owner",
+            "generation",
+            "state_generation",
+            "receipts",
+            "completed",
+            "predecessor",
+            "recovery",
+        },
+    )
+    identity = _decode_run(row["run"])
     receipts = row["receipts"]
     if type(receipts) is not list or len(receipts) > 128:
         raise ValueError
@@ -357,7 +470,13 @@ def _decode_ledger(value: object) -> Ledger:
         cast(int, row["generation"]),
         cast(str, row["state_generation"]),
         parsed,
-        *pointers,
+        pointers[0],
+        pointers[1],
+        recovery=(
+            None
+            if row["recovery"] is None
+            else RecoveryPointer(**_object(row["recovery"], {"key", "version", "claim_version", "generation"}))  # type: ignore[arg-type]
+        ),
     )
     validate_ledger(ledger)
     return ledger
@@ -384,9 +503,14 @@ def _decode(payload: bytes, kind: str) -> object:
     return row["body"]
 
 
-def _encode(value: Ledger | CompletedReceipt, kind: str) -> bytes:
+def _encode(value: Ledger | CompletedReceipt | RecoverySnapshot, kind: str) -> bytes:
+    body = asdict(value)
+    ledger = body if kind == "ledger" else body["ledger"]
+    if ledger["recovery"] is None:
+        # Preserve the exact original schema shape, including archived prior claims.
+        ledger.pop("recovery")
     payload = json.dumps(
-        {"schema": 1, "kind": kind, "body": asdict(value)},
+        {"schema": 1, "kind": kind, "body": body},
         sort_keys=True,
         separators=(",", ":"),
         allow_nan=False,
@@ -429,6 +553,45 @@ def decode_archive(payload: bytes) -> CompletedReceipt:
         raise StoreError("Invalid completed archive encoding") from None
 
 
+def encode_recovery_snapshot(snapshot: RecoverySnapshot) -> bytes:
+    try:
+        validate_recovery_snapshot(snapshot)
+        return _encode(snapshot, "recovery")
+    except Exception:
+        raise StoreError("Invalid recovery snapshot encoding") from None
+
+
+def decode_recovery_snapshot(payload: bytes) -> RecoverySnapshot:
+    try:
+        row = _object(
+            _decode(payload, "recovery"),
+            {"ledger", "claim_version", "recovery_owner", "authorization"},
+        )
+        auth = _object(
+            row["authorization"],
+            {
+                "run",
+                "expected_claim_version",
+                "expected_generation",
+                "observed_state_generation",
+                "prior_writer_terminated",
+                "external_writer_exclusion",
+                "evidence_id",
+            },
+        )
+        authorization = RecoveryAuthorization(**{**auth, "run": _decode_run(auth["run"])})  # type: ignore[arg-type]
+        snapshot = RecoverySnapshot(
+            _decode_ledger(row["ledger"]),
+            cast(str, row["claim_version"]),
+            cast(str, row["recovery_owner"]),
+            authorization,
+        )
+        validate_recovery_snapshot(snapshot)
+        return snapshot
+    except Exception:
+        raise StoreError("Invalid recovery snapshot encoding") from None
+
+
 class Transport(Protocol):
     """No implicit retries; each write is one atomic conditional operation.
 
@@ -454,6 +617,14 @@ class Transport(Protocol):
 
     def get_archive(self, binding: StoreBinding, key: str) -> StoredArchive | None: ...
 
+    def create_recovery_snapshot(
+        self, binding: StoreBinding, key: str, snapshot: RecoverySnapshot
+    ) -> StoredRecoverySnapshot: ...
+
+    def get_recovery_snapshot(
+        self, binding: StoreBinding, key: str
+    ) -> StoredRecoverySnapshot | None: ...
+
 
 class CanaryStore:
     """One writer session; any ownership/backend uncertainty permanently blocks it.
@@ -475,6 +646,8 @@ class CanaryStore:
         self._attempted: Ledger | None = None
         self._archive_attempted: CompletedReceipt | None = None
         self._archive_retained: StoredArchive | None = None
+        self._recovery_attempted: RecoverySnapshot | None = None
+        self._recovery_retained: StoredRecoverySnapshot | None = None
         self._blocked = False
         self._effect_checked = False
 
@@ -499,6 +672,14 @@ class CanaryStore:
     @property
     def archive_retained(self) -> StoredArchive | None:
         return self._archive_retained
+
+    @property
+    def recovery_attempted(self) -> RecoverySnapshot | None:
+        return self._recovery_attempted
+
+    @property
+    def recovery_retained(self) -> StoredRecoverySnapshot | None:
+        return self._recovery_retained
 
     def _gate(self) -> None:
         if self._blocked:
@@ -535,6 +716,88 @@ class CanaryStore:
     def _archive_key(self, run: RunIdentity) -> str:
         return self._binding.prefix + "runs/" + run.run_prefix + "/completed.json"
 
+    def _recovery_key(self, run: RunIdentity) -> str:
+        return self._binding.prefix + "runs/" + run.run_prefix + "/recovery.json"
+
+    def recover(
+        self, owner: str, authorization: RecoveryAuthorization, observed_state_generation: str
+    ) -> StoredLedger:
+        """Transfer only explicitly reconciled unresolved ownership, never replay it.
+
+        The caller must freshly observe the exact state generation and establish
+        prior termination and external writer exclusion before invoking this API.
+        No age, lease or normal-claim failure establishes those proofs.
+        """
+        self._gate()
+        validate_recovery_authorization(authorization)
+        if self._current is not None or not _token(owner):
+            raise StoreError("New explicit recovery session required")
+        if observed_state_generation != authorization.observed_state_generation:
+            self._stop("Observed recovery state generation changed")
+        try:
+            previous = self._transport.get(self._binding, self.key)
+            if type(previous) is not StoredLedger:
+                self._stop("Exact prior recovery claim required")
+            snapshot = RecoverySnapshot(previous.ledger, previous.version, owner, authorization)
+            validate_recovery_snapshot(snapshot)
+            self._current = previous
+            self._recovery_attempted = snapshot
+            key = self._recovery_key(previous.ledger.run)
+            archived = self._transport.create_recovery_snapshot(self._binding, key, snapshot)
+            if (
+                type(archived) is not StoredRecoverySnapshot
+                or archived.snapshot != snapshot
+                or not _token(archived.version)
+            ):
+                self._stop("Recovery snapshot confirmation invalid")
+            self._recovery_retained = archived
+            if self._transport.get_recovery_snapshot(self._binding, key) != archived:
+                self._stop("Recovery snapshot readback invalid")
+            if self._transport.get(self._binding, self.key) != previous:
+                self._stop("Prior recovery claim changed")
+        except Exception:
+            self._stop("Recovery snapshot or claim unconfirmed; retain original unknown history")
+        proposed = replace(
+            previous.ledger,
+            owner=owner,
+            generation=previous.ledger.generation + 1,
+            state_generation=observed_state_generation,
+            receipts=(),
+            recovery=RecoveryPointer(
+                key, archived.version, previous.version, previous.ledger.generation
+            ),
+        )
+        return self._write(proposed)
+
+    def _verify_recovery(self, ledger: Ledger) -> None:
+        pointer = ledger.recovery
+        if pointer is None:
+            return
+        try:
+            if pointer.key != self._recovery_key(ledger.run):
+                raise ValueError
+            archived = self._transport.get_recovery_snapshot(self._binding, pointer.key)
+            if type(archived) is not StoredRecoverySnapshot:
+                raise ValueError
+            validate_recovery_snapshot(archived.snapshot)
+            snapshot = archived.snapshot
+            initial_state = (
+                ledger.receipts[0].state_generation if ledger.receipts else ledger.state_generation
+            )
+            if (
+                archived.version != pointer.version
+                or snapshot.claim_version != pointer.claim_version
+                or snapshot.ledger.generation != pointer.generation
+                or snapshot.ledger.run != ledger.run
+                or snapshot.ledger.predecessor != ledger.predecessor
+                or snapshot.recovery_owner != ledger.owner
+                or snapshot.authorization.observed_state_generation != initial_state
+            ):
+                raise ValueError
+            self._recovery_retained = archived
+        except Exception:
+            self._stop("Recovery history unavailable or invalid; retain original unknown history")
+
     def _claim_successor(self, proposed: Ledger) -> StoredLedger:
         try:
             previous = self._transport.get(self._binding, self.key)
@@ -566,6 +829,7 @@ class CanaryStore:
                 or archive.receipt.claim_version == previous.version
             ):
                 self._stop("Completed history confirmation invalid")
+            self._verify_recovery(previous.ledger)
         except Exception:
             self._stop(
                 "Completed history unavailable or invalid; no automatic takeover; retain recovery identity"
@@ -589,6 +853,7 @@ class CanaryStore:
             _require_cleanup(current.ledger)
         except StoreError:
             self._stop("Verified cleanup required before completion")
+        self._verify_recovery(current.ledger)
         receipt = CompletedReceipt(current.ledger, current.version)
         self._archive_attempted = receipt
         key = self._archive_key(current.ledger.run)
@@ -663,6 +928,8 @@ class CanaryStore:
             self._stop("Completed session cannot issue further effects")
         if phase not in _PHASES:
             raise StoreError("Unsupported canary phase")
+        if current.recovery is not None and phase not in ("cleanup_state", "destroy", "absence"):
+            self._stop("Recovery session permits cleanup phases only")
         if current.receipts and current.receipts[-1].outcome in (None, "unknown"):
             self._stop("Uncertain prior effect; explicit operator reconciliation required")
         self._effect_checked = False

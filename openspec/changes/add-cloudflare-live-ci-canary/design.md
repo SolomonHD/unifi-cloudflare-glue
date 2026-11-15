@@ -108,6 +108,21 @@ branch rule. PRs/forks/`pull_request_target` never become trusted. Normal main
 and schedule execution remain disabled by default; feature admission is removed
 after a known terminal pilot. No merge or recurring activation is authorized.
 
+Recovery approval, 2026-11-15: preserve the entire original unresolved ledger
+and opaque claim version in an immutable recovery snapshot before conditional
+owner transfer. The recovery pointer retains the original generation, actor,
+run and explicit authorization evidence. Existing persisted schema-1 ledgers
+without that optional pointer remain readable; unknown fields remain rejected.
+Only cleanup-state/destroy/absence receipts may follow recovery. Completion and
+successor verification include that snapshot, so successful cleanup cannot
+rewrite the original unknown pilot as successful. Expected immutable claim/state
+VersionIds, independently terminal exact Actions attempt/jobs and explicit
+operator external-writer exclusion precede transfer. Missing/partial state,
+unverified API identities, stale versions and uncertain transfer stay blocked.
+Read-only observation is available without a mutation-qualified transport, but
+that transport cannot qualify, put or delete. There is no force unlock, blind
+apply replay, broad API delete or automated claim takeover.
+
 ### 7. Separate explicit reconciliation and bounded janitor
 
 Expose a separate Dagger reconciliation entry point taking a non-secret run identity; runtime credentials remain separately supplied and scoped. A hard-cancelled/unknown run is not automatically replayed by the next normal canary. Obtain explicit reconciliation authorization, establish exclusive ownership and prior termination, load protected evidence, query exact intended names/known IDs, and reconcile partial or missing state before guarded cleanup. Unknown ownership or uncertain prior effects blocks deletion/retry. Do not infer success from a missing runner or missing state alone.

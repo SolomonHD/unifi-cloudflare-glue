@@ -26,7 +26,13 @@ from .canary_store import (
     StoreBinding,
     StoreError,
 )
-from .canary_terraform import BackendConfig, LockEvidence, TerraformDriver, qualify_native_lock
+from .canary_terraform import (
+    BackendConfig,
+    LockEvidence,
+    TerraformDriver,
+    qualify_native_lock,
+    states_match,
+)
 
 
 def in_runtime() -> bool:
@@ -116,9 +122,64 @@ class S3LockHolder:
         self.transport.delete_blob(self.binding, key, version)
 
 
+def qualify_backend(
+    transport: Boto3S3Transport,
+    binding: StoreBinding,
+    run_prefix: str,
+    zone_id: str,
+    receipt_key: str,
+) -> Qualification:
+    transport.qualify_backend()
+    qualifier_key = PREFIX + "qualification/" + str(uuid.uuid4()) + "/terraform.tfstate"
+    transport.create_blob(
+        binding,
+        receipt_key,
+        json.dumps(
+            {
+                "key": qualifier_key,
+                "runtime_identity": RUNTIME_ID,
+                "run_prefix": run_prefix,
+            },
+            sort_keys=True,
+        ).encode(),
+    )
+    with tempfile.TemporaryDirectory(prefix="canary-lock-") as directory:
+        root = Path(directory) / "fixture"
+        root.mkdir()
+        (root / "versions.tf").write_text(
+            'terraform {\n required_version = ">= 1.13.5, < 2.0.0"\n backend "s3" {}\n}\n'
+        )
+        qualifier = TerraformDriver(
+            root,
+            run_prefix=run_prefix,
+            zone_id=zone_id,
+            backend=BackendConfig(ENDPOINT, REGION, BUCKET, qualifier_key),
+            state_generation=lambda: "absent",
+            checkpoint=lambda *_: None,
+            runtime=True,
+            runtime_check=in_runtime,
+        )
+        qualifier.initialize()
+        qualify_native_lock(
+            qualifier,
+            S3LockHolder(transport, binding),
+            qualification_prefix=PREFIX + "qualification/",
+        )
+    # S3/native locking are measured; access, retention and external exclusion
+    # remain separately reviewed operator prerequisites, not an API fence.
+    return Qualification(binding, True, True, True, True, True, True, True, True, True)
+
+
 class RuntimeJournal:
-    def __init__(self, store: CanaryStore, run: RunIdentity, generation: Callable[[], str]):
+    def __init__(
+        self,
+        store: CanaryStore,
+        run: RunIdentity,
+        generation: Callable[[], str],
+        checkpoint_generation: Callable[[], str],
+    ):
         self.store, self.run, self.generation = store, run, generation
+        self.checkpoint_generation = checkpoint_generation
         self.owner = str(uuid.uuid4())
         self.expected = "absent"
         self.pending = False
@@ -146,6 +207,8 @@ class RuntimeJournal:
         if outcome not in {"verified", "failed", "unknown"}:
             raise StoreError("Invalid lifecycle outcome")
         observed = self.generation()
+        if phase in {"create", "update", "destroy"} and self.checkpoint_generation() != observed:
+            raise StoreError("Effect result lacks its exact durable checkpoint generation")
         self.store.record_result(
             "succeeded" if outcome == "verified" else outcome, self.expected, observed
         )
@@ -174,47 +237,9 @@ def run(config: dict) -> dict:
         binding = StoreBinding(ENDPOINT, REGION, BUCKET, PREFIX, RUNTIME_ID)
         transport = Boto3S3Transport(binding, runtime=True, runtime_check=in_runtime)
         report["phase"] = "qualification"
-        transport.qualify_backend()
-        qualifier_key = PREFIX + "qualification/" + str(uuid.uuid4()) + "/terraform.tfstate"
-        # Preserve the exact qualification identity before the native lock test.
-        transport.create_blob(
-            binding,
-            PREFIX + f"runs/{prefix}/qualification.json",
-            json.dumps(
-                {
-                    "key": qualifier_key,
-                    "runtime_identity": RUNTIME_ID,
-                    "run_prefix": prefix,
-                },
-                sort_keys=True,
-            ).encode(),
+        qualification = qualify_backend(
+            transport, binding, prefix, zone, PREFIX + f"runs/{prefix}/qualification.json"
         )
-        with tempfile.TemporaryDirectory(prefix="canary-lock-") as directory:
-            root = Path(directory) / "fixture"
-            root.mkdir()
-            (root / "versions.tf").write_text(
-                'terraform {\n required_version = ">= 1.13.5, < 2.0.0"\n backend "s3" {}\n}\n'
-            )
-            qualifier = TerraformDriver(
-                root,
-                run_prefix=prefix,
-                zone_id=zone,
-                backend=BackendConfig(ENDPOINT, REGION, BUCKET, qualifier_key),
-                state_generation=lambda: "absent",
-                checkpoint=lambda *_: None,
-                runtime=True,
-                runtime_check=in_runtime,
-            )
-            qualifier.initialize()
-            qualify_native_lock(
-                qualifier,
-                S3LockHolder(transport, binding),
-                qualification_prefix=PREFIX + "qualification/",
-            )
-        # S3 semantics and native locking above are measured; access/exclusion
-        # and no-expiry custody are operator-reviewed prerequisites, not claims
-        # that CAS can stop an external writer bypassing this protocol.
-        qualification = Qualification(binding, True, True, True, True, True, True, True, True, True)
         report["qualified"] = True
         if config["operation"] == "qualify":
             report.update(phase="qualification", primary="verified", cleanup="verified")
@@ -225,13 +250,11 @@ def run(config: dict) -> dict:
             blob = transport.get_blob(binding, state_key)
             return "absent" if blob is None else blob.version
 
+        checkpointed_generation = [""]
+
         def checkpoint(raw: bytes, state_version: str) -> None:
             blob = transport.get_blob(binding, state_key)
-            if (
-                blob is None
-                or blob.version != state_version
-                or json.loads(blob.data) != json.loads(raw)
-            ):
+            if blob is None or blob.version != state_version or not states_match(blob.data, raw):
                 raise StoreError("State/checkpoint generation mismatch")
             key = (
                 PREFIX
@@ -239,7 +262,8 @@ def run(config: dict) -> dict:
                 + hashlib.sha256(state_version.encode()).hexdigest()
                 + ".tfstate"
             )
-            transport.create_blob(binding, key, raw)
+            transport.create_blob(binding, key, blob.data)
+            checkpointed_generation[0] = state_version
 
         identity = RunIdentity(
             prefix,
@@ -252,7 +276,10 @@ def run(config: dict) -> dict:
             ),
         )
         journal = RuntimeJournal(
-            CanaryStore(transport, binding, qualification), identity, generation
+            CanaryStore(transport, binding, qualification),
+            identity,
+            generation,
+            lambda: checkpointed_generation[0],
         )
         with tempfile.TemporaryDirectory(prefix="canary-run-") as directory:
             root = Path(directory) / "fixture"

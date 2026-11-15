@@ -186,7 +186,27 @@ not the hosted DNS token.
 This document authorizes no credential access, provisioning, backend test, DNS
 mutation, janitor deletion, workflow activation or production operation.
 
-Separate reconciliation and report-only janitor entry points remain unfinished.
-Until implemented, unknown runs stay blocked for explicit operator reconciliation
-of protected state/receipts and exact DNS identities. Never delete a maintenance
-object merely to make the next run pass.
+`inspect-cloudflare-dns-canary` is read-only: it projects the retained phase,
+state-shape checks, state/check metadata consistency and exact-name API identity
+matches. Its transport cannot qualify, put or delete. It never exports raw state.
+
+`reconcile-cloudflare-dns-canary` is a separate explicitly authorized operation.
+It requires the exact run prefix, expected immutable claim/state VersionIds and
+both `prior-writer-terminated=true` and `exclusive-writer=true`. It independently
+checks the public GitHub.com run/attempt, original source SHA, repository/workflow
+and terminal jobs, then checks current state and exact API identities. An
+immutable recovery snapshot preserves the entire original unknown ledger before
+CAS transfer. Only destroy/absence phases can follow. Completion retains the
+snapshot reference; it does not turn the original failed run into a passing one.
+Missing/partial state, changed versions, missing proof and uncertain transfers
+remain blocked without apply replay, imports, broad API deletion or force unlock.
+
+State comparison preserves all values/statuses, normalizing only Terraform's
+unordered check-result/object lists. Checkpoints store authoritative remote bytes
+and effect receipts require their exact durable checkpoint generation. A harmless
+`check_results` ordering difference is not interpreted as drift or silently
+discarded; resource/output/serial/status differences remain failures.
+
+The report-only janitor entry point remains unfinished. Never delete a maintenance
+object merely to make the next run pass, and never retry an unknown cleanup
+without reconciling its snapshot/owner/state first.

@@ -188,7 +188,10 @@ def test_connected_journal_completes_and_successor_can_run():
         )
         state = ["absent"]
         journal = RuntimeJournal(
-            CanaryStore(memory, binding, qualification), identity, lambda: state[0]
+            CanaryStore(memory, binding, qualification),
+            identity,
+            lambda: state[0],
+            lambda: state[0],
         )
 
         class Driver:
@@ -224,6 +227,33 @@ def test_connected_journal_completes_and_successor_can_run():
     assert len(memory.archives) == 2
 
 
+def test_result_cannot_bind_a_state_generation_without_its_checkpoint():
+    binding = StoreBinding(
+        "https://s3.us-east-1.wasabisys.com", "us-east-1", BUCKET, "cloudflare-live-ci/v1/", "test"
+    )
+    identity = RunIdentity(
+        RUN,
+        SHA,
+        "a" * 32,
+        "solomonhd.ai",
+        (
+            (f"{RUN}.txt.ci.solomonhd.ai", "TXT"),
+            (f"{RUN}.cname.ci.solomonhd.ai", "CNAME"),
+        ),
+    )
+    memory = Memory()
+    store = CanaryStore(memory, binding, Qualification(binding, *([True] * 9)))
+    state = ["absent"]
+    journal = RuntimeJournal(store, identity, lambda: state[0], lambda: "old-checkpoint")
+    journal.prepare()
+    journal.intent("create")
+    journal.assert_owned()
+    state[0] = "new-state-version"
+    with pytest.raises(Exception, match="exact durable checkpoint"):
+        journal.result("create", "verified")
+    assert store.retained.ledger.receipts[-1].outcome is None
+
+
 def test_workflow_is_thin_pinned_and_initially_gated():
     path = ROOT / ".github/workflows/cloudflare-live-ci.gha.yaml"
     workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
@@ -247,6 +277,7 @@ def test_workflow_is_thin_pinned_and_initially_gated():
         assert forbidden not in path.read_text()
     assert "--cloudflare-api-token=env://CLOUDFLARE_API_TOKEN" in commands
     assert "persist-credentials" in job["steps"][0]["with"]
+    assert job["steps"][0]["uses"] == "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
 
 
 def test_update_dns_budget_outlasts_warmed_sixty_second_ttl():

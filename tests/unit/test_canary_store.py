@@ -47,6 +47,8 @@ class MemoryTransport:
         self.before_update = None
         self.archives = {}
         self.archive_commit_then_fail = False
+        self.recovery_snapshots = {}
+        self.snapshot_commit_then_fail = False
 
     def get(self, binding, key):
         self.calls.append("get")
@@ -98,6 +100,25 @@ class MemoryTransport:
         if self.failure == "get_archive":
             raise RuntimeError(SENTINEL)
         return self.archives.get(key)
+
+    def create_recovery_snapshot(self, binding, key, snapshot):
+        self.calls.append("create_recovery_snapshot")
+        if self.failure == "create_recovery_snapshot":
+            raise RuntimeError(SENTINEL)
+        if key in self.recovery_snapshots:
+            raise store.PreconditionFailed(SENTINEL)
+        self.serial += 1
+        archived = store.StoredRecoverySnapshot(snapshot, f"snapshot-{self.serial}")
+        self.recovery_snapshots[key] = archived
+        if self.snapshot_commit_then_fail:
+            raise RuntimeError(SENTINEL)
+        return archived
+
+    def get_recovery_snapshot(self, binding, key):
+        self.calls.append("get_recovery_snapshot")
+        if self.failure == "get_recovery_snapshot":
+            raise RuntimeError(SENTINEL)
+        return self.recovery_snapshots.get(key)
 
 
 def session(transport=None, qualification=QUALIFIED, binding=BINDING):
@@ -861,3 +882,408 @@ def test_json_wire_schema_requires_utf8(encoding):
     payload = store.encode_ledger(cleaned().retained.ledger).decode("utf-8").encode(encoding)
     with pytest.raises(store.StoreError):
         store.decode_ledger(payload)
+
+
+def recovery_authorization(prior):
+    return store.RecoveryAuthorization(
+        RUN,
+        prior.version,
+        prior.ledger.generation,
+        "observed-post-create-state",
+        True,
+        True,
+        "operator-terminal-actions-job-123",
+    )
+
+
+def recovered(transport=None):
+    transport = transport or MemoryTransport()
+    prior = pending(transport).retained
+    client = session(transport)
+    auth = recovery_authorization(prior)
+    client.recover("recovery-writer", auth, auth.observed_state_generation)
+    return client
+
+
+def finish_recovery(client):
+    state = client.retained.ledger.state_generation
+    for phase in ("destroy", "absence"):
+        client.begin_intent(phase, state)
+        client.check_before_effect(state)
+        client.record_result("succeeded", state, "verified-empty-state")
+        state = "verified-empty-state"
+    return client.complete_verified("recovery-writer", state)
+
+
+def test_legacy_schema_one_pending_claim_preserved_exactly_in_recovery_snapshot():
+    transport = MemoryTransport()
+    prior = pending(transport).retained
+    legacy_bytes = store.encode_ledger(prior.ledger)
+    assert "recovery" not in json.loads(legacy_bytes)["body"]
+    assert store.encode_ledger(store.decode_ledger(legacy_bytes)) == legacy_bytes
+    transport.value = replace(prior, ledger=store.decode_ledger(legacy_bytes))
+    client = session(transport)
+    auth = recovery_authorization(prior)
+    current = client.recover("recovery-writer", auth, auth.observed_state_generation)
+    assert current.ledger.run == RUN
+    assert current.ledger.generation == prior.ledger.generation + 1
+    assert current.ledger.receipts == ()
+    assert current.ledger.state_generation == auth.observed_state_generation
+    assert current.ledger.recovery.claim_version == prior.version
+    snapshot = client.recovery_retained.snapshot
+    assert snapshot.ledger == prior.ledger
+    assert snapshot.ledger.receipts[-1].outcome is None
+    assert store.encode_ledger(snapshot.ledger) == legacy_bytes
+    assert client.recovery_attempted == snapshot
+    assert transport.calls[-6:] == [
+        "get",
+        "create_recovery_snapshot",
+        "get_recovery_snapshot",
+        "get",
+        "update",
+        "get",
+    ]
+    wire = store.encode_recovery_snapshot(snapshot)
+    assert store.decode_recovery_snapshot(wire) == snapshot
+    assert "recovery" not in json.loads(wire)["body"]["ledger"]
+    assert store.decode_ledger(store.encode_ledger(current.ledger)) == current.ledger
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("prior_writer_terminated", False),
+        ("prior_writer_terminated", 1),
+        ("external_writer_exclusion", False),
+        ("external_writer_exclusion", 1),
+        ("evidence_id", ""),
+        ("evidence_id", "x" * 1025),
+        ("evidence_id", "unsafe\n"),
+        ("expected_claim_version", "wrong"),
+        ("expected_generation", 99),
+        ("expected_generation", True),
+        ("run", replace(RUN, revision="c" * 40)),
+    ],
+)
+def test_recovery_requires_exact_authorization_and_explicit_proofs(field, value):
+    transport = MemoryTransport()
+    prior = pending(transport).retained
+    auth = replace(recovery_authorization(prior), **{field: value})
+    client = session(transport)
+    calls = len(transport.calls)
+    with pytest.raises(store.StoreError):
+        client.recover("recovery-writer", auth, auth.observed_state_generation)
+    assert "create_recovery_snapshot" not in transport.calls[calls:]
+    assert transport.value == prior
+
+
+def test_recovery_rejects_stale_observed_state_before_snapshot():
+    transport = MemoryTransport()
+    prior = pending(transport).retained
+    client = session(transport)
+    with pytest.raises(store.StoreError, match="state generation changed"):
+        client.recover("recovery-writer", recovery_authorization(prior), "stale-state")
+    assert not transport.recovery_snapshots
+    with pytest.raises(store.StoreError, match="blocked"):
+        client.recover(
+            "recovery-writer", recovery_authorization(prior), "observed-post-create-state"
+        )
+
+
+@pytest.mark.parametrize(
+    "phase", ["create", "update", "initialize", "plan", "create_api", "validate"]
+)
+def test_recovery_cannot_issue_primary_effects(phase):
+    transport = MemoryTransport()
+    client = recovered(transport)
+    before = transport.value
+    with pytest.raises(store.StoreError, match="cleanup phases only"):
+        client.begin_intent(phase, "observed-post-create-state")
+    assert transport.value == before
+    assert client.recovery_retained.snapshot.ledger.receipts[-1].outcome is None
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "create_recovery_snapshot",
+        "get_recovery_snapshot",
+        "snapshot_commit",
+        "changed_claim",
+        "cas_race",
+        "cas_failure",
+        "cas_commit",
+        "snapshot_readback",
+        "snapshot_confirmation",
+    ],
+)
+def test_recovery_uncertainty_permanently_blocks_and_preserves_original(failure):
+    transport = MemoryTransport()
+    prior = pending(transport).retained
+    client = session(transport)
+    if failure in ("create_recovery_snapshot", "get_recovery_snapshot"):
+        transport.failure = failure
+    elif failure == "snapshot_commit":
+        transport.snapshot_commit_then_fail = True
+    elif failure == "cas_failure":
+        transport.failure = "update"
+    elif failure == "cas_commit":
+        transport.commit_then_fail = True
+    elif failure == "cas_race":
+        transport.before_update = lambda: setattr(
+            transport, "value", replace(prior, version="racer")
+        )
+    elif failure == "snapshot_readback":
+        transport.get_recovery_snapshot = lambda *args: None
+    elif failure == "snapshot_confirmation":
+        original = transport.create_recovery_snapshot
+        transport.create_recovery_snapshot = lambda *args: replace(original(*args), version="")
+    else:
+        original = transport.get_recovery_snapshot
+
+        def changed(*args):
+            result = original(*args)
+            transport.value = replace(prior, version="changed")
+            return result
+
+        transport.get_recovery_snapshot = changed
+    auth = recovery_authorization(prior)
+    with pytest.raises(store.StoreError) as error:
+        client.recover("recovery-writer", auth, auth.observed_state_generation)
+    assert SENTINEL not in str(error.value)
+    assert client.retained == prior
+    assert client.recovery_attempted.ledger == prior.ledger
+    calls = list(transport.calls)
+    with pytest.raises(store.StoreError, match="blocked"):
+        client.recover("recovery-writer", auth, auth.observed_state_generation)
+    assert transport.calls == calls
+    if transport.recovery_snapshots:
+        snapshot = next(iter(transport.recovery_snapshots.values())).snapshot
+        assert snapshot.ledger.receipts[-1].outcome is None
+    if failure == "cas_commit":
+        assert client.attempted == transport.value.ledger
+        assert transport.value.ledger.recovery is not None
+
+
+def test_explicit_unknown_result_is_not_rewritten_by_recovered_completion():
+    transport = MemoryTransport()
+    first = pending(transport)
+    first.check_before_effect("state-0")
+    prior = first.record_result("unknown", "state-0", "unknown-generation")
+    auth = recovery_authorization(prior)
+    recovery = session(transport)
+    recovery.recover("recovery-writer", auth, auth.observed_state_generation)
+    completed = finish_recovery(recovery)
+    archive = transport.archives[completed.ledger.completed.key]
+    assert archive.receipt.ledger.recovery == completed.ledger.recovery
+    snapshot = transport.recovery_snapshots[completed.ledger.recovery.key].snapshot
+    assert snapshot.ledger == prior.ledger
+    assert snapshot.ledger.receipts[-1].outcome == "unknown"
+    assert [r.phase for r in archive.receipt.ledger.receipts] == ["destroy", "absence"]
+    successor = session(transport).claim("next-run", next_run(), "new-state")
+    assert successor.ledger.predecessor == completed.ledger.completed
+    assert len(transport.recovery_snapshots) == 1
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "missing",
+        "version",
+        "owner",
+        "generation",
+        "state",
+        "run",
+        "claim_version",
+        "unproven",
+        "malformed",
+    ],
+)
+def test_successor_rejects_corrupt_recovery_history(change):
+    transport = MemoryTransport()
+    recovery = recovered(transport)
+    completed = finish_recovery(recovery)
+    pointer = completed.ledger.recovery
+    archived = transport.recovery_snapshots[pointer.key]
+    snapshot = archived.snapshot
+    if change == "missing":
+        del transport.recovery_snapshots[pointer.key]
+    elif change == "version":
+        transport.recovery_snapshots[pointer.key] = replace(archived, version="other")
+    elif change == "owner":
+        snapshot = replace(snapshot, recovery_owner="other")
+    elif change == "generation":
+        snapshot = replace(
+            snapshot, authorization=replace(snapshot.authorization, expected_generation=99)
+        )
+    elif change == "state":
+        snapshot = replace(
+            snapshot,
+            authorization=replace(snapshot.authorization, observed_state_generation="other"),
+        )
+    elif change == "run":
+        snapshot = replace(snapshot, authorization=replace(snapshot.authorization, run=next_run()))
+    elif change == "claim_version":
+        snapshot = replace(snapshot, claim_version="other")
+    elif change == "unproven":
+        snapshot = replace(
+            snapshot, authorization=replace(snapshot.authorization, prior_writer_terminated=False)
+        )
+    else:
+        snapshot = None
+    if change not in ("missing", "version"):
+        transport.recovery_snapshots[pointer.key] = replace(archived, snapshot=snapshot)
+    client = session(transport)
+    before = transport.value
+    with pytest.raises(store.StoreError):
+        client.claim("next-run", next_run(), "new-state")
+    assert transport.value == before
+    with pytest.raises(store.StoreError, match="blocked"):
+        client.claim("next-run", next_run(), "new-state")
+
+
+def test_recovery_completion_cannot_skip_absence_or_lose_original_snapshot():
+    transport = MemoryTransport()
+    recovery = recovered(transport)
+    with pytest.raises(store.StoreError, match="cleanup required"):
+        recovery.complete_verified("recovery-writer", "observed-post-create-state")
+    assert not transport.archives
+    assert len(transport.recovery_snapshots) == 1
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "unknown_field",
+        "missing_proof",
+        "false_proof",
+        "malformed_pointer",
+        "wrong_kind",
+        "duplicate",
+    ],
+)
+def test_recovery_snapshot_serialization_strict_schema_and_sanitized_errors(kind):
+    client = recovered()
+    payload = store.encode_recovery_snapshot(client.recovery_retained.snapshot)
+    row = json.loads(payload)
+    if kind == "unknown_field":
+        row["body"]["raw_secret"] = SENTINEL
+    elif kind == "missing_proof":
+        row["body"]["authorization"].pop("evidence_id")
+    elif kind == "false_proof":
+        row["body"]["authorization"]["external_writer_exclusion"] = False
+    elif kind == "malformed_pointer":
+        row["body"]["ledger"]["recovery"] = {}
+    elif kind == "wrong_kind":
+        row["kind"] = "ledger"
+    else:
+        payload = payload.replace(b'"schema":1', b'"schema":1,"schema":1')
+    if kind != "duplicate":
+        payload = json.dumps(row).encode()
+    with pytest.raises(store.StoreError) as error:
+        store.decode_recovery_snapshot(payload)
+    assert SENTINEL not in str(error.value)
+    assert error.value.__suppress_context__
+
+
+def test_old_schema_accepts_only_absent_recovery_not_unknown_fields():
+    row = json.loads(store.encode_ledger(pending().retained.ledger))
+    assert "recovery" not in row["body"]
+    row["body"]["arbitrary"] = SENTINEL
+    with pytest.raises(store.StoreError):
+        store.decode_ledger(json.dumps(row).encode())
+
+
+@pytest.mark.parametrize("flag", FLAGS)
+def test_recovery_qualification_gate_before_any_io(flag):
+    transport = MemoryTransport()
+    prior = pending(transport).retained
+    client = session(transport, replace(QUALIFIED, **{flag: False}))
+    calls = list(transport.calls)
+    with pytest.raises(store.StoreError, match="qualification"):
+        client.recover(
+            "recovery-writer", recovery_authorization(prior), "observed-post-create-state"
+        )
+    assert transport.calls == calls
+
+
+@pytest.mark.parametrize(
+    "prior_kind", ["completed", "successful", "recovery", "absent", "same_owner"]
+)
+def test_recovery_only_transfers_original_unresolved_claim(prior_kind):
+    transport = MemoryTransport()
+    if prior_kind == "completed":
+        prior = cleaned(transport).complete_verified("writer-1", "state-2")
+    elif prior_kind == "recovery":
+        prior = recovered(transport).retained
+    else:
+        first = pending(transport)
+        prior = first.retained
+        if prior_kind == "successful":
+            first.check_before_effect("state-0")
+            prior = first.record_result("succeeded", "state-0", "state-1")
+        elif prior_kind == "absent":
+            transport.value = None
+    client = session(transport)
+    owner = "writer-1" if prior_kind == "same_owner" else "another-recovery-writer"
+    calls = len(transport.calls)
+    with pytest.raises(store.StoreError):
+        client.recover(owner, recovery_authorization(prior), "observed-post-create-state")
+    assert "update" not in transport.calls[calls:]
+    assert "create_recovery_snapshot" not in transport.calls[calls:]
+
+
+def test_recovery_claim_version_change_before_snapshot_refuses_without_transfer():
+    transport = MemoryTransport()
+    prior = pending(transport).retained
+    auth = recovery_authorization(prior)
+    transport.value = replace(prior, version="new-version")
+    client = session(transport)
+    with pytest.raises(store.StoreError):
+        client.recover("recovery-writer", auth, auth.observed_state_generation)
+    assert not transport.recovery_snapshots
+    assert transport.value.version == "new-version"
+
+
+def test_recovery_completion_requires_valid_prior_snapshot_readback():
+    transport = MemoryTransport()
+    recovery = recovered(transport)
+    state = "observed-post-create-state"
+    for phase in ("destroy", "absence"):
+        recovery.begin_intent(phase, state)
+        recovery.check_before_effect(state)
+        recovery.record_result("succeeded", state, state)
+    transport.recovery_snapshots.clear()
+    with pytest.raises(store.StoreError, match="Recovery history"):
+        recovery.complete_verified("recovery-writer", state)
+    assert not transport.archives
+
+
+def test_normal_claim_cannot_bypass_an_active_cleanup_recovery():
+    transport = MemoryTransport()
+    recovery = recovered(transport)
+    with pytest.raises(store.StoreError, match="no automatic takeover"):
+        session(transport).claim("new-writer", next_run(), "state")
+    assert transport.value == recovery.retained
+
+
+def test_recovery_readback_after_cas_failure_retains_confirmed_transfer_not_assumed_rollback():
+    transport = MemoryTransport()
+    prior = pending(transport).retained
+    auth = recovery_authorization(prior)
+    original = transport.update_if_version
+
+    def write_then_read_failure(*args):
+        result = original(*args)
+        transport.failure = "get"
+        return result
+
+    transport.update_if_version = write_then_read_failure
+    client = session(transport)
+    with pytest.raises(store.StoreError, match="Ownership unavailable"):
+        client.recover("recovery-writer", auth, auth.observed_state_generation)
+    assert client.retained == transport.value
+    assert client.attempted == transport.value.ledger
+    assert client.recovery_retained.snapshot.ledger == prior.ledger
+    with pytest.raises(store.StoreError, match="blocked"):
+        client.begin_intent("destroy", auth.observed_state_generation)

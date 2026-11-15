@@ -2,10 +2,10 @@
 
 - [x] 1.1 Record accepted repaired baseline and execution-foundation evidence from `docs/dagger-runtime-qualification.md` / `docs/execution-contracts.md`: beta27 CLI checksum/engine digest, Python SDK full SHA, native KCL 0.12.4 checksum and Terraform 1.13.5 digest, not a moving beta label. Require the foundation's feature-consumer/production-read gates; fallback remains unaccepted unless separately qualified. Verify no dependency on `migrate-to-ubiquiti-community-unifi` completion.
 - [x] 1.2 Document token creation/independent rotation for Zone Read and DNS Edit on only `solomonhd.ai`, and verify credential policy excludes Tunnel and production-zone permissions
-- [ ] 1.3 Define the `cloudflare-live-ci` environment, trusted-ref/access policy, runtime secret bindings, and non-secret zone metadata; verify available GitHub enforcement rather than assume environment naming provides protection
+- [x] 1.3 Define the `cloudflare-live-ci` environment, trusted-ref/access policy, runtime secret bindings, and non-secret zone metadata; verify available GitHub enforcement rather than assume environment naming provides protection
 - [x] 1.4 Add passing offline tests rejecting PR/fork/`pull_request_target` secret execution and untrusted manual-dispatch refs before requesting credentials
 - [x] 1.5 Document the dedicated Wasabi sandbox prefix, per-run state/ledger/checkpoint layout, scoped CI identity, encryption, retention, and production isolation; verify the design grants no provisioning or credential access
-- [ ] 1.6 Under separately authorized backend qualification, record exact Wasabi conditional-write/version/lock semantics for the selected runtime/backend tuple and prove competing writers, renewal/loss, stale ownership, and failed preconditions fail closed before DNS mutation
+- [x] 1.6 Under separately authorized backend qualification, record exact Wasabi conditional-write/version/lock semantics for the selected runtime/backend tuple and prove competing writers, renewal/loss, stale ownership, and failed preconditions fail closed before DNS mutation
 
 ## 2. DNS Canary Fixture
 

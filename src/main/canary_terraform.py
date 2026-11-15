@@ -134,6 +134,32 @@ def _json(raw: bytes) -> Any:
     return parsed
 
 
+def states_match(left: bytes, right: bytes) -> bool:
+    """Keep every state value, normalizing only unordered check-result lists."""
+
+    def normalized(raw: bytes) -> dict:
+        state = _json(raw)
+        checks = state.get("check_results")
+        if isinstance(checks, list):
+            ordered = []
+            for check in checks:
+                if not isinstance(check, dict):
+                    raise TerraformUnknown("invalid_check_metadata")
+                check = dict(check)
+                objects = check.get("objects")
+                if isinstance(objects, list):
+                    check["objects"] = sorted(
+                        objects, key=lambda value: json.dumps(value, sort_keys=True)
+                    )
+                ordered.append(check)
+            state["check_results"] = sorted(
+                ordered, key=lambda value: json.dumps(value, sort_keys=True)
+            )
+        return state
+
+    return normalized(left) == normalized(right)
+
+
 class TerraformDriver:
     def __init__(
         self,
