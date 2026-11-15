@@ -8,6 +8,13 @@ Live qualification and pilot acceptance remain separate from implementation.
 Recurring execution is disabled by default. See the change's
 [verification receipt](../openspec/changes/add-cloudflare-live-ci-canary/verification.md).
 
+The corrected exact-feature pilot passed on commit `934351b` in 115 seconds:
+[Actions run 43719329517](https://github.com/SolomonHD/unifi-cloudflare-glue/actions/runs/43719329517).
+An earlier checkpoint-ordering failure was explicitly reconciled and cleaned
+without rewriting its unknown history. Temporary feature admission was removed;
+the environment is main-only again and normal/schedule enable flags are unset.
+This is one successful fixed-revision sample, not recurring rollout acceptance.
+
 ## Credential Boundary
 
 Create a dedicated Cloudflare token with only Zone Read and DNS Edit on the

@@ -129,6 +129,24 @@ def test_checked_report_fails_closed_and_does_not_echo_raw_output():
         checked_report(json.dumps(report), config, 0)
 
 
+@pytest.mark.parametrize(
+    "primary,cleanup,phase",
+    [
+        ("failed", "verified", "create_dns"),
+        ("verified", "failed", "destroy"),
+        ("verified", "failed", "absence"),
+        ("unknown", "not_attempted", "create"),
+    ],
+)
+def test_all_primary_cleanup_residual_unknown_outcomes_fail_the_public_boundary(
+    primary, cleanup, phase
+):
+    config = {"run_prefix": RUN, "revision": SHA, "operation": "normal"}
+    report = {**config, "phase": phase, "primary": primary, "cleanup": cleanup, "qualified": True}
+    with pytest.raises(RuntimeError, match="Canary did not verify"):
+        checked_report(json.dumps(report), config, 1)
+
+
 class Memory:
     def __init__(self):
         self.current = None

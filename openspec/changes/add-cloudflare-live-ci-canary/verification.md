@@ -398,3 +398,61 @@ specifically because the original persisted failed run uses that schema.
 The recovery/fix candidate passed 1,239 tests locally and inside beta27, mypy
 across 19 source files, formatting, seven KCL entries and pinned workflow lint.
 At this receipt point the authorized recovery has not yet been executed.
+
+## Verified Recovery And Corrected Hosted Pilot
+
+Reconciliation source `934351bb0d5905000e4015ae3baa59dcffa1cfa8` was committed
+before execution. A desktop confirmation/sign-in attempt failed before any
+credential read or backend action (exit 1, 61,052 ms, 180-second deadline,
+unclassified CLI failure). After the operator explicitly selected another
+desktop authorization attempt, signin succeeded in 7,077 ms and whoami in
+414 ms; the intended vault matched and the three fields resolved privately.
+No repeated prompt loop or alternate credential route was used.
+
+The authorized recovery of `gha-1794714939-43674454065-1` completed in
+30,752 ms with `operation=reconcile`, original outcome unknown, ownership
+transferred and cleanup verified at absence. Immutable preconditions were
+claim VersionId `001794714949779472316-CZTUzpwBsu` and state VersionId
+`001794714951587232183-DCED7n_8Gm`. The preserved original ledger and recovery
+authorization precede CAS transfer; native state-based destroy and exact-name
+API/state absence precede completion. The original hosted attempt remains failed.
+
+First-pilot admission was restored to only unchanged main rule 66759358 and
+zero repository variables. A new temporary feature rule 66809185 plus exact
+branch/SHA selectors then admitted only the tested corrected commit. The push
+started `https://github.com/SolomonHD/unifi-cloudflare-glue/actions/runs/43719329517`.
+Attempt 1/job 132827691284 ran from `2026-11-15T13:30:25Z` to
+`2026-11-15T13:32:20Z` and succeeded, 115 seconds overall. A privately filtered
+log read verified the strict metadata result:
+
+```json
+{"cleanup":"verified","operation":"normal","phase":"plan","primary":"verified","qualified":true,"revision":"934351bb0d5905000e4015ae3baa59dcffa1cfa8","run_prefix":"gha-1794749470-43719329517-1"}
+```
+
+This proves the hosted create/API/public-DNS/update/zero-drift/destroy/absence
+path and successful successor verification of recovered history on that exact
+source/runtime. All checkout/bootstrap/lifecycle steps succeeded; the checkout
+used the Node24 v5 pin and the check run has zero annotations. The run produced
+zero generic Actions artifacts. The 115-second figure is total job time, not
+an invented per-phase propagation measurement.
+
+After verified success, only owned temporary rule 66809185 and the two owned
+repository admission variables were removed. Readback confirmed only main rule
+66759358 and zero repository variables. Main/schedule enable flags remain unset;
+secrets, bucket variable and operator-review prerequisite remain available.
+No merge, archive, required-status policy or recurring activation occurred.
+
+Pilot sample: one failed implementation revision followed by one passing fixed
+revision, not evidence of a statistically reliable recurring service. Recommend
+informational/manual opt-in initially, with the proposed nightly cadence still
+disabled pending explicit rollout approval and further measurements. Remaining
+live local-normal/controlled-failure/aged-janitor acceptance is not inferred from
+these results; janitor implementation and its reviewed selection tests remain.
+
+Four additional boundary cases explicitly verify nonzero failure for primary
+failure, failed destroy, residual/absence failure and unknown outcomes. These
+are synthetic boundary tests, not claimed live controlled-failure or hard-kill
+acceptance. The follow-up audit checkpoint changes documentation/checklists and
+tests only; the hosted implementation actually exercised remains exact commit
+`934351bb0d5905000e4015ae3baa59dcffa1cfa8`. Tracked progress is 23/33; unperformed
+manual/local-normal, forced-failure and aged-janitor acceptance stays unchecked.

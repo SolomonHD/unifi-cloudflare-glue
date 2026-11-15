@@ -22,9 +22,9 @@
 ## 3. Trusted GitHub Actions Workflow
 
 - [x] 3.1 Add a thin live workflow for trusted `main` pushes, schedule, and trusted-ref manual dispatch; verify workflow tests reject all untrusted secret contexts
-- [ ] 3.2 Set least permissions (read-only contents unless justified), finite timeout, `cancel-in-progress: false`, verified environment controls, and exact parent-selected CLI setup; verify lint and policy tests
+- [x] 3.2 Set least permissions (read-only contents unless justified), finite timeout, `cancel-in-progress: false`, verified environment controls, and exact parent-selected CLI setup; verify lint and policy tests
 - [x] 3.3 Invoke the one normal Dagger entry point with runtime secret handoff; verify workflow tests reject Terraform/API lifecycle logic in every step, including `if: always()`, and reject Dagger Cloud or other-template migration
-- [ ] 3.4 Verify sanitized failing job status for primary, cleanup, residual, and unknown outcomes, without claiming hard cancellation ran a finalizer
+- [x] 3.4 Verify sanitized failing job status for primary, cleanup, residual, and unknown outcomes, without claiming hard cancellation ran a finalizer
 - [x] 3.5 Integrate one non-duplicated live result/status and verify no secret-bearing job is copied into either existing offline template
 
 ## 4. Stale Record Janitor
@@ -33,8 +33,8 @@
 - [ ] 4.2 Add default report-only mode and passing tests excluding newer, outside-namespace, active, unowned, and uncertain candidates using protected ledger/ownership evidence
 - [ ] 4.3 After explicit operator review/authorization, test fenced deletion of a selected aged owned record and verify exact-name/ID absence, with no overlap with live/recovery writers
 - [ ] 4.4 Verify selection/deletion failures report sanitized identifiers/results without tokens or unrelated zone inventory and document remaining recovery actions
-- [ ] 4.5 Add a separately authorized Dagger reconciliation entry point accepting non-secret run identity; verify it reconciles protected ledger/state and exact API objects only after prior writer termination/exclusivity, with no blind retry or automatic takeover
-- [ ] 4.6 Add passing killed-run, missing/partial state, uncertain-create, stale-generation, and recovery-concurrency tests; verify unknown outcomes retain protected evidence and cannot be reported as verified cleanup
+- [x] 4.5 Add a separately authorized Dagger reconciliation entry point accepting non-secret run identity; verify it reconciles protected ledger/state and exact API objects only after prior writer termination/exclusivity, with no blind retry or automatic takeover
+- [x] 4.6 Add passing killed-run, missing/partial state, uncertain-create, stale-generation, and recovery-concurrency tests; verify unknown outcomes retain protected evidence and cannot be reported as verified cleanup
 
 ## 5. Live Verification and Documentation
 
