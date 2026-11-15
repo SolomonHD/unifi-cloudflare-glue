@@ -185,6 +185,7 @@ test_valid_internal = cloudflare.is_valid_domain("http://jellyfin.internal.lan:8
 test_valid_public = cloudflare.is_valid_domain("http://jellyfin.mycompany.com:8096")
 test_valid_simple = cloudflare.is_valid_domain("http://server.local")
 test_valid_two_level = cloudflare.is_valid_domain("http://example.co.uk:8080")
+test_valid_root_dot = cloudflare.is_valid_domain("http://example.com.")
 
 # Invalid domains
 test_invalid_consecutive_dots = cloudflare.is_valid_domain("http://jellyfin..internal.lan")
@@ -192,7 +193,7 @@ test_invalid_hyphen_start = cloudflare.is_valid_domain("http://-server.internal.
 test_invalid_hyphen_end = cloudflare.is_valid_domain("http://server-.internal.lan")
 test_invalid_tld = cloudflare.is_valid_domain("http://jellyfin.example.a")
 test_invalid_leading_dot = cloudflare.is_valid_domain("http://.example.com")
-test_invalid_trailing_dot = cloudflare.is_valid_domain("http://example.com.")
+test_invalid_trailing_dot = cloudflare.is_valid_domain("http://example.com..")
 test_invalid_no_tld = cloudflare.is_valid_domain("http://localhost")
 test_invalid_empty_label = cloudflare.is_valid_domain("http://a..b.com")
 
@@ -239,6 +240,10 @@ test_results = {
         name = "Valid Two-Level TLD"
         passed = test_valid_two_level
     }
+    valid_root_dot_test = {
+        name = "Valid DNS Root Dot"
+        passed = test_valid_root_dot
+    }
     invalid_consecutive_dots_test = {
         name = "Invalid: Consecutive Dots"
         passed = not test_invalid_consecutive_dots
@@ -260,7 +265,7 @@ test_results = {
         passed = not test_invalid_leading_dot
     }
     invalid_trailing_dot_test = {
-        name = "Invalid: Trailing Dot"
+        name = "Invalid: Repeated Trailing Dot"
         passed = not test_invalid_trailing_dot
     }
     invalid_no_tld_test = {
@@ -275,6 +280,8 @@ test_results = {
 
 # Summary
 all_passed = test_results.valid_config_test.passed and test_results.mac_mismatch_test.passed and test_results.duplicate_hostname_test.passed and test_results.duplicate_public_hostname_test.passed and test_results.valid_internal_domain_test.passed and test_results.valid_public_domain_test.passed and test_results.valid_simple_test.passed and test_results.valid_two_level_test.passed and test_results.invalid_consecutive_dots_test.passed and test_results.invalid_hyphen_start_test.passed and test_results.invalid_hyphen_end_test.passed and test_results.invalid_tld_test.passed and test_results.invalid_leading_dot_test.passed and test_results.invalid_trailing_dot_test.passed and test_results.invalid_no_tld_test.passed and test_results.invalid_empty_label_test.passed
+
+assert all_passed and test_valid_root_dot, "Cross-provider and domain validation checks failed"
 
 summary = {
     all_tests_passed = all_passed

@@ -45,19 +45,22 @@ The documentation SHALL explain hostname validation (RFC 1123) including length 
   - Suggestion to use unique friendly_hostnames for each device
 
 ### Requirement: DNS loop prevention rule explanation
-The documentation SHALL explain DNS loop prevention validation including internal domain requirements, rationale, AND provide enhanced error messages with concrete examples.
+The documentation SHALL explain conservative same-zone origin rejection, its exact typed split-DNS exceptions, rationale, and actionable error messages with concrete examples. Public-zone membership alone SHALL NOT be described as proof of an actual loop; an exception expresses operator intent and does not verify DNS resolution.
 
 #### Scenario: User understands internal domain requirement
 - **WHEN** user configures Cloudflare local service URLs
-- **THEN** documentation lists valid internal domain suffixes (.internal.lan, .local, .home, .home.arpa, .localdomain)
+- **THEN** documentation lists internal domain examples (.internal.lan, .local, .home, .home.arpa, .localdomain) without treating them as the only allowed suffixes
+- **AND** it explains default rejection of same-zone apex and subdomains and the exact `SplitDNSOrigin` protocol/hostname/port declaration
 
 #### Scenario: User learns DNS loop consequence
 - **WHEN** user reads DNS loop prevention rationale
-- **THEN** documentation explains how using public zone in local_service_url causes resolution loops and tunnel failures
+- **THEN** documentation explains how resolving an origin back through Cloudflare can cause loops and tunnel failures, while split-horizon DNS can resolve that same public-zone name internally
+- **AND** it requires separate live evidence that the connector resolves the approved origin internally without a Cloudflare loop
 
 #### Scenario: User fixes DNS loop error
 - **WHEN** user encounters DNS loop validation error
-- **THEN** documentation shows how to identify public zone references and replace with internal hostnames
+- **THEN** documentation shows how to identify public zone references and replace with internal hostnames or explicitly declare only the intended exact split-DNS origin
+- **AND** it explains that hostname normalization and effective ports do not permit suffix wildcards, subdomain inheritance, userinfo, ambiguous authority or a global bypass
 
 #### Scenario: Domain syntax error with format examples
 - **WHEN** user encounters DOMAIN_SYNTAX_ERROR

@@ -7,67 +7,38 @@ Define Terraform plan inputs, execution behavior, and export formats.
 ## Requirements
 ### Requirement: Plan Function Signature
 
-The Dagger module MUST provide a `plan()` function that accepts configuration and outputs Terraform plans without applying changes.
+The module SHALL accept source, scoped authentication, state selection and explicit tool identity for non-mutating previews. Provider and credential-bearing backend inputs SHALL use secret-typed channels; live freshness SHALL be automatic.
 
 #### Scenario: Plan function accepts authentication parameters
-**Given:** A user wants to generate plans for UniFi and Cloudflare infrastructure  
-**When:** They call `dagger call plan` with authentication parameters  
-**Then:** The function accepts:
-- `--kcl-source` (KCL configuration directory)
-- `--unifi-url` (UniFi controller URL)
-- `--unifi-api-key` (Secret, recommended) OR
-- `--unifi-username` and `--unifi-password` (Secrets, alternative)
-- `--unifi-insecure` (boolean, optional, default: false)
-- `--cloudflare-token` (Secret)
-- `--cloudflare-account-id` (string)
-- `--zone-name` (string)
+- **WHEN** a caller selects full, UniFi-only or Cloudflare-only planning
+- **THEN** only credentials required for that scope are requested, using API-key or complete username/password UniFi authentication and secret Cloudflare tokens
+- **AND** insecure TLS requires explicit opt-in
 
 #### Scenario: Plan function accepts state management parameters
-**Given:** A user wants to use persistent state or remote backends  
-**When:** They call `dagger call plan` with state parameters  
-**Then:** The function accepts:
-- `--state-dir` (optional Directory for persistent local state) OR
-- `--backend-type` (string, default: "local") AND
-- `--backend-config-file` (optional File for backend configuration)
+- **WHEN** a caller supplies a protected local-state input or remote-backend selection
+- **THEN** those modes are mutually exclusive and credential-bearing backend input is Secret-typed with an explicit supported format
 
 #### Scenario: Plan function accepts version control parameters
-**Given:** A user wants to pin container versions  
-**When:** They call `dagger call plan` with version parameters  
-**Then:** The function accepts:
-- `--terraform-version` (string, default: "latest")
-- `--kcl-version` (string, default: "latest")
+- **WHEN** no tool override is supplied
+- **THEN** accepted exact tool identities are selected rather than latest tags
 
 #### Scenario: Plan function accepts cache control parameters
-**Given:** A user wants to force fresh execution  
-**When:** They call `dagger call plan` with cache parameters  
-**Then:** The function accepts:
-- `--no-cache` (boolean, default: false) OR
-- `--cache-buster` (string, default: "")
+- **WHEN** the caller supplies no timestamp or cache flag
+- **THEN** live observations are fresh automatically without invalidating deterministic source generation
 
 ### Requirement: Plan Generation Process
 
-The `plan()` function MUST generate Terraform plans for both UniFi DNS and Cloudflare Tunnel modules without applying changes.
+Planning SHALL validate selected configuration and use the same scope, root, backend identity and resource address layout as the corresponding execution path without applying managed-resource changes.
 
 #### Scenario: Generate plans for both modules
-**Given:** Valid KCL configuration and authentication credentials  
-**When:** User calls `dagger call plan`  
-**Then:** The function:
-1. Generates UniFi configuration JSON via `_generate_unifi_config()`
-2. Generates Cloudflare configuration JSON via `_generate_cloudflare_config()`
-3. Prepares Terraform container for UniFi DNS module
-4. Runs `terraform init` for UniFi module
-5. Runs `terraform plan -out=unifi-plan.tfplan` for UniFi module
-6. Prepares Terraform container for Cloudflare Tunnel module
-7. Runs `terraform init` for Cloudflare module
-8. Runs `terraform plan -out=cloudflare-plan.tfplan` for Cloudflare module
+- **WHEN** the caller requests the full deployment preview
+- **THEN** both configurations are validated and the existing combined-root state is planned once
+- **AND** the preview does not create separate states for its component modules
 
 #### Scenario: Plan execution order matches deployment
-**Given:** Both UniFi and Cloudflare plans need to be generated  
-**When:** User calls `dagger call plan`  
-**Then:** Plans are generated in sequence:
-1. UniFi DNS plan first
-2. Cloudflare Tunnel plan second  
-(Matching the order of `deploy()` function)
+- **WHEN** the preview is compared with the corresponding execution mode
+- **THEN** root, backend, resource addresses and dependency ordering agree
+- **AND** incompatible state/root combinations stop before effects
 
 ### Requirement: Plan Output Formats
 
@@ -94,25 +65,17 @@ The `plan()` function MUST default to exportable artifacts that have been review
 
 ### Requirement: Plan Summary Generation
 
-The `plan()` function MUST create an aggregated summary of resource changes across both modules.
+Planning SHALL provide accurate aggregated add/change/destroy counts and selected-scope metadata from structured action data, with malformed data treated as an error rather than a misleading zero-drift result.
 
 #### Scenario: Generate plan summary file
-**Given:** Terraform plans have been generated for both modules  
-**When:** Plan generation completes  
-**Then:** The function creates `plan-summary.txt` containing:
-- Section for UniFi DNS module with resource counts (add/change/destroy)
-- Section for Cloudflare Tunnel module with resource counts (add/change/destroy)
-- Overall totals across both modules
-- Metadata: timestamp (ISO 8601), Terraform version, KCL version, backend type
+- **WHEN** planning succeeds
+- **THEN** the summary includes scope, add/change/destroy counts, timestamp, resolved Terraform/KCL identities and backend type
+- **AND** sensitive plan values are not copied into the summary
 
 #### Scenario: Parse resource counts from plan output
-**Given:** Terraform plan command has completed  
-**When:** Generating the summary  
-**Then:** The function:
-1. Attempts to parse JSON output for accurate counts
-2. Falls back to text output parsing if JSON parsing fails
-3. Extracts "resources to add", "resources to change", "resources to destroy" counts
-4. Calculates total changes per module
+- **WHEN** structured action arrays contain creates, updates, deletes, replacements or no-ops
+- **THEN** their string actions are counted correctly, replacements contribute create and delete, and no-ops contribute neither
+- **AND** malformed actions fail summary verification instead of falling back to fragile phrase counting
 
 ### Requirement: Output Directory Structure
 
@@ -152,29 +115,19 @@ The `plan()` function MUST preserve container references after Terraform plan ex
 
 ### Requirement: State Management Consistency
 
-The `plan()` function MUST support the same state management options as `deploy()` and `destroy()` functions.
+Remote planning SHALL use the same remote-backend/root contract as deploy and destroy, with explicit Secret-typed backend configuration and no automatic host Directory write-back. A protected local-state preview is read-only and SHALL NOT imply support or authorization for local deploy/destroy; durable local effects remain deferred to DLR-1.
 
 #### Scenario: Plan with persistent local state
-**Given:** User has a `./terraform-state` directory with existing state  
-**When:** They call `dagger call plan --state-dir=./terraform-state`  
-**Then:** The function:
-1. Mounts the state directory at `/state` in containers
-2. Copies Terraform module files to `/state`
-3. Runs Terraform operations from `/state`
-4. Plan reflects current state from the mounted directory
+- **WHEN** a supported local-state preview is requested
+- **THEN** it uses the specified state and preserved module layout with explicit protected artifact custody
 
 #### Scenario: Plan with remote backend
-**Given:** User has S3 backend configuration in `s3-backend.hcl`  
-**When:** They call `dagger call plan --backend-type=s3 --backend-config-file=./s3-backend.hcl`  
-**Then:** The function:
-1. Generates `backend.tf` with S3 backend configuration
-2. Runs `terraform init` with backend configuration
-3. Plan reflects current state from the remote S3 backend
+- **WHEN** S3 planning is selected with Secret-typed backend settings
+- **THEN** initialization and refresh use the existing remote state identity and locking configuration
 
 #### Scenario: Mutually exclusive state options
-**Given:** User provides both state directory and remote backend  
-**When:** They call `dagger call plan --state-dir=./state --backend-type=s3 --backend-config-file=./s3.hcl`  
-**Then:** The function returns error: `"✗ Failed: Cannot use both --state-dir and remote backend (--backend-type)"`
+- **WHEN** both local state and a remote backend are supplied
+- **THEN** validation fails nonzero before execution and explains the supported alternatives without disclosing backend contents
 
 ### Requirement: Authentication Validation
 
@@ -197,47 +150,35 @@ The `plan()` function MUST validate authentication parameters with the same logi
 
 ### Requirement: Cache Control
 
-The `plan()` function MUST support cache control to force fresh execution when needed.
+Live planning SHALL enforce automatic freshness at function and execution boundaries, without requiring or accepting an ineffective no-cache boolean as a guarantee.
 
 #### Scenario: Force fresh execution with no-cache
-**Given:** User wants to bypass Dagger cache  
-**When:** They call `dagger call plan --no-cache`  
-**Then:** The function:
-1. Generates epoch timestamp: `str(int(time.time()))`
-2. Injects as `CACHE_BUSTER` environment variable in containers
-3. Forces re-execution of all cached operations
+- **WHEN** a caller attempts to use the removed no-cache interface
+- **THEN** migration guidance identifies automatic live freshness rather than instructing the caller to create timestamps
 
 #### Scenario: Custom cache buster value
-**Given:** User provides custom cache key  
-**When:** They call `dagger call plan --cache-buster=manual-run-123`  
-**Then:** The function injects `CACHE_BUSTER=manual-run-123` in containers
+- **WHEN** a supported transitional call includes a manual run label
+- **THEN** it is handled only as bounded data and freshness is enforced independently
 
 #### Scenario: Mutually exclusive cache control options
-**Given:** User provides both no-cache and cache-buster  
-**When:** They call `dagger call plan --no-cache --cache-buster=custom`  
-**Then:** The function returns error: `"✗ Failed: Cannot use both --no-cache and --cache-buster"`
+- **WHEN** unsupported legacy cache options are supplied
+- **THEN** argument validation rejects them before contacting the backend or providers
 
 ### Requirement: Error Handling
 
-The `plan()` function MUST provide clear error messages for all failure scenarios.
+Planning SHALL fail nonzero with useful sanitized diagnostics for execution, generation and argument errors, without exposing provider/backend output or proceeding after a required phase fails.
 
 #### Scenario: Terraform plan failure
-**Given:** Terraform plan command fails (e.g., invalid configuration)  
-**When:** The function runs `terraform plan`  
-**Then:** The function:
-1. Captures stderr output
-2. Returns error message: `"✗ Failed: {module} Terraform plan failed: {error_details}"`
-3. Does NOT proceed to next module
+- **WHEN** Terraform planning fails
+- **THEN** command status is unsuccessful, phase/exit metadata is retained and dependent work stops without reproducing raw provider output
 
 #### Scenario: KCL generation failure
-**Given:** KCL configuration is invalid  
-**When:** Calling `_generate_unifi_config()` or `_generate_cloudflare_config()`  
-**Then:** The function returns error describing KCL validation failure
+- **WHEN** source generation fails validation
+- **THEN** planning fails with bounded non-secret validation context before provider operations
 
 #### Scenario: Missing required parameters
-**Given:** User omits required authentication parameter  
-**When:** They call `dagger call plan --unifi-url=... --zone-name=...` (missing tokens)  
-**Then:** Dagger returns error: `"required flag(s) not set"`
+- **WHEN** required selected-scope parameters are absent
+- **THEN** argument validation fails before backend or provider access
 
 ### Requirement: Documentation
 
@@ -301,12 +242,15 @@ The `plan()` function SHALL validate that `--unifi-only` and `--cloudflare-only`
 - **THEN** the function SHALL return an error indicating the flags are mutually exclusive
 
 ### Requirement: Plan function uses combined Terraform module
-The `plan()` function SHALL use the combined Terraform module at `terraform/modules/glue/` for all plan generation operations.
+Full previews SHALL preserve the existing combined Terraform root. Selective previews SHALL use the same qualified root and state ownership as the corresponding execution mode rather than choosing a different root solely because the operation is plan.
 
 #### Scenario: Plan generation uses combined module
-- **WHEN** user invokes `plan()` with any valid flag combination
-- **THEN** the function SHALL mount and use the `terraform/modules/glue/` module
-- **AND** the function SHALL pass appropriate configuration files based on selected components
+- **WHEN** the caller selects full deployment against the combined state
+- **THEN** planning and execution both use the combined root with stable addresses
+
+#### Scenario: Selective root matches state ownership
+- **WHEN** a caller selects a standalone component
+- **THEN** its preview and execution use the same previously qualified standalone state/root combination or reject an incompatible combination before mutation
 
 ### Requirement: Conditional credential requirements
 The `plan()` function SHALL adjust credential requirements based on the selected deployment scope.
@@ -345,15 +289,12 @@ The `plan()` function SHALL generate plan artifacts appropriate to the selected 
 - **AND** the plan summary SHALL reflect Cloudflare-only planning
 
 ### Requirement: Plan output directory structure
-The `plan()` function SHALL return a Directory containing standardized plan artifacts.
+Default plan output SHALL contain reviewed human-readable preview and summary artifacts only. Raw binary and JSON plans SHALL require explicit sensitive-artifact acknowledgement and protected storage.
 
 #### Scenario: Plan output files
-- **WHEN** plan generation completes successfully
-- **THEN** the returned Directory SHALL contain:
-  - `plan.tfplan` - Binary plan file for terraform apply
-  - `plan.json` - JSON representation of the plan
-  - `plan.txt` - Human-readable plan output
-  - `plan-summary.txt` - Summary with resource counts and component information
+- **WHEN** the default result is exported
+- **THEN** it contains plan text and an aggregated summary without raw plan JSON, binary state or credentials
+- **AND** explicitly acknowledged raw plans retain owner-only permissions and handling warnings
 
 ### Requirement: Plan output has secret-disclosure regression coverage
 The plan implementation MUST be tested with sentinel provider credentials to detect disclosure in default artifacts and command output.
@@ -361,3 +302,11 @@ The plan implementation MUST be tested with sentinel provider credentials to det
 #### Scenario: Default plan export is scanned
 - **WHEN** automated tests generate and inspect a default plan result with sentinel secrets
 - **THEN** no sentinel credential MUST appear in any exported file or captured execution output
+
+### Requirement: Preview is not saved-plan execution approval
+The interface SHALL state whether execution consumes the exact reviewed plan. A preview followed by independent replanning SHALL NOT be represented as approved saved-plan execution.
+
+#### Scenario: Deploy follows preview
+- **WHEN** a caller requests deployment after inspecting a preview
+- **THEN** documentation and command guidance explain that deploy replans against fresh state and needs its own authorization
+- **AND** raw preview artifacts are not implicitly promoted to execution inputs

@@ -20,7 +20,7 @@ context: |
   - Unified Configuration: Single KCL config generates both UniFi and Cloudflare outputs
   - MAC Address Normalization: All MACs stored as lowercase colon format (aa:bb:cc:dd:ee:ff)
   - One Tunnel Per Device: Each physical host gets exactly one Cloudflare tunnel
-  - DNS Loop Prevention: Cloudflare local_service_url must use internal domains only
+  - DNS Loop Prevention: Reject same-zone origins by default; allow only exact typed split_dns_origins protocol/hostname/port declarations
 
   ## DNS Architecture
   - UniFi DNS: Local network resolution for internal services (.internal.lan)
@@ -35,7 +35,7 @@ context: |
   5. Terraform applies Cloudflare tunnels (points to now-resolvable local hostnames)
 
   ## Important Constraints
-  - No DNS Loops: Cloudflare local_service_url must use .internal.lan domains
+  - No DNS Loops: Split-DNS declarations express operator intent, not DNS verification; separately prove connector-internal resolution without a Cloudflare loop
   - MAC Normalization: Support multiple input formats, normalize to lowercase colons
   - Existing Resources: Both modules use data sources for existing infrastructure
   - External Deployment: Cloudflared containers run outside Terraform

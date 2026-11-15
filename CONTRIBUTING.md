@@ -6,25 +6,36 @@ Thank you for your interest in contributing to unifi-cloudflare-glue! This docum
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/unifi-cloudflare-glue.git
+   git clone https://github.com/SolomonHD/unifi-cloudflare-glue.git
    cd unifi-cloudflare-glue
    ```
 
-2. Install KCL (if working with KCL schemas):
+2. Prepare Python 3.11+, `uv`, and exact KCL 0.12.4 for the local baseline.
+   Do not install a moving latest release. Container execution uses the official
+   checksum-verified KCL archive and immutable tool identities in
+   `src/main/toolchains.py`, including the Git-capable Python base (Git 2.39.5).
+
+3. Use the verified Dagger 1.0.0-beta.27 CLI and pinned engine from
+   [the runtime receipt](docs/dagger-runtime-qualification.md). Keep global
+   tool selections unchanged. With that CLI on PATH, define the engine for
+   every beta invocation:
    ```bash
-   curl -sSL https://kcl-lang.io/script/install-cli.sh | bash
+   export DAGGER_ENGINE='image://registry.dagger.io/engine@sha256:ad121f720ed9bfb8e740f99dd783fa8472965a5e262fc64ff3ef2634cea1e6dd'
+   dagger --engine "$DAGGER_ENGINE" api call -m . hello
+   uv sync --frozen
    ```
 
-3. Install Dagger (for testing Dagger functions):
-   ```bash
-   curl -L https://dl.dagger.io/dagger/install.sh | sh
-   ```
+Retain the migrated `dagger.toml`, `dagger-module.toml`, `dagger.lock`, generated
+`sdk/` and `clients/core/` workspace packages and `uv.lock`. A normal checkout
+does not need legacy `dagger develop`. Intentional SDK regeneration uses the
+qualified beta `generate --auto-apply` workflow and requires reviewing the
+resulting clients/locks, not regenerating them during production calls.
 
 ## Project Structure
 
 The project consists of three tightly integrated components:
 
-- **KCL Schemas** (`kcl/`): Configuration schemas and generators
+- **KCL Schemas** (`schemas/`, `generators/`, `main.k`): Library and generators
 - **Terraform Modules** (`terraform/modules/`): Infrastructure modules
 - **Dagger Module** (`src/main/main.py`): Containerized orchestration
 
@@ -50,8 +61,13 @@ Documentation is organized in the `docs/` directory:
 - `docs/backend-configuration.md` - Backend configuration guide
 - `docs/troubleshooting.md` - Troubleshooting guide
 - `docs/README.md` - Documentation index
+- `docs/execution-contracts.md` - Current supported caller/migration contract
+- `docs/dagger-runtime-qualification.md` - Immutable runtime identities and evidence
+- `docs/offline-verification.md` - Portable credential-free baseline
 
-The root `README.md` is a condensed entry point (~200 lines) that links to detailed documentation.
+The root `README.md` is the current condensed entry point. Older topical guides
+and `README.old.md` are background, not normative for migrated API syntax,
+Secret transport, freshness, local custody or default artifacts.
 
 When contributing:
 - Update relevant docs/ files for feature changes
@@ -92,14 +108,15 @@ Follow these steps to create a new release. Use the comprehensive checklist belo
   - [ ] Update the `CHANGELOG.md` with the new version section
   - [ ] Run tests to ensure everything works:
     ```bash
-    dagger call test-integration \
+    # Explicit sandbox mutation authorization is required; not a release smoke test.
+    dagger --engine "$DAGGER_ENGINE" api call -m . test-integration \
         --source=. \
         --cloudflare-zone=test.example.com \
-        --cloudflare-token=env:CF_TOKEN \
+        --cloudflare-token=env://CF_TOKEN \
         --cloudflare-account-id=xxx \
         --unifi-url=https://unifi.local:8443 \
         --api-url=https://unifi.local:8443 \
-        --unifi-api-key=env:UNIFI_API_KEY
+        --unifi-api-key=env://UNIFI_API_KEY
     ```
 
 - [ ] 1.2 Update Version Files
@@ -132,11 +149,11 @@ Follow these steps to create a new release. Use the comprehensive checklist belo
     ```
 
   - [ ] `dagger.json` - `engineVersion` field (if applicable)
-    ```json
-    {
-      "engineVersion": "v0.19.7"
-    }
-    ```
+    This checklist label is historical: the migrated checkout uses
+    `dagger.toml`, `dagger-module.toml`, `dagger.lock` and generated SDK/core
+    clients. Runtime/SDK changes require their own qualification and are not
+    a routine application version bump. Do not recreate `dagger.json` or
+    substitute an unqualified engine version.
 
   - [ ] `examples/*/kcl.mod` - Git tag dependencies in examples
 
@@ -159,16 +176,15 @@ Follow these steps to create a new release. Use the comprehensive checklist belo
   | pyproject.toml `[project].version` | Plain (no v prefix) | `0.6.0` |
   | Git tags | With v prefix | `v0.6.0` |
   | kcl.mod dependencies (git tag) | With v prefix | `tag = "v0.6.0"` |
-  | dagger.json engineVersion | With v prefix | `v0.19.7` |
+  | Dagger CLI/engine/SDK | Independently qualified immutable identities | See runtime receipt; not the application version |
 
 - [ ] 1.4 Version Override Capability (Future)
 
   > **Note:** Version override capability is planned for future automation. When implemented, you will be able to specify different versions for specific components:
   >
-  > ```bash
-  > # Example (not yet implemented)
-  > dagger call release --version=0.6.0 --kcl-version=0.5.0 --terraform-version=0.6.0
-  > ```
+  > No public `release` function or arbitrary runtime-version override is
+  > supported. Existing tool-version parameters accept reviewed immutable pins
+  > only; they do not resolve moving tags or unrelated example versions.
   >
   > Default behavior: All components use the same version.
 
@@ -188,7 +204,7 @@ Follow these steps to create a new release. Use the comprehensive checklist belo
 
   - [ ] Verify the version function works:
     ```bash
-    dagger call version --source=.
+    dagger --engine "$DAGGER_ENGINE" api call -m . version --source=.
     ```
 
   - [ ] Verify the tag exists:
@@ -226,26 +242,63 @@ Follow these steps to create a new release. Use the comprehensive checklist belo
 
 ## Testing
 
-### Unit Testing
+### Authoritative Offline Baseline
 
-Run unit tests for Dagger functions:
+From the repository root, run the complete baseline after bootstrap:
+
 ```bash
-cd src/main
-python -m pytest tests/
+bash scripts/verify-offline.sh
 ```
+
+The sequence checks Black and isort across `src` and `tests`, mypy for all
+production Python, Python compilation, the **entire** `tests/unit` suite without
+marker exclusions, and the root KCL schema/validation and standalone generator
+entry points. KCL assertions make failed validation exit nonzero; `kcl test`
+alone discovers no tests because these historical files are named `test_*.k`,
+not `*_test.k`. The full unit suite includes the hardening sentinel and
+failure-injection tests in `test_secret_safety.py` and normalized-provider
+regressions in `test_unifi_provider_baseline.py`.
+
+Offline means no infrastructure credentials, live infrastructure calls, or
+dependency downloads during this sequence. It does not mean a fresh checkout
+can bootstrap air-gapped. Unit transports are mocked; generator tests execute
+the local KCL binary against synthetic fixtures. No Terraform apply, Dagger
+engine, UniFi controller, Cloudflare API, backend, or 1Password access is used.
+
+Bootstrap separately with Python 3.11+, `uv`, KCL 0.12.4, and the generated
+Python SDK/core workspace packages corresponding to the committed beta
+manifests and locks. Synchronize these packages before using `--no-sync`;
+otherwise a previously prepared environment can still lack the generated core
+client. Bootstrap may need network access; the checks below do not authorize
+global runtime changes. Acquire/cache Python dependencies once:
+
+```bash
+uv sync --frozen
+uv run --frozen --no-sync \
+  --with pytest==9.2.0 --with pytest-asyncio==1.5.0 \
+  --with black==26.10.1 --with isort==9.0.2 \
+  --with mypy==2.4.1 --with types-PyYAML==6.0.12.20261113 \
+  python -c 'import pytest, pytest_asyncio, black, isort, mypy, yaml, dagger'
+```
+
+The wrapper repeats those exact tool pins with `uv --offline --frozen` so a
+missing prerequisite fails rather than silently downloading or skipping tests.
+The PyYAML stubs are necessary for typed backend parsing. No global package
+installation or project dependency change is needed.
 
 ### Integration Testing
 
-Run the integration test against real APIs:
+Integration tests create and delete real resources. Run only under separate
+authorization for a disposable target, never as part of offline verification:
 ```bash
-dagger call test-integration \
+dagger --engine "$DAGGER_ENGINE" api call -m . test-integration \
     --source=. \
     --cloudflare-zone=test.example.com \
-    --cloudflare-token=env:CF_TOKEN \
+    --cloudflare-token=env://CF_TOKEN \
     --cloudflare-account-id=xxx \
     --unifi-url=https://unifi.local:8443 \
     --api-url=https://unifi.local:8443 \
-    --unifi-api-key=env:UNIFI_API_KEY \
+    --unifi-api-key=env://UNIFI_API_KEY \
     --test-mac-address=de:ad:be:ef:12:34
 ```
 
@@ -253,10 +306,36 @@ dagger call test-integration \
 
 Test KCL schema changes:
 ```bash
-cd kcl
 kcl run generators/unifi.k
 kcl run generators/cloudflare.k
 ```
+
+Standalone generators export `result`. Dagger generation instead consumes a
+consumer directory whose `main.k` exports `unifi_output` and/or `cf_output`.
+The root library `main.k` is not such a consumer. Dedicated test fixtures keep
+these contracts separate; do not add consumer outputs to the library to satisfy
+a stale test.
+
+Generation validates JSON field types against the existing Terraform input
+structures before exporting a file. Malformed-output diagnostics identify field
+paths and expected types without echoing values. Cloudflare KCL generation also
+rejects resolved origins in the configured public zone, including explicit URLs
+and entity-derived hostname overrides or fallbacks.
+
+Deployment requires an explicit remote backend, Secret backend URI and explicit
+yaml/hcl format; scope must match existing state ownership. Local previews do
+not write back to the host. DLR-1 durable local effects remain deferred by
+operator decision. Runtime guidance uses actual non-secret account/zone/backend
+selections, but source/output placeholders are not recovered host paths.
+Credential retrieval additionally requires protected-disclosure acknowledgement
+and a separately authorized protected consumer, never ordinary stdout logs.
+
+Live freshness is automatic at the function and exec boundaries. Optional run
+labels are bounded non-secret metadata, not shell timestamps or authorization.
+Preview/no-drift, full-pipeline execution, remote feature-consumer loading and
+separately approved production-read acceptance are independent evidence gates.
+Do not claim the remaining gates passed from an offline result or documentation
+change. See [Execution Contracts](docs/execution-contracts.md) for migration.
 
 ## Code Style
 
@@ -264,7 +343,8 @@ kcl run generators/cloudflare.k
 
 - Follow PEP 8 guidelines
 - Use type hints with `Annotated[..., Doc(...)]` for parameters
-- All functions should return `str` for CLI compatibility
+- Use typed `File`/`Directory` outputs for non-sensitive generated configuration;
+  bounded status strings for successful orchestration; sanitized exceptions for failures
 - Use `✓` for success and `✗` for failure in output
 - All public functions must be `async`
 

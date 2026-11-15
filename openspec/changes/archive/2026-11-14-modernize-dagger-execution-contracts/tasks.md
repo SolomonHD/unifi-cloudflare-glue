@@ -1,0 +1,56 @@
+## 1. Qualify the Runtime First
+
+- [x] 1.1 Qualify the pinned Dagger v1.0.0-beta.27 CLI/engine candidate, resolve its compatible exact Python SDK identity, and record immutable provenance, exact versions and supported manifest/lock paths; verify isolated schema loading and basic Python execution without production credentials or global tool changes. Reuse the isolated beta binary by explicit path; existing installation/version checks do not complete qualification, and moving latest/beta labels are not substitutes.
+- [x] 1.2 Qualify remote dependency loading from a separate consumer fixture, Secret input/output APIs, function caching and live-exec freshness on that tuple; verify repeated synthetic invocations and retain sanitized results. If v1.0.0-beta.27 qualification fails, retain the failed evidence and stop dependent implementation until an explicitly accepted v0.21.11 fallback is recorded and passes its own runtime/SDK compatibility checks. Invoke the installed fallback with `mise exec aqua:dagger/dagger@0.21.11 -- dagger`, without changing global selection; CLI installation alone does not satisfy those checks.
+- [x] 1.3 Confirm `modernize-legacy-unit-test-contracts` has delivered its complete current-interface baseline before refactoring; verify the full collection and credential-free suite output, not merely the change's planning status. Qualification tasks 1.1-1.2 may run alongside that baseline.
+- [x] 1.4 Document the accepted compatibility matrix, breaking interfaces and consumer migration sequence; verify all examples use qualified release syntax and that stable-fallback instructions do not assume beta-only manifests.
+
+## 2. Deterministic Tooling and Generation
+
+- [x] 2.1 Pin Terraform, KCL, required parser/tool images and Python dependencies with reviewed identities and ecosystem locks; verify clean frozen resolution and deliberate failure on missing pins without runtime latest downloads or automatic KCL updates.
+- [x] 2.2 Qualify native machine-readable KCL output and dependency-resolution behavior for the selected KCL release; implement a shared generation result for selected provider outputs and verify canonical equivalence against representative current UniFi and Cloudflare fixtures.
+- [x] 2.3 Replace unnecessary stdout-to-Python-to-file/yq round trips using qualified file APIs; verify real normalization, site, multi-NIC, distribution, DNS-loop, empty/missing-key/malformed-output and VALIDATION-string fixtures, plus selected-output-only generation.
+- [x] 2.4 Expose the baseline verification suite through the qualified credential-free Dagger entry point and explicit non-sensitive generation/export adapters; verify identical local/CI outcomes and no implicit checkout writes, raw state/plan inclusion or live canary execution. Document bootstrap versus offline execution requirements.
+
+## 3. Fresh and Truthful Live Execution
+
+- [x] 3.1 Centralize scope/root/backend preparation without changing provider versions or existing resource addresses; verify full and selective plan/apply/destroy select matching roots and state identity, reject incompatible selections, and retain sibling module paths.
+- [x] 3.2 Implement qualified uncached orchestration and automatic non-secret freshness at live initialization/execution/verification boundaries; verify two identical synthetic calls dispatch live effects twice while deterministic generation remains reusable. Document replacement of manual cache-buster correctness requirements.
+- [x] 3.3 Remove command-string/comment cache injection and use direct argv/native redirection where supported; verify newline/metacharacter labels cannot execute commands and invalid labels fail before provider access.
+- [x] 3.4 Preserve post-init and post-effect container snapshots throughout integration and cleanup paths; verify execution-graph tests prove apply/destroy use successful initialization snapshots rather than discarded references.
+- [x] 3.5 Make failed/partial deployments, destruction and credential operations produce nonzero status with sanitized phase/exit/recovery information; verify injected failures do not become successful string results and do not dispatch dependent work.
+- [x] 3.6 Validate HTTP status, API success envelopes and response shape for live verification; verify transport/error/null responses fail closed rather than count as zero resources. Document that timeout/cancellation retains unknown effects until reconciliation, and test that no blind replay occurs.
+
+## 4. Backend Secrets and State Custody
+
+- [x] 4.1 Introduce Secret-typed backend input with explicit YAML/HCL selection and an owner-only secret mount; verify backend address/key/workspace/locking equivalence on synthetic fixtures and rejection of malformed/empty input without plaintext File ingestion or local-state fallback.
+- [x] 4.2 Harden backend conversion with robust parsing/serialization of supported scalar/structure types; verify quote, backslash, newline, interpolation and invalid-key/type fixtures using a real HCL/config parser where applicable, retaining useful sanitized errors.
+- [x] 4.3 Enforce the operator-approved remote-only public effect contract: reject local-state or missing durable-state deploy/destroy before generation, initialization or mutation; verify rejection and read-only local-preview custody without Directory host write-through. Retain durable local updated-state handoff, partial-effect recovery and second-invocation acceptance as unfinished follow-up DLR-1, not completed work in this change.
+- [x] 4.4 Keep supplied and newly generated credentials on protected channels with explicit disclosure boundaries; verify synthetic success, validation/provider error, timeout and cleanup error paths across logs, traces, exceptions, summaries and default artifacts contain no canary secrets.
+- [x] 4.5 Document and test uncertain-state recovery and authorization boundaries; verify an unknown custody/effect result preserves operation identity, blocks automatic retry and never suggests rolling state back as proof of remote rollback.
+
+## 5. Plans and Durable Contracts
+
+- [x] 5.1 Correct structured action-array parsing and summary generation; verify create/update/delete/replacement/no-op fixtures and malformed data, plus resolved version and selected-scope metadata without transferring sensitive values into summaries.
+- [x] 5.2 Preserve reviewed text/summary defaults and explicit protected raw-plan opt-in; verify owner-only permissions and sentinel scans, and document that previews do not approve a later independently replanned apply.
+- [x] 5.3 Reconcile the exact legacy cache, plan, state and orchestration clauses with these deltas while preserving unaffected security and behavior scenarios; verify no supported guidance requires removed APIs, caller timestamps, default raw-plan exports or automatic Directory host write-back.
+- [x] 5.4 Repair the structural main-spec blockers in cache-control, config-generation and orchestration during the separately authorized implementation/spec-reconciliation scope, preserving active obligations and historical intent; verify strict main-spec validation and a non-writing archive/sync preflight no longer report invisible requirements or invalid delta headers. Do not archive as part of this task.
+
+## 6. Cross-Repository Acceptance
+
+- [x] 6.1 Run the full offline suite, selected runtime/SDK schema checks, format/static checks and both provider generation contract suites; verify current provider constraints/lock selections and resource addresses remain unchanged. The isolated literal-IP fix passed 613 local and 613 pinned-Dagger tests, all static/format/KCL checks and schema generation, with no unrelated canary code included.
+- [x] 6.2 Qualify the reviewed feature revision as a remote dependency with matching KCL source in the sibling consumer change; verify exact source identities, release tuple, Secret input invocation and deterministic output equivalence before merge or promotion. Candidate `e8777e968f83fb7b8de82ccbd245b7f918ca20fa` passed 21 renewed checks in a disposable public-input consumer fixture with genuine matching remote resolutions and unchanged output, plus actual unused-IP remote rejection. The real consumer remains pinned to durably retained `614c6aea...`; this is qualification, not a consumer repin. See the runtime receipt.
+- [x] 6.3 With explicit authorization for production reads, verify a fresh zero-drift consumer plan against the same Wasabi backend/state identity and existing providers; retain sanitized evidence and confirm no apply. Original live operation `27fc831c-ed0c-43b8-be96-59970e55551e` remains bound to accepted `614c6aea...` and the approved lock-setting delta. After exact-SHA remote requalification/output parity for the validator-only fix, the user explicitly accepted bounded reuse for unchanged execution inputs. No new live preview against `e8777e9...`, provider/backend call or automatic acceptance transfer is claimed; see the runtime receipt for proof and limits.
+- [x] 6.4 Record the accepted foundation contract and dependency evidence for the independent community-provider and thin-Actions canary branches; verify neither branch depends on the other's completion and downstream tasks reference the accepted runtime rather than a moving beta label.
+
+## 7. Split-DNS Consumer Acceptance Correction
+
+- [x] 7.1 Revise the active specification and caller documentation for typed exact-origin split-DNS intent declarations, preserving default rejection, operator/DNS-verification distinctions and open tasks 6.2/6.3.
+- [x] 7.2 Implement the optional typed per-origin allowlist across explicit and entity-derived Cloudflare generation; verify approved and unapproved same-zone origins, normalized hostname/protocol/port identity, boundary matching, malformed declarations including unused literal IPs, non-emission of policy metadata and unchanged ingress ordering. The corrected native IP parser and 20 additional cases passed all five entry paths.
+- [x] 7.3 Repeat complete credential-free local and qualified Dagger suites, schema/generation checks and immutable-provider comparisons after the literal-IP guard fix; retain the required consumer declaration and candidate status. Exact candidate `e8777e968f83fb7b8de82ccbd245b7f918ca20fa` passed 613/613 upstream tests and 21 renewed remote consumer checks plus actual remote unused-IP rejection. The operator explicitly accepted bounded prior-live-evidence reuse for unchanged execution inputs; no new live call was made.
+
+## Workflow Follow-up
+
+- Commit/push reviewed feature revisions only under explicit Git authorization, then review and merge only after required feature acceptance. Publishing a revision for acceptance does not itself authorize production mutation.
+- Coordinate accepted module publication and consumer pins with `adopt-modernized-dns-dagger-workspace`; preserve the previous runtime/source tuple for rollback and never assume a provider-bearing revision can roll back state by repinning code alone.
+- Review spec-sync/archive readiness after structural blockers and implementation acceptance are resolved. The completed baseline has its own archive review; no changes are archived by this proposal.

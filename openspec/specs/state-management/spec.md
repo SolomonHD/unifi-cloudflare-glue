@@ -7,56 +7,56 @@ Define supported Terraform state storage, backend configuration, and persistence
 ## Requirements
 ### Requirement: Persistent Local State Directory Parameter
 
-Deployment functions SHALL accept an optional `state_dir` parameter to enable persistent local Terraform state storage.
+Plan MAY consume protected local-state input for a read-only preview. Public deploy and destroy SHALL require an explicit remote backend and SHALL reject local-state input or missing durable-state selection before generation, initialization or mutation. No operation SHALL promise automatic Directory host write-back. Durable local effects are deferred to separately tracked DLR-1 by operator decision.
 
 #### Scenario: User provides state directory for persistent storage
-- **WHEN** user calls `deploy_cloudflare` with `--state-dir=./terraform-state`  
-- **THEN** the function SHALL accept the directory and use it for state storage
+- **WHEN** local state is selected for a preview
+- **THEN** the operation identifies its protected read-only state input and does not claim updated effectful state handoff
+- **AND** the interface does not describe a Directory copy as a writable host bind mount
 
 #### Scenario: User omits state directory for ephemeral storage
-- **WHEN** user calls `deploy_cloudflare` without `--state-dir`  
-- **THEN** the function SHALL use container-local ephemeral state at `/module/terraform.tfstate`
+- **WHEN** neither durable state mode is selected
+- **THEN** the interface identifies ephemeral state and restricts effectful use to explicitly disposable owned lifecycles with recovery/cleanup
+- **AND** it does not silently deploy production resources with disposable state
 
 ### Requirement: Mutual Exclusion Validation
 
-The system SHALL enforce mutual exclusion between persistent local state and remote backend configuration.
+Local-state input and remote backend selection SHALL remain mutually exclusive. Missing durable state selection SHALL NOT silently authorize production effects with ephemeral state.
 
 #### Scenario: User attempts to use both local state directory and remote backend
-- **WHEN** user specifies both `--state-dir=./tf-state` and `--backend-type=s3`  
-- **THEN** the function SHALL return an error message explaining mutual exclusion  
-- **AND** the error message SHALL list all three valid state management modes
+- **WHEN** a caller provides both local state and S3 backend selection
+- **THEN** validation fails nonzero before mutation and explains the valid protected modes
 
 #### Scenario: User uses only remote backend
-- **WHEN** user specifies `--backend-type=s3 --backend-config-file=./backend.hcl` without `--state-dir`  
-- **THEN** validation SHALL pass and remote backend SHALL be used
+- **WHEN** a caller selects only a remote backend with valid Secret-typed settings
+- **THEN** initialization uses that backend without requiring local state
 
 #### Scenario: User uses only local state directory
-- **WHEN** user specifies `--state-dir=./tf-state` without remote backend flags  
-- **THEN** validation SHALL pass and persistent local state SHALL be used
+- **WHEN** a caller selects local state for public deploy or destroy
+- **THEN** validation fails nonzero before generation, initialization or provider mutation
+- **AND** the diagnostic points to a remote backend without claiming DLR-1 is complete
 
 #### Scenario: User provides neither (default ephemeral)
-- **WHEN** user omits both `--state-dir` and remote backend flags  
-- **THEN** validation SHALL pass and ephemeral state SHALL be used (default)
+- **WHEN** a caller omits durable state selection
+- **THEN** only preview or explicitly disposable owned lifecycle use is accepted
+- **AND** production mutation fails before dispatch rather than silently creating empty state
 
 ### Requirement: State Directory Mounting and Setup
 
-When a state directory is provided, the system SHALL mount it and prepare it for Terraform operations.
+Read-only local preview preparation SHALL preserve the selected root and sibling module layout. Public local apply/destroy SHALL fail before effects; it SHALL NOT replace a durable recovery contract with a returned Secret, Directory copy or cache-retention claim.
 
 #### Scenario: Mount state directory to container
-- **WHEN** user provides `--state-dir=./terraform-state`  
-- **THEN** the state directory SHALL be mounted at `/state` in the container  
-- **AND** the mount SHALL be read-write to allow state persistence
+- **WHEN** protected local state is supplied
+- **THEN** it becomes a read-only preview input rather than implied host write-through
 
 #### Scenario: Copy module files to state directory
-- **WHEN** Terraform module files exist at `/module` in the container  
-- **AND** a state directory is mounted at `/state`  
-- **THEN** all module files SHALL be copied from `/module/*` to `/state/`  
-- **AND** the copy operation SHALL be logged in the report output
+- **WHEN** a combined root references sibling modules
+- **THEN** execution preparation retains their relative paths without flattening the root into an incompatible location
+- **AND** state contents are not listed or logged as diagnostics
 
 #### Scenario: Set working directory to state directory
-- **WHEN** module files have been copied to `/state`  
-- **THEN** the working directory SHALL be set to `/state`  
-- **AND** this SHALL be reported in the deployment output
+- **WHEN** a local-state preview begins
+- **THEN** the selected working root can resolve all module dependencies and state location explicitly
 
 ### Requirement: Error Message Clarity
 
@@ -67,50 +67,45 @@ Error messages for state configuration conflicts SHALL provide clear guidance on
 - **THEN** the error message SHALL explain the mutual exclusion constraint  
 - **AND** the error message SHALL show the exact conflicting flags provided  
 - **AND** the error message SHALL provide three example commands for each mode  
-- **AND** the examples SHALL cover remote backend, persistent local, and ephemeral modes
+- **AND** the examples SHALL cover remote backend, read-only local preview, and explicitly disposable ephemeral lifecycle modes
+- **AND** they SHALL NOT imply public local or ephemeral deploy/destroy support
 
 ### Requirement: Consistent Implementation Across Functions
 
-All deployment and cleanup functions SHALL implement state directory support consistently.
+The current combined deploy, selective modes and destroy SHALL enforce the same remote-only effect contract without requiring removed standalone deployment APIs. Plan SHALL preserve remote root/backend equivalence; local previews remain read-only and do not authorize local effects.
 
 #### Scenario: deploy-unifi supports state directory
-- **WHEN** `deploy_unifi` function is called with `--state-dir=./tf-state`  
-- **THEN** the state directory logic SHALL be applied identically to `deploy_cloudflare`
+- **WHEN** UniFi-only execution uses the current combined interface
+- **THEN** it obeys the common protected state contract without restoring deploy_unifi
 
 #### Scenario: deploy-cloudflare supports state directory
-- **WHEN** `deploy_cloudflare` function is called with `--state-dir=./tf-state`  
-- **THEN** state directory mounting, file copying, and working directory setup SHALL occur
+- **WHEN** Cloudflare-only execution uses the current combined interface
+- **THEN** it obeys that same state contract without restoring deploy_cloudflare
 
 #### Scenario: deploy orchestration function supports state directory
-- **WHEN** `deploy` function is called with `--state-dir=./tf-state`  
-- **THEN** the state directory SHALL be passed to both `deploy_unifi` and `deploy_cloudflare`  
-- **AND** both phases SHALL use the same state directory
+- **WHEN** full deployment supplies local state
+- **THEN** it rejects that selection before generation, initialization or effects for either component
 
 #### Scenario: destroy function supports state directory
-- **WHEN** infrastructure was deployed with `--state-dir=./tf-state`  
-- **AND** `destroy` function is called with the same `--state-dir=./tf-state`  
-- **THEN** the function SHALL read state from the specified directory  
-- **AND** cleanup operations SHALL use the existing state to identify resources
+- **WHEN** cleanup selects the remote backend from an earlier operation
+- **THEN** it targets that state identity and preserves recovery metadata after partial cleanup
+- **AND** local-state cleanup through the public destroy interface is rejected
 
 ### Requirement: Working Directory Behavior
 
-The working directory SHALL be set based on state storage mode.
+Execution SHALL resolve working roots from scope and state ownership consistently, preserving relative module references and explicit backend paths.
 
 #### Scenario: Working directory for ephemeral mode
-- **WHEN** no `--state-dir` is provided (ephemeral mode)  
-- **THEN** the working directory SHALL be set to `/module`  
-- **AND** state SHALL be written to `/module/terraform.tfstate`
+- **WHEN** a disposable lifecycle uses ephemeral state
+- **THEN** its root and state are owned by that lifecycle and remain available through cleanup or recorded recovery
 
 #### Scenario: Working directory for remote backend mode
-- **WHEN** `--backend-type=s3` is provided (remote backend mode)  
-- **THEN** the working directory SHALL be set to `/module`  
-- **AND** state SHALL be written to the remote backend
+- **WHEN** the selected backend is remote
+- **THEN** plan and execution use the same root, backend identity and state namespace
 
 #### Scenario: Working directory for persistent local mode
-- **WHEN** `--state-dir=./tf-state` is provided  
-- **THEN** the working directory SHALL be set to `/state`  
-- **AND** state SHALL be written to `/state/terraform.tfstate`  
-- **AND** module files SHALL exist at `/state/*.tf`
+- **WHEN** local state is selected
+- **THEN** only a read-only preview is accepted, retaining module dependencies without an updated-state or host-writeback promise
 
 ---
 
@@ -122,7 +117,8 @@ The documentation SHALL include a diagram showing how to choose between ephemera
 
 #### Scenario: Three main options are visible
 - **WHEN** viewing the state management diagram
-- **THEN** the decision tree SHALL present three primary branches: Development (ephemeral), Solo Developer (persistent local), and Team/Production (remote backend)
+- **THEN** the decision tree SHALL present three primary branches: disposable development lifecycle (ephemeral), read-only local preview (protected local input), and public deployment/cleanup (remote backend)
+- **AND** durable local effects SHALL be marked as deferred to DLR-1, not supported by the current public deploy/destroy interface
 
 #### Scenario: Decision criteria are clear
 - **WHEN** evaluating which option to choose
@@ -134,11 +130,14 @@ The diagram SHALL include key characteristics of each state management approach 
 
 #### Scenario: Ephemeral state characteristics
 - **WHEN** viewing the ephemeral state option
-- **THEN** the diagram SHALL indicate: container-only storage, lost on exit, no setup required
+- **THEN** the diagram SHALL indicate: container-only storage, lost on exit, no durable backend setup required
+- **AND** effectful use SHALL be limited to disposable owned lifecycles with cleanup or recorded recovery before exit
 
 #### Scenario: Persistent local characteristics
 - **WHEN** viewing the persistent local option
-- **THEN** the diagram SHALL indicate: local filesystem storage, requires --state-dir flag, no cloud costs
+- **THEN** the diagram SHALL indicate: local filesystem storage, protected read-only preview input, no cloud costs
+- **AND** it SHALL NOT imply that --state-dir automatically writes back to the host
+- **AND** future durable local effects SHALL require DLR-1 acceptance rather than an implied output handoff
 
 #### Scenario: Remote backend choices
 - **WHEN** viewing the remote backend option
@@ -165,9 +164,26 @@ Remote-backend configuration containing credentials MUST be delivered to Terrafo
 - **AND** the Dagger trace, cache metadata, report, and error output MUST NOT contain the file contents
 
 ### Requirement: Backend compatibility is preserved
-Secret mounting MUST preserve the supported backend configuration formats and state-locking behavior.
+Secret-input migration SHALL preserve supported YAML/HCL configuration semantics, remote address/key/workspace, state lineage and locking behavior without treating malformed input or failed authentication as a reason to select another backend.
 
 #### Scenario: Existing YAML-backed S3 configuration is used
-- **WHEN** the existing S3 backend YAML file is passed to plan, deploy, or destroy
-- **THEN** Terraform initialization MUST use the same backend address, key, and locking behavior
-- **AND** no managed infrastructure change MUST result solely from the transport hardening
+- **WHEN** the caller migrates the same backend settings to Secret-typed input
+- **THEN** initialization targets the same address, key, workspace and locking settings
+- **AND** no infrastructure change results solely from input transport migration
+
+#### Scenario: Backend validation or authentication fails
+- **WHEN** the configured remote backend cannot be initialized
+- **THEN** the operation fails before provider effects without falling back to local state
+
+### Requirement: Partial effects retain recoverable state
+Failed or uncertain remote effects SHALL retain a non-secret operation/recovery identity and preserve the configured remote backend as state authority. Unconfirmed remote custody SHALL NOT be reported as successful completion or trigger automatic retry. DLR-1 owns future durable local-state handoff acceptance.
+
+#### Scenario: Apply fails after creating a resource
+- **WHEN** execution partially succeeds before failure
+- **THEN** reconciliation uses the same remote backend and retained operation identity
+- **AND** the operation does not claim remote state recovery succeeded without evidence
+- **AND** ordinary summaries and CI artifacts do not expose raw state
+
+#### Scenario: State recovery cannot be confirmed
+- **WHEN** a deadline or connection loss prevents confirming state custody
+- **THEN** the result identifies the uncertain operation and blocks blind replay until reconciliation

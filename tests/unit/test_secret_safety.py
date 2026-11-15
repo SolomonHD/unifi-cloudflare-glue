@@ -1,9 +1,9 @@
 """Regression tests for secret transport, reports, and exported plan contracts."""
 
 import asyncio
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src/main"))
 
 from main import (  # noqa: E402
+    BACKEND_INPUT_PATH,
     BACKEND_SECRET_PATH,
     _before_deadline,
     _integration_failure_reasons,
@@ -71,29 +72,38 @@ async def test_backend_content_becomes_owner_only_mounted_secret(
     sentinel_secrets: dict[str, str],
 ) -> None:
     backend_file = Mock()
-    backend_file.contents = AsyncMock(
-        return_value=(
-            "bucket: state\n"
-            f"access_key: {sentinel_secrets['backend']}\n"
-            "secret_key: backend-secret\n"
-        )
-    )
+    backend_file.plaintext = AsyncMock(return_value=sentinel_secrets["backend"])
+    backend_file.contents = AsyncMock(side_effect=AssertionError("Plaintext File read forbidden"))
     container = Mock()
-    mounted = Mock()
-    container.with_mounted_secret.return_value = mounted
-    secret = Mock()
+    container.with_mounted_secret.return_value = container
+    container.with_env_variable.return_value = container
+    container.with_exec.return_value = container
+    container.sync = AsyncMock(return_value=container)
 
-    with patch("main.dagger.dag.set_secret", return_value=secret) as set_secret:
-        result = await _with_backend_secret(container, backend_file)
+    with patch("main.dagger.dag.set_secret") as set_secret:
+        result = await _with_backend_secret(container, backend_file, "yaml")
 
-    assert result is mounted
-    assert sentinel_secrets["backend"] in set_secret.call_args.args[1]
+    assert result is container
+    set_secret.assert_not_called()
+    backend_file.plaintext.assert_not_awaited()
+    backend_file.contents.assert_not_awaited()
     container.with_mounted_secret.assert_called_once_with(
-        BACKEND_SECRET_PATH,
-        secret,
+        BACKEND_INPUT_PATH,
+        backend_file,
         owner="root",
         mode=0o600,
     )
+    container.with_exec.assert_any_call(
+        [
+            "python",
+            "/tooling/src/main/backend_runtime.py",
+            "yaml",
+            BACKEND_INPUT_PATH,
+            BACKEND_SECRET_PATH,
+        ]
+    )
+    container.with_file.assert_not_called()
+    container.with_new_file.assert_not_called()
 
 
 def test_source_has_no_plaintext_secret_or_terraform_credential_variables() -> None:
