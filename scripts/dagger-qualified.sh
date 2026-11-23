@@ -2,9 +2,9 @@
 # Use the qualified Linux/amd64 CLI and engine without changing global selection.
 set -euo pipefail
 
-CLI="${DAGGER_BIN:-$HOME/.local/opt/dagger/1.0.0-beta.27/bin/dagger}"
-EXPECTED="d8a5c186090f92062fe773508f3b4d609ea75658802d5f5b75d6f627f2f2a075"
-ENGINE="image://registry.dagger.io/engine@sha256:ad121f720ed9bfb8e740f99dd783fa8472965a5e262fc64ff3ef2634cea1e6dd"
+CLI="${DAGGER_BIN:-$HOME/.local/opt/dagger/1.0.0-beta.28/bin/dagger}"
+EXPECTED="d0f8648c48418fe23773da40879f98d5db03b0d86d0ab4308174a42ad043300f"
+ENGINE="image://registry.dagger.io/engine@sha256:06d04ebed5f4042a0aad7fcff7dd3734bc06f9f994a7338e0138326c9605fb5c"
 
 if [[ ! -x "$CLI" ]]; then
     printf '%s\n' 'Qualified Dagger CLI is unavailable; bootstrap the recorded binary first.' >&2

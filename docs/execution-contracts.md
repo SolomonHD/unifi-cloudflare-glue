@@ -8,7 +8,7 @@ credential-free check contract. `README.old.md` is not normative guidance.
 
 ## Runtime And Inputs
 
-Use the exact beta27 CLI and immutable engine in the runtime receipt:
+Use the exact beta28 CLI and immutable engine in the runtime receipt:
 
 ```bash
 bash scripts/dagger-qualified.sh api call -m . version --source=.
@@ -234,15 +234,15 @@ The later recorded handoff supplies technical acceptance for the exact candidate
 and tested consumer snapshot, but does not promote an uncommitted consumer or
 complete either downstream branch's independent acceptance/publication gates.
 
-The shared selected contract is beta27 CLI checksum
-`d8a5c186090f92062fe773508f3b4d609ea75658802d5f5b75d6f627f2f2a075`, engine
-digest `ad121f720ed9bfb8e740f99dd783fa8472965a5e262fc64ff3ef2634cea1e6dd`,
+The shared selected contract is beta28 CLI checksum
+`d0f8648c48418fe23773da40879f98d5db03b0d86d0ab4308174a42ad043300f`, engine
+digest `06d04ebed5f4042a0aad7fcff7dd3734bc06f9f994a7338e0138326c9605fb5c`,
 Python SDK revision `9394f7454139f1ee2ca35be20e585b1e54f06cc2`, KCL 0.12.4
 archive checksum `01dc1d8914ed8fdfac7e8b34cc155227cf7f155ef8760f741f35b0f8529f08ca`,
 and Terraform 1.13.5 image digest
 `6bbb82d575aa7bd4f0a2c6e3a0838ab9590426c08a71d7a2783643f01004d356`.
 The generated Python API view is beta24, deliberately distinguished from the
-beta27 engine. The stable 0.21.11 fallback remains unaccepted.
+beta28 engine. The stable 0.21.11 fallback remains unaccepted.
 
 The provider branch retains its own guarded ownership migration, provider-read
 side-effect qualification and production handoff. The thin-Actions branch
