@@ -6,7 +6,7 @@ using the existing provider constraints and resource addresses.
 
 ## Supported Execution Path
 
-This checkout uses the qualified Dagger **1.0.0-beta.27** CLI/engine and pinned
+This checkout uses the qualified Dagger **1.0.0-beta.28** CLI/engine and pinned
 Python authoring SDK, not the old standalone deployment APIs. Read the
 [runtime receipt](docs/dagger-runtime-qualification.md) for exact identities,
 qualification evidence and outstanding acceptance gates. Installation or a

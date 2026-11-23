@@ -1,6 +1,19 @@
 # Dagger Runtime Qualification
 
-Current closeout disposition, 2026-11-15: the downstream completed task 4.3 and
+## Launcher update, 2026-11-23
+
+The Linux/amd64 launcher selects `$HOME/.local/opt/dagger/1.0.0-beta.28/bin/dagger`
+with SHA-256 `d0f8648c48418fe23773da40879f98d5db03b0d86d0ab4308174a42ad043300f`.
+It pins the engine index to `sha256:06d04ebed5f4042a0aad7fcff7dd3734bc06f9f994a7338e0138326c9605fb5c`.
+On Midseason the launcher returned `v1.0.0-beta.28+856a3dac` for the engine
+version and executed the local module’s `hello` function. All five wrapper tests
+passed. This release fixes the startup
+failure caused by an expired cache entry in the beta.27 image.
+[Dagger fix](https://github.com/dagger/dagger/pull/15199)
+
+## Earlier qualification
+
+Closeout disposition, 2026-11-15: the downstream completed task 4.3 and
 archived its 12/12 change. Archive-readiness testing then found and fixed an
 unused literal-IP declaration mismatch. Revised functional candidate
 `e8777e968f83fb7b8de82ccbd245b7f918ca20fa` passed 613 local/613 Dagger tests

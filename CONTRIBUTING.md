@@ -15,13 +15,10 @@ Thank you for your interest in contributing to unifi-cloudflare-glue! This docum
    checksum-verified KCL archive and immutable tool identities in
    `src/main/toolchains.py`, including the Git-capable Python base (Git 2.39.5).
 
-3. Use the verified Dagger 1.0.0-beta.27 CLI and pinned engine from
-   [the runtime receipt](docs/dagger-runtime-qualification.md). Keep global
-   tool selections unchanged. With that CLI on PATH, define the engine for
-   every beta invocation:
+3. Use the repository launcher to select the beta.28 CLI and engine recorded in
+   [the runtime receipt](docs/dagger-runtime-qualification.md).
    ```bash
-   export DAGGER_ENGINE='image://registry.dagger.io/engine@sha256:ad121f720ed9bfb8e740f99dd783fa8472965a5e262fc64ff3ef2634cea1e6dd'
-   dagger --engine "$DAGGER_ENGINE" api call -m . hello
+   bash scripts/dagger-qualified.sh api call -m . hello
    uv sync --frozen
    ```
 
